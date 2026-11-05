@@ -425,6 +425,30 @@
             box-sizing: border-box; /* height/width 口径含内边距与描边 */
             justify-content: center;/* flex 纵向布局：内容在 72px 高度内垂直居中充满 */
             font-size: 9.8px;       /* 与游戏页 .awt-fixed 同款小尺寸档缩放 */
+            /* 玻璃透明质感（大厅专属精修，不影响游戏页共享的 ach-trigger.css 基座）：
+               半透明亮层渐变替掉基座实底，磨砂 blur 透出星空——真实玻璃透视感 */
+            background: linear-gradient(165deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.05) 38%, rgba(10, 12, 30, 0.42) 70%, rgba(10, 12, 30, 0.55) 100%);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.28),    /* 上缘受光高光：玻璃片厚度感 */
+                inset 0 0 0 1px rgba(255, 255, 255, 0.08),  /* 内衬白细线：玻璃双层描边的内层 */
+                inset 0 -1px 0 rgba(0, 0, 0, 0.30),         /* 下缘内阴影：背光面收边 */
+                0 4px 14px rgba(0, 0, 0, 0.42),             /* 外投影：玻璃片悬浮于星空 */
+                0 0 12px color-mix(in srgb, var(--awt-h) 22%, transparent); /* 主题色微辉 */
+        }
+        /* 玻璃按钮悬停/聚焦：透光度抬升 + 鎏金辉光增浓（优先级高于共享基座 hover，覆盖生效） */
+        button.awt-hall:hover,
+        button.awt-hall:focus-visible {
+            background: linear-gradient(165deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.08) 38%, rgba(16, 18, 42, 0.50) 70%, rgba(16, 18, 42, 0.62) 100%);
+            border-color: color-mix(in srgb, var(--awt-h) 78%, rgba(255, 255, 255, 0.35));
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.38),
+                inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+                inset 0 -1px 0 rgba(0, 0, 0, 0.26),
+                0 6px 18px rgba(0, 0, 0, 0.46),
+                0 0 20px color-mix(in srgb, var(--awt-h) 45%, transparent),
+                inset 0 0 12px color-mix(in srgb, var(--awt-h) 20%, transparent);
         }
         /* 殿堂容器：全屏固定覆盖层，flex 居中殿堂面板；
            结构 = 暗幕（径向暗角 + 磨砂）→ 旋转金色神辉光束 → 漂浮金尘 → 居中鎏金面板 */
@@ -705,21 +729,57 @@
             45% { transform: scale(1.14); filter: brightness(1.5); }
             100% { transform: scale(1); }
         }
-        /* 里程碑轨道：细轨道贯穿 + 节点（10/25/40/58）；达成的点亮金光、下一阶呼吸描边 */
-        .th-mile { position: relative; display: flex; justify-content: space-between; padding: 2px 2px 0; }
+        /* 称号位阶进度条：当前称号档内的推进水位（鎏金填充，与进度环同节奏缓动） */
+        .th-rank-bar {
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+            overflow: hidden;
+        }
+        .th-rank-bar i {
+            display: block;
+            height: 100%;
+            width: 0%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #ff9a3e, #ffd23e 60%, #fff3b8);
+            box-shadow: 0 0 8px rgba(255, 210, 62, 0.55);
+            transition: width 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
+        }
+        .th-rank-hint { color: #8f9bc4; font-size: 7px; letter-spacing: 1px; }
+        /* 里程碑轨道：真实进度条——深色凹槽底轨上铺鎏金水位（宽度 = 全站进度，--mile-prog 由 JS 注入），
+           四个里程碑节点（10/25/40/58）按 值/58 的真实比例落位（--x 由 JS 注入）；
+           达成的点亮金光、下一阶呼吸描边 */
+        .th-mile { position: relative; height: 28px; }
         .th-mile::before {
             content: '';
             position: absolute;
-            left: 4px;
-            right: 4px;
-            top: 9px;
-            height: 2px;
-            background: rgba(255, 255, 255, 0.10);
-            border-radius: 1px;
+            left: 0;
+            right: 0;
+            top: 4px;
+            height: 4px;
+            background: rgba(10, 10, 26, 0.85);
+            border-radius: 2px;
+            box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+        }
+        .th-mile::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 4px;
+            height: 4px;
+            width: var(--mile-prog, 0%);
+            background: linear-gradient(90deg, #ff9a3e, #ffd23e 60%, #fff3b8);
+            border-radius: 2px;
+            box-shadow: 0 0 8px rgba(255, 210, 62, 0.55);
+            transition: width 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
         }
         .th-pip {
-            position: relative;
-            z-index: 1;
+            position: absolute;
+            top: 0;
+            left: var(--x, 0%);
+            transform: translateX(-50%); /* 节点圆心对齐落位点 */
+            z-index: 1; /* 盖过 ::after 水位条（伪元素绘制于子元素之后） */
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -740,13 +800,69 @@
             box-shadow: 0 0 8px rgba(255, 210, 62, 0.65);
         }
         .th-pip.is-on em { color: #ffd23e; }
+        /* 原点刻度 0：进度条零位标记，弱化灰点，与 10/25/40/58 金色成就节点区分 */
+        .th-pip-zero i {
+            border-color: rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .th-pip-zero em { color: rgba(143, 155, 196, 0.55); }
         .th-pip.is-next i { animation: thPipBreath 1.6s ease-in-out infinite; }
         @keyframes thPipBreath {
             0%, 100% { box-shadow: 0 0 0 rgba(255, 210, 62, 0); border-color: rgba(255, 255, 255, 0.22); }
             50% { box-shadow: 0 0 9px rgba(255, 210, 62, 0.5); border-color: rgba(255, 210, 62, 0.6); }
         }
-        /* 相片墙：可滚动区（矮视口时裁切滚动） */
-        .th-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 18px 16px; }
+        /* 相片墙：可滚动区（矮视口时裁切滚动）；Firefox 侧用原生细条 + 半透明鎏金兜底 */
+        .th-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 6px 18px 16px;
+            scrollbar-width: thin;                      /* Firefox：收窄滚动条 */
+            scrollbar-color: rgba(255, 210, 62, 0.80) rgba(16, 12, 36, 0.50); /* Firefox：半透明金滑块 / 半透明轨道 */
+        }
+        /* 自制滚动条（WebKit：Chrome/Edge）——半透明玻璃开槽 + 鎏金霓虹灯管滑块，
+           与殿堂鎏金视觉融为一体：轨道 = 半透明深色玻璃凹槽（透出面板底色与金尘，
+           内缘金细线延续面板双层描金）；滑块 = 半透明鎏金渐变圆条（灯管内透白光 +
+           双层金辉光晕，模拟霓虹灯近亮远衰的光扩散） */
+        .th-scroll::-webkit-scrollbar { width: 12px; }
+        .th-scroll::-webkit-scrollbar-track {
+            background: linear-gradient(180deg, rgba(16, 12, 36, 0.42), rgba(26, 20, 56, 0.42)); /* 半透明玻璃槽底：星空与金尘隐约透出 */
+            box-shadow:
+                inset 0 0 4px rgba(0, 0, 0, 0.35),              /* 凹槽暗缘：玻璃开槽的进深感 */
+                inset 1px 0 0 rgba(255, 255, 255, 0.07);        /* 槽壁白高光：玻璃断面受光 */
+            border-left: 1px solid rgba(255, 210, 62, 0.14);    /* 轨道内缘金细线：面板描金的延续 */
+        }
+        .th-scroll::-webkit-scrollbar-thumb {
+            border: 3px solid transparent;      /* 透明内缝：金条与轨道四周留白，纤细不笨重 */
+            background-clip: padding-box;       /* 背景只填内缝以内：金条可视宽度 6px */
+            border-radius: 8px;
+            background-image: linear-gradient(180deg, rgba(255, 226, 121, 0.92), rgba(255, 210, 62, 0.66) 45%, rgba(255, 184, 41, 0.60)); /* 半透明鎏金渐变：隐约透出轨道底色 */
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.55),    /* 顶缘受光高光：金属立体 */
+                inset 0 0 5px rgba(255, 255, 255, 0.28),    /* 灯管内透白光：霓虹灯芯质感 */
+                inset 0 -2px 0 rgba(146, 92, 10, 0.45),     /* 底缘暗边：金属背光面 */
+                0 0 6px rgba(255, 210, 62, 0.35),           /* 近距辉光：灯体贴光 */
+                0 0 14px rgba(255, 210, 62, 0.28);          /* 远距光晕：霓虹光扩散衰减 */
+        }
+        .th-scroll::-webkit-scrollbar-thumb:hover {
+            background-image: linear-gradient(180deg, rgba(255, 236, 160, 0.96), rgba(255, 224, 100, 0.74) 45%, rgba(255, 200, 70, 0.68)); /* 悬停提亮一档 */
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.65),
+                inset 0 0 6px rgba(255, 255, 255, 0.38),
+                inset 0 -2px 0 rgba(146, 92, 10, 0.40),
+                0 0 8px rgba(255, 210, 62, 0.50),
+                0 0 18px rgba(255, 210, 62, 0.42);          /* 悬停辉光扩张：霓虹灯加压 */
+        }
+        .th-scroll::-webkit-scrollbar-thumb:active {
+            background-image: linear-gradient(180deg, rgba(255, 246, 200, 1), rgba(255, 240, 160, 0.85)); /* 拖拽中再提亮：按压手感反馈 */
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.70),
+                inset 0 0 7px rgba(255, 255, 255, 0.45),
+                0 0 10px rgba(255, 210, 62, 0.60),
+                0 0 22px rgba(255, 210, 62, 0.50);
+        }
+        .th-scroll::-webkit-scrollbar-button { display: none; } /* 隐藏系统端点箭头按钮 */
+        .th-scroll::-webkit-scrollbar-corner { background: transparent; }
         .th-grid { display: flex; flex-direction: column; gap: 18px; }
         /* 分区墙区：主题色铭牌行（图钉 + 游戏名 + 计数 + 点亮奖杯 + 渐隐细线）
            + 拍立得相片流式挂墙；--hue/--hue-bg 由 JS 按游戏主题色注入 */
@@ -793,9 +909,13 @@
             width: 88px;
             margin: 7px 0 0;
             padding: 6px 6px 7px;
-            background: linear-gradient(175deg, #fdfdf6, #e6e4d8);
+            /* 玻璃质感相纸：半透明米白 + 磨砂模糊（呼应大厅卡片的玻璃拟态），白缘描边 + 顶缘高光 */
+            background: linear-gradient(175deg, rgba(255, 253, 244, 0.30), rgba(230, 228, 216, 0.16));
+            border: 1px solid rgba(255, 255, 255, 0.20);
             border-radius: 3px;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 10px rgba(0, 0, 0, 0.45);
+            -webkit-backdrop-filter: blur(5px);
+            backdrop-filter: blur(5px);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 10px rgba(0, 0, 0, 0.45);
             transform: rotate(var(--tilt));
             transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s, filter 0.25s;
         }
@@ -839,14 +959,28 @@
             color: rgba(255, 255, 255, 0.14);
             background: rgba(6, 6, 18, 0.42);
         }
+        /* 相片图案区光泽扫过：悬停相片时斜向高光带掠过（复用大厅卡片 shine 关键帧；
+           th-shot 已有 overflow:hidden 负责裁切，.th-photo 本体不可加会裁掉顶伸胶带） */
+        .th-shot::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 34%;
+            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+            transform: translateX(-160%) skewX(-16deg);
+            pointer-events: none;
+        }
+        .th-photo:hover .th-shot::after { animation: shine 0.9s ease-out; }
         /* 稀有度描金条：未解锁暗槽；解锁后按稀有度点亮（银/青/紫/金），传说条最醒目 */
-        .th-rar { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(20, 20, 40, 0.12); }
+        .th-rar { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
         .is-got.rar-common .th-rar { background: #9fb0cd; }
         .is-got.rar-rare .th-rar { background: linear-gradient(90deg, #35e0ff, #8ef4ff); box-shadow: 0 0 6px rgba(53, 224, 255, 0.5); }
         .is-got.rar-epic .th-rar { background: linear-gradient(90deg, #b06cff, #d8aaff); box-shadow: 0 0 6px rgba(176, 108, 255, 0.5); }
         .is-got.rar-legendary .th-rar { background: linear-gradient(90deg, #ff9a3e, #ffd23e, #fff3b8); box-shadow: 0 0 7px rgba(255, 210, 62, 0.6); }
         /* 相片题名：相纸上的深字；未解锁弱化 */
-        .th-name { margin-top: 6px; text-align: center; font-size: 8px; line-height: 1.3; color: #3c4254; }
+        .th-name { margin-top: 6px; text-align: center; font-size: 8px; line-height: 1.3; color: rgba(238, 242, 255, 0.88); }
         .th-photo:not(.is-got) { filter: grayscale(0.92) brightness(0.7); }
         .th-photo:not(.is-got) .th-name { color: #9aa0b0; }
         /* 未解锁悬停「显影」：短暂恢复彩色偷看目标图案 */
@@ -854,8 +988,8 @@
         /* 传说相片：金辉呼吸 */
         .is-got.rar-legendary { animation: thLegendGlow 2.6s ease-in-out infinite; }
         @keyframes thLegendGlow {
-            0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 10px rgba(0, 0, 0, 0.45); }
-            50% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 10px rgba(0, 0, 0, 0.45), 0 0 18px rgba(255, 210, 62, 0.55); }
+            0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 10px rgba(0, 0, 0, 0.45); }
+            50% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 10px rgba(0, 0, 0, 0.45), 0 0 18px rgba(255, 210, 62, 0.55); }
         }
         /* 开幕钉墙入场：相片从下方缩放弹入并落回各自微倾角
            （to 帧只写 opacity 不写 transform：fill-mode both 结束后不锁定静态 transform，
@@ -887,8 +1021,9 @@
             .th-title, .th-head .cup-ico, .th-ring-glow, .th-pip.is-next i,
             .th-sec-head.th-in, .th-photo.th-in, .th-sec-cup,
             .is-got.rar-legendary,
-            #trophyHall.is-perfect .th-total, .th-rank-name.th-rank-pop { animation: none; }
-            .th-ring-fg, .th-pip i, .th-photo { transition: none; }
+            #trophyHall.is-perfect .th-total, .th-rank-name.th-rank-pop,
+            .th-photo:hover .th-shot::after { animation: none; }
+            .th-ring-fg, .th-pip i, .th-photo, .th-mile::after, .th-rank-bar i { transition: none; }
         }
         .card .play {
             display: inline-block;
@@ -1851,6 +1986,8 @@
                     <div class="th-rank">
                         <span class="th-rank-label">— 殿堂称号 —</span>
                         <span class="th-rank-name" id="thRank">初入殿堂</span>
+                        <div class="th-rank-bar"><i id="thRankBar"></i></div>
+                        <div class="th-rank-hint" id="thRankHint"></div>
                     </div>
                     <div class="th-mile" id="thMile"></div>
                 </div>
@@ -1866,6 +2003,6 @@
     <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，大厅键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-1"></script>
-    <script src="index.js?v=20261105-5"></script>
+    <script src="index.js?v=20261105-7"></script>
 </body>
 </html>

@@ -409,10 +409,13 @@
             max-height: 86vh;
             display: flex;
             flex-direction: column;
-            background: linear-gradient(160deg, #2a1240 0%, #1c0e2e 55%, #1a0c22 100%);
+            /* 玻璃质感面板：半透明底 + 磨砂模糊（呼应大厅卡片玻璃拟态），白缘顶光 + 霓虹描边辉光 */
+            background: linear-gradient(160deg, rgba(42, 18, 64, 0.80) 0%, rgba(28, 14, 46, 0.80) 55%, rgba(26, 12, 34, 0.80) 100%);
             border: 1px solid rgba(193, 123, 255, 0.45);
             border-radius: 14px;
-            box-shadow: 0 0 42px rgba(193, 123, 255, 0.22), inset 0 0 60px rgba(193, 123, 255, 0.05);
+            -webkit-backdrop-filter: blur(14px);
+            backdrop-filter: blur(14px);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 0 42px rgba(193, 123, 255, 0.22), inset 0 0 60px rgba(193, 123, 255, 0.05);
             animation: wallPanelIn 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
         }
         @keyframes wallPanelIn {
@@ -497,8 +500,10 @@
             align-items: center;
             padding: 12px;
             border-radius: 10px;
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            /* 玻璃卡片：白质渐变底 + 白缘描边 + 顶缘高光（与大厅卡片玻璃拟态同源；已解锁卡另有 achSheen 周期流光） */
+            background: linear-gradient(165deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
             text-align: left;
             overflow: hidden;
             animation: achCardIn 0.45s ease-out backwards;

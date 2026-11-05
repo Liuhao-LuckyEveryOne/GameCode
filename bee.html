@@ -422,10 +422,13 @@
             width: min(720px, 94vw);
             max-height: 86vh;
             overflow: hidden;
-            background: linear-gradient(160deg, rgba(40, 17, 28, 0.98), rgba(24, 10, 16, 0.98));
+            /* 玻璃质感：半透明底 + 磨砂模糊（呼应大厅卡片玻璃拟态），白缘顶光 + 霓虹描边辉光 */
+            background: linear-gradient(160deg, rgba(40, 17, 28, 0.80), rgba(24, 10, 16, 0.80));
             border: 1px solid rgba(255, 62, 165, 0.35);
             border-radius: 14px;
-            box-shadow: 0 0 40px rgba(255, 62, 165, 0.25), inset 0 0 60px rgba(0, 0, 0, 0.5);
+            -webkit-backdrop-filter: blur(14px);
+            backdrop-filter: blur(14px);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 0 40px rgba(255, 62, 165, 0.25), inset 0 0 60px rgba(0, 0, 0, 0.5);
             animation: achPanelIn 0.28s ease-out;
         }
         /* 面板入场：略小淡入落定 */
@@ -499,14 +502,33 @@
         }
         /* 成就卡片：图标 + 名称/稀有度/描述/分类 + 进度条 */
         .ach-card {
+            position: relative; /* 悬停光泽带 ::after 的定位基准 */
             display: flex;
             gap: 10px;
             align-items: flex-start;
             padding: 10px 12px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 62, 165, 0.22);
+            /* 玻璃卡片：白质渐变底 + 顶缘高光（与大厅卡片玻璃拟态同源）；overflow:hidden 裁切光泽带 */
+            background: linear-gradient(165deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.04));
+            border: 1px solid rgba(255, 62, 165, 0.28);
             border-radius: 10px;
+            overflow: hidden;
             transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        /* 玻璃光泽扫过：悬停时斜向高光带掠过（achShine 独立命名，避开大厅卡片 shine） */
+        .ach-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 34%;
+            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+            transform: translateX(-160%) skewX(-16deg);
+            pointer-events: none;
+        }
+        .ach-card:hover::after { animation: achShine 0.9s ease-out; }
+        @keyframes achShine {
+            to { transform: translateX(430%) skewX(-16deg); }
         }
         /* 未解锁：图标置灰、名字减淡，暗示"待解锁" */
         .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
@@ -641,7 +663,7 @@
         }
         /* 减弱动态效果：系统开启时跳过入场/出场/呼吸动画，直接静态展示 */
         @media (prefers-reduced-motion: reduce) {
-            .ach-panel, .ach-card.unlocked.r-legendary { animation: none; }
+            .ach-panel, .ach-card.unlocked.r-legendary, .ach-card::after { animation: none; }
             .ach-toast { opacity: 0; animation: none; }
             /* 保留可读性：toast 改为无动画直接显示（3.4s 后由 JS 移除节点） */
             .ach-toast.show-reduced { opacity: 1; }

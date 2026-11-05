@@ -374,6 +374,8 @@ let trophyClosedAt = -1e9;
     const ringFg = document.getElementById('thRingFg');
     const ringText = document.getElementById('thRingText');
     const rankEl = document.getElementById('thRank');
+    const rankBarEl = document.getElementById('thRankBar'); // 称号位阶进度条（当前档内推进水位）
+    const rankHintEl = document.getElementById('thRankHint'); // 距更高阶称号差值提示
     const mileEl = document.getElementById('thMile');
     const gridEl = document.getElementById('thGrid');
     const RING_LEN = 2 * Math.PI * 56; // 进度环周长（r=56 与 SVG 圆一致）
@@ -417,7 +419,7 @@ let trophyClosedAt = -1e9;
             for (let p = 0; p < def.photos.length; p++) {
                 const ph = def.photos[p]; // 五元组 [id, 名称, emoji, 稀有度, 描述]
                 const has = map[ph[0]] !== undefined; // v2 映射键存在即已解锁（值可能为 0 = 旧档迁移）
-                if (has) got++;
+                if (has) { got++; unlocked++; } // got 计单游戏数、unlocked 计全站总数（驱动进度环/称号/里程碑与下方各行同步）
                 // 确定性伪随机微倾角（±2.2°）与胶带转角：相片错落钉墙，每次渲染不跳变
                 const tilt = (((i * 37 + p * 11) % 9) - 4) * 0.55;
                 const tape = ((i + p) % 2) ? 3.5 : -4;
@@ -457,10 +459,11 @@ let trophyClosedAt = -1e9;
         totalEl.textContent = unlocked + ' / ' + ACH_TOTAL;
         // 满环 perfect 态：面板金辉呼吸与奖牌脉冲由 #trophyHall.is-perfect 驱动
         hall.classList.toggle('is-perfect', unlocked >= ACH_TOTAL);
-        // 称号阶梯：从上到下取首个达成档；变更时重挂节点触发 th-rank-pop 弹出（首次渲染静默就位）
+        // 称号阶梯：从上到下取首个达成档（RANKS 为降序，i 即当前档索引）；变更时重挂节点触发 th-rank-pop 弹出（首次渲染静默就位）
         let rank = RANKS[RANKS.length - 1].name;
+        let rankIdx = RANKS.length - 1;
         for (let i = 0; i < RANKS.length; i++) {
-            if (unlocked >= RANKS[i].min) { rank = RANKS[i].name; break; }
+            if (unlocked >= RANKS[i].min) { rank = RANKS[i].name; rankIdx = i; break; }
         }
         if (rank !== lastRank) {
             rankEl.textContent = rank;
@@ -471,13 +474,27 @@ let trophyClosedAt = -1e9;
             }
             lastRank = rank;
         }
-        // 里程碑轨道：达成的点亮 is-on，首个未达成阶呼吸描边 is-next
+        // 位阶进度条：当前称号档内的推进水位 = (unlocked - 本档min) / (更高档min - 本档min)，
+        // 与进度环同节奏缓动；封顶档恒满格；提示行标注距更高称号还差几项
+        if (rankIdx > 0) {
+            const top = RANKS[rankIdx - 1].min;
+            const base = RANKS[rankIdx].min;
+            rankBarEl.style.width = Math.round((unlocked - base) / (top - base) * 100) + '%';
+            rankHintEl.textContent = '距「' + RANKS[rankIdx - 1].name + '」还差 ' + (top - unlocked) + ' 项';
+        } else {
+            rankBarEl.style.width = '100%';
+            rankHintEl.textContent = '位阶已满 · 传说达成';
+        }
+        // 里程碑轨道：水位 = 全站进度（--mile-prog，CSS 0.9s 过渡与进度环同节奏推进）；
+        // 节点按 值/58 真实比例落位（--x）；达成的点亮 is-on，首个未达成阶呼吸描边 is-next
+        mileEl.style.setProperty('--mile-prog', Math.min(unlocked / ACH_TOTAL * 100, 100).toFixed(2) + '%');
         let nextIdx = -1;
-        let pips = '';
+        let pips = '<span class="th-pip th-pip-zero" style="--x:0%"><i></i><em>0</em></span>'; // 原点刻度：进度条零位（弱化灰点，非成就节点）
         for (let i = 0; i < MILESTONES.length; i++) {
             const on = unlocked >= MILESTONES[i];
             if (!on && nextIdx === -1) nextIdx = i;
             pips += '<span class="th-pip' + (on ? ' is-on' : (i === nextIdx ? ' is-next' : ''))
+                + '" style="--x:' + (MILESTONES[i] / ACH_TOTAL * 100).toFixed(2) + '%'
                 + '"><i></i><em>' + MILESTONES[i] + '</em></span>';
         }
         mileEl.innerHTML = pips;
