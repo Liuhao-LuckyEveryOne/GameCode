@@ -15,7 +15,7 @@
           index.js 大厅脚本（开机层移除 + 星空粒子/流星/网格动画 + 霓虹故障闪烁 +
           全标题故障 + 游戏覆盖层开关（LOADING 霓虹过渡 / 游戏期冻结大厅动效 / 关闭时下发 arcade:save 快照保存）+ 七段卡片预览动画 + 卡片 3D 视差 + 鼠标光晕 +
           卡片音效分派 + 提示条淡出 + 待机吸引模式 + 投币口金币飞入 +
-          成就殿堂相片墙入口与开关渲染（鎏金覆盖层 / 称号里程碑 / 七游戏行瀑布入场））
+          成就殿堂金杯入口与开关渲染（鎏金覆盖层 / 称号里程碑 / 七游戏行瀑布入场））
      ================================================================== -->
 <html lang="zh-CN">
 <head>
@@ -405,10 +405,10 @@
             text-shadow: 0 0 8px rgba(53, 224, 255, 0.45);
             pointer-events: none;
         }
-        /* ---------- 成就殿堂：相片墙入口 + 全屏鎏金覆盖层（全面超越游戏内成就墙的旗舰展示） ---------- */
-        /* 相片墙入口（.achWallTrigger 基座样式见共享 ach-trigger.css）：固定左上角，
-           原返回链接位腾给入口；top 16 + 高 72 = 底边 88px，与右上角全屏按钮
-           （top 60 + 高 28）底边精确对齐；宽 117px 与覆盖层「✕ 返回游戏厅」按钮持平；
+        /* ---------- 成就殿堂：金杯入口 + 全屏鎏金覆盖层（全面超越游戏内成就墙的旗舰展示） ---------- */
+        /* 鎏金大金杯入口（.achWallTrigger 基座样式见共享 ach-trigger.css）：固定左上角，
+           top 16 + 高 72 = 底边 88px——上缘与音效键持平、底边与全屏键下缘持平，
+           72×72 正方形与游戏页 .awt-fixed 入口同规格（单座鎏金大金杯 + 颈间红蝴蝶结）；
            字号 9.8px 与游戏页入口一致（小尺寸档）；
            z-index 与按钮簇(10)一致。
            选择器带元素名 button 提高优先级（0,1,1 胜 0,1,0）：本内联样式表先于 ach-trigger.css
@@ -420,8 +420,8 @@
             left: 16px;
             top: 16px;
             z-index: 10;
-            height: 72px;           /* 高 72px：底边 16+72=88px 恰落全屏按钮底边线上 */
-            width: 117px;           /* 宽 117px：与覆盖层「✕ 返回游戏厅」按钮实测宽度持平 */
+            height: 72px;           /* 正方形 72×72：与游戏页 .awt-fixed 同规格（top 16 对齐音效键上缘，底边 88px 对齐全屏键下缘） */
+            width: 72px;            /* 宽 72px：正方形金杯入口 */
             box-sizing: border-box; /* height/width 口径含内边距与描边 */
             justify-content: center;/* flex 纵向布局：内容在 72px 高度内垂直居中充满 */
             font-size: 9.8px;       /* 与游戏页 .awt-fixed 同款小尺寸档缩放 */
@@ -1193,7 +1193,7 @@
             64% { opacity: 1; transform: scaleY(0.003); } /* 短驻留：断电电压抽离的余辉 */
             100% { opacity: 0; transform: scaleY(0.003) scaleX(0.06); } /* 收束为光点熄灭，同时黑底淡出露出大厅 */
         }
-        /* 关闭瞬间左下角 ✕ 按钮使命已完成，先行快速隐去，不参与关机演出 */
+        /* 关闭瞬间左下角返回按钮使命已完成，先行快速隐去，不参与关机演出 */
         #gameOverlay.overlay-out .overlay-close {
             animation: closeBtnOut 0.15s ease-out forwards;
         }
@@ -1271,18 +1271,19 @@
         body.game-open .sound-hint {
             animation-play-state: paused;
         }
-        /* 覆盖层左下角关闭按钮：与游戏内"← 游戏厅"链接等效的双保险退出入口；
-           字色/描边/悬停光晕由 --close-glow 驱动，随所打开游戏的主题色变化
-           （与该游戏页右上角音效/全屏开关、页内返回链接同源配色） */
+        /* 覆盖层左下角返回按钮：图案示意（像素小房子 🏠示意「游戏厅/小屋」），去文字由图标承担视觉，
+           语义由 JS 侧 aria-label / title 承载（读屏与悬停提示仍为「返回游戏厅」）；
+           宽 72px 与成就殿堂金杯入口同宽（左下角与左上角入口等宽呼应）；
+           图标颜色 currentColor 承接 --close-glow 主题色，随所打开游戏的主题色变化 */
         .overlay-close {
             position: fixed;
             bottom: 18px;
             left: 18px;
             z-index: 99;
-            padding: 8px 14px;
-            font-family: 'Microsoft YaHei', sans-serif;
-            font-size: 12px;
-            letter-spacing: 2px;
+            width: 72px;        /* 宽同成就殿堂金杯入口（72px）：与左上角入口等宽呼应 */
+            padding: 9px 0;     /* 上下 9px 补偿 line-height:0 的高度塌陷；水平内边距清零，图标居中由 text-align 承担 */
+            text-align: center; /* 像素小房子图标水平居中于 72px 宽度 */
+            line-height: 0;     /* 行高压平：按钮尺寸由图标撑起，文字流不再参与 */
             color: rgb(var(--close-glow, 255, 210, 62));
             background: rgba(18, 18, 42, 0.85);
             border: 1px solid rgba(var(--close-glow, 255, 210, 62), 0.4);
@@ -1292,6 +1293,20 @@
         .overlay-close:hover {
             background: rgba(var(--close-glow, 255, 210, 62), 0.12);
             box-shadow: 0 0 12px rgba(var(--close-glow, 255, 210, 62), 0.5);
+        }
+        /* 像素小房子图标：SVG mask（crispEdges 像素硬边）剪出 9×8 像素小屋剪影
+           （阶梯屋顶 + 墙体 + 门洞，「游戏厅/小屋」示意），
+           currentColor 填色承接主题色，固定 18×16px（9×8 格 × 2px） */
+        .overlay-close .close-ico {
+            display: block;
+            margin: 0 auto;     /* text-align 对 inline 无效的兜底：块级图标居中于 72px 宽按钮 */
+            width: 18px;
+            height: 16px;
+            background: currentColor;
+            -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 8' shape-rendering='crispEdges'%3E%3Cpath d='M4 0h1v1H4zM3 1h3v1H3zM2 2h5v1H2zM1 3h7v1H1zM1 4h7v1H1zM1 5h3v1H1zM5 5h3v1H5zM1 6h3v1H1zM5 6h3v1H5zM1 7h3v1H1zM5 7h3v1H5z'/%3E%3C/svg%3E");
+            -webkit-mask-size: 100% 100%;
+            mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 9 8' shape-rendering='crispEdges'%3E%3Cpath d='M4 0h1v1H4zM3 1h3v1H3zM2 2h5v1H2zM1 3h7v1H1zM1 4h7v1H1zM1 5h3v1H1zM5 5h3v1H5zM1 6h3v1H1zM5 6h3v1H5zM1 7h3v1H1zM5 7h3v1H5z'/%3E%3C/svg%3E");
+            mask-size: 100% 100%;
         }
         /* ---------- 关气回流缩略：游戏末帧截图缩略图（FLIP 飞回卡片）+ 落卡辉光脉冲 ----------
            关闭覆盖层时由 JS 截取游戏画布最后一帧（canvas.toDataURL），先在 CRT 坍缩为过曝
@@ -1834,8 +1849,8 @@
         /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
         button, a { touch-action: manipulation; }
     </style>
-    <!-- 成就墙·相片墙触发器共享样式：大厅入口与各游戏入口共用同一相片墙组件 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-4">
+    <!-- 成就墙·金杯触发器共享样式：大厅入口与各游戏入口共用同一金杯组件 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-8">
 </head>
 <!-- data-fs-keep-title：声明大厅页全屏时标题（副标题+ARCADE）保留在内容流中，
      随 .layout 整体缩放居中，保证"副标题紧挨主标题+卡片上方"的展示关系与非全屏一致；
@@ -1850,11 +1865,64 @@
     <!-- 固定按钮区（position:fixed 右上角）：声音键（单击=静音/恢复，长按或右键=音量面板）+ 全屏切换 -->
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
     <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
-    <!-- 成就殿堂入口：迷你相片墙形态（六张微缩相片取六款游戏主题色，鎏金题注+总数徽标），
-         固定右下角（宽 150px 与声音/全屏按钮一致）；点击开合全站成就殿堂鎏金覆盖层。
+    <!-- 成就殿堂入口：鎏金大金杯形态（单座金杯——杯口沿/杯身/杯耳/杯颈/双层底座金色渐变精修，
+         颈间系红蝴蝶结（双环左右环抱 + 结心 + 两条燕尾短垂带），鎏金题注+总数徽标），
+         固定左上角（72×72 正方形：上缘与音效键持平 / 底边与全屏键下缘持平）；点击开合全站成就殿堂鎏金覆盖层。
          index.js 的投币豁免、点外关闭均以 #trophyToggle 判定，改造样式时须保留该 id -->
     <button id="trophyToggle" class="achWallTrigger awt-hall" type="button" style="--awt-h: #ffd23e" title="全站成就殿堂（58 项，快捷键 V）">
-        <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
+        <svg class="aw-cup" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <defs>
+                <linearGradient id="awcGold" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#fff3b0"/>
+                    <stop offset="0.42" stop-color="#ffd23e"/>
+                    <stop offset="0.72" stop-color="#e3a52a"/>
+                    <stop offset="1" stop-color="#b97e14"/>
+                </linearGradient>
+                <linearGradient id="awcLip" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#fff9d6"/>
+                    <stop offset="1" stop-color="#d9a325"/>
+                </linearGradient>
+                <linearGradient id="awcRibbon" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ff8a7a"/>
+                    <stop offset="0.55" stop-color="#e03e34"/>
+                    <stop offset="1" stop-color="#9c2018"/>
+                </linearGradient>
+                <linearGradient id="awcBase" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ffe79a"/>
+                    <stop offset="0.55" stop-color="#d99a26"/>
+                    <stop offset="1" stop-color="#a86e0e"/>
+                </linearGradient>
+            </defs>
+            <!-- 杯耳：左右对称弯钩 -->
+            <path d="M15 12C7 12 7 24 17 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
+            <path d="M49 12C57 12 57 24 47 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
+            <!-- 杯口沿 + 杯身（纵向金色渐变） -->
+            <rect x="12.5" y="6" width="39" height="4.5" rx="2" fill="url(#awcLip)"/>
+            <path d="M14 8h36v7c0 13-7.5 19-18 19-10.5 0-18-6-18-19z" fill="url(#awcGold)"/>
+            <!-- 杯颈 + 双层底座 -->
+            <path d="M28 33h8l2.5 8h-13z" fill="url(#awcBase)"/>
+            <rect x="24" y="41" width="16" height="4.5" rx="1" fill="url(#awcBase)"/>
+            <rect x="19.5" y="45.5" width="25" height="6" rx="1.5" fill="url(#awcBase)"/>
+            <!-- 颈间蝴蝶结：双环自结心向左右环抱 + 结心锥鼓 + 两条短垂带（燕尾开衩），
+                 后绘前置系于杯颈，飘带不再自杯底垂落 -->
+            <path d="M31 35.4C27.8 31 21 29.4 17.8 31.8C14.6 34.2 17 38.6 21.6 39C25.6 39.4 29.2 37.9 31 36.6Z" fill="url(#awcRibbon)"/>
+            <path d="M33 35.4C36.2 31 43 29.4 46.2 31.8C49.4 34.2 47 38.6 42.4 39C38.4 39.4 34.8 37.9 33 36.6Z" fill="url(#awcRibbon)"/>
+            <!-- 环内暗折痕：暗示绸带对折层次 -->
+            <path d="M29.4 36.8C26 35.6 21.6 34.4 18.6 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
+            <path d="M34.6 36.8C38 35.6 42.4 34.4 45.4 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
+            <!-- 双垂带：自结心下方左右分开，末端燕尾开衩 -->
+            <path d="M30.5 38.2C29.1 40.3 28.2 41.9 27.6 43.6L29.6 42.9 30.2 44.4C30.9 42.1 31.4 40.3 31.9 39.1Z" fill="url(#awcRibbon)"/>
+            <path d="M33.5 38.2C34.9 40.3 35.8 41.9 36.4 43.6L34.4 42.9 33.8 44.4C33.1 42.1 32.6 40.3 32.1 39.1Z" fill="url(#awcRibbon)"/>
+            <!-- 结心：小鼓形收束 + 暗红折痕 -->
+            <ellipse cx="32" cy="36.3" rx="2.7" ry="2.9" fill="url(#awcRibbon)"/>
+            <path d="M32 34.1v4.4" stroke="#7d1710" stroke-opacity="0.6" stroke-width="0.9" stroke-linecap="round"/>
+            <!-- 飘带高光：双环上缘细亮线 -->
+            <path d="M19.8 33.6C21.8 31.6 24 30.6 26.2 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
+            <path d="M44.2 33.6C42.2 31.6 40 30.6 37.8 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
+            <!-- 杯身高光弧 + 右上星芒点缀 -->
+            <path d="M19 12c0 8 2.5 12.5 7 15" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.6" stroke-linecap="round"/>
+            <path d="M46.5 13.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff8d9" opacity="0.9"/>
+        </svg>
         <span class="awt-caption"><span class="awt-label">成就殿堂</span><span class="awt-key">58</span></span>
     </button>
     <!-- 大厅主布局容器：包住标题区/卡片区/页脚，供 fullscreen.js 全屏时整体缩放居中 -->
@@ -1872,7 +1940,7 @@
          不再有卡片逐一浮现的过程；每张卡片含一个 160×160 Canvas，由 index.js 驱动对应的预览动画 -->
     <div class="cards">
         <!-- 贪吃蛇卡片：预览 id=snakePreview，霓虹绿色 -->
-        <a class="card" href="snake.html?v=20261105-5" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
+        <a class="card" href="snake.html?v=20261105-7" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-snake" hidden></span>
             <canvas id="snakePreview" width="160" height="160"></canvas>
@@ -1882,7 +1950,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 俄罗斯方块卡片：预览 id=tetrisPreview，霓虹青色 -->
-        <a class="card" href="tetris.html?v=20261105-5" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
+        <a class="card" href="tetris.html?v=20261105-7" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-tetris" hidden></span>
             <canvas id="tetrisPreview" width="160" height="160"></canvas>
@@ -1892,7 +1960,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 吃豆人卡片：预览 id=pacPreview，霓虹黄色 -->
-        <a class="card" href="pac.html?v=20261105-5" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
+        <a class="card" href="pac.html?v=20261105-7" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pac" hidden></span>
             <canvas id="pacPreview" width="160" height="160"></canvas>
@@ -1902,7 +1970,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 小蜜蜂卡片：预览 id=beePreview，霓虹粉色 -->
-        <a class="card" href="bee.html?v=20261105-6" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
+        <a class="card" href="bee.html?v=20261105-8" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-bee" hidden></span>
             <canvas id="beePreview" width="160" height="160"></canvas>
@@ -1912,7 +1980,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 3D弹球卡片：预览 id=pinballPreview，霓虹紫色 -->
-        <a class="card" href="pinball.html?v=20261105-5" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
+        <a class="card" href="pinball.html?v=20261105-7" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pinball" hidden></span>
             <canvas id="pinballPreview" width="160" height="160"></canvas>
@@ -1922,7 +1990,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 华容道卡片：预览 id=klotskiPreview，霓虹赤红色（与游戏墙体色同源） -->
-        <a class="card" href="klotski.html?v=20261105-5" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
+        <a class="card" href="klotski.html?v=20261105-7" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-klotski" hidden></span>
             <canvas id="klotskiPreview" width="160" height="160"></canvas>
@@ -1932,7 +2000,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 1024卡片：预览 id=n1024Preview，霓虹橙色（数字方块合并玩法，三档难度） -->
-        <a class="card" href="1024.html?v=20261105-5" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
+        <a class="card" href="1024.html?v=20261105-7" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-1024" hidden></span>
             <canvas id="n1024Preview" width="160" height="160"></canvas>
@@ -2003,6 +2071,6 @@
     <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，大厅键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-1"></script>
-    <script src="index.js?v=20261105-7"></script>
+    <script src="index.js?v=20261105-9"></script>
 </body>
 </html>

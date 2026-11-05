@@ -6,7 +6,7 @@
           HOLD 暂存预览 150×120 / NEXT 后续三块预览 150×240 / STATS / KEYS）
      脚本：audio.js 公共音效库 / fx.js 画布与特效库 / fullscreen.js 全屏控制 /
           tetris.js 游戏逻辑（含 7-bag / Hold / SRS / Lock Delay / DAS-ARR / 成就）
-     共享：ach-trigger.css / ach-trigger.js 相片墙成就墙触发器（点击等效按 V 开合成就墙）
+     共享：ach-trigger.css / ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
 <head>
@@ -789,16 +789,68 @@
             #startScreen, #gameOverScreen, #pauseScreen { animation: none; }
         }
     </style>
-    <!-- 成就墙·相片墙触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-4">
+    <!-- 成就墙·金杯触发器共享样式 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-8">
 </head>
 <body>
     <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
     <div id="edgeBeam" aria-hidden="true"></div>
     <!-- 固定按钮区：成就墙入口（左上）+ 音效开关 / 全屏切换（右上） -->
-    <!-- 成就墙·相片墙触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
+    <!-- 成就墙·金杯触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
     <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-blue)" title="成就墙（快捷键 V）">
-        <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
+        <svg class="aw-cup" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <defs>
+                <linearGradient id="awcGold" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#fff3b0"/>
+                    <stop offset="0.42" stop-color="#ffd23e"/>
+                    <stop offset="0.72" stop-color="#e3a52a"/>
+                    <stop offset="1" stop-color="#b97e14"/>
+                </linearGradient>
+                <linearGradient id="awcLip" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#fff9d6"/>
+                    <stop offset="1" stop-color="#d9a325"/>
+                </linearGradient>
+                <linearGradient id="awcRibbon" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ff8a7a"/>
+                    <stop offset="0.55" stop-color="#e03e34"/>
+                    <stop offset="1" stop-color="#9c2018"/>
+                </linearGradient>
+                <linearGradient id="awcBase" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ffe79a"/>
+                    <stop offset="0.55" stop-color="#d99a26"/>
+                    <stop offset="1" stop-color="#a86e0e"/>
+                </linearGradient>
+            </defs>
+            <!-- 杯耳：左右对称弯钩 -->
+            <path d="M15 12C7 12 7 24 17 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
+            <path d="M49 12C57 12 57 24 47 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
+            <!-- 杯口沿 + 杯身（纵向金色渐变） -->
+            <rect x="12.5" y="6" width="39" height="4.5" rx="2" fill="url(#awcLip)"/>
+            <path d="M14 8h36v7c0 13-7.5 19-18 19-10.5 0-18-6-18-19z" fill="url(#awcGold)"/>
+            <!-- 杯颈 + 双层底座 -->
+            <path d="M28 33h8l2.5 8h-13z" fill="url(#awcBase)"/>
+            <rect x="24" y="41" width="16" height="4.5" rx="1" fill="url(#awcBase)"/>
+            <rect x="19.5" y="45.5" width="25" height="6" rx="1.5" fill="url(#awcBase)"/>
+            <!-- 颈间蝴蝶结：双环自结心向左右环抱 + 结心锥鼓 + 两条短垂带（燕尾开衩），
+                 后绘前置系于杯颈，飘带不再自杯底垂落 -->
+            <path d="M31 35.4C27.8 31 21 29.4 17.8 31.8C14.6 34.2 17 38.6 21.6 39C25.6 39.4 29.2 37.9 31 36.6Z" fill="url(#awcRibbon)"/>
+            <path d="M33 35.4C36.2 31 43 29.4 46.2 31.8C49.4 34.2 47 38.6 42.4 39C38.4 39.4 34.8 37.9 33 36.6Z" fill="url(#awcRibbon)"/>
+            <!-- 环内暗折痕：暗示绸带对折层次 -->
+            <path d="M29.4 36.8C26 35.6 21.6 34.4 18.6 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
+            <path d="M34.6 36.8C38 35.6 42.4 34.4 45.4 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
+            <!-- 双垂带：自结心下方左右分开，末端燕尾开衩 -->
+            <path d="M30.5 38.2C29.1 40.3 28.2 41.9 27.6 43.6L29.6 42.9 30.2 44.4C30.9 42.1 31.4 40.3 31.9 39.1Z" fill="url(#awcRibbon)"/>
+            <path d="M33.5 38.2C34.9 40.3 35.8 41.9 36.4 43.6L34.4 42.9 33.8 44.4C33.1 42.1 32.6 40.3 32.1 39.1Z" fill="url(#awcRibbon)"/>
+            <!-- 结心：小鼓形收束 + 暗红折痕 -->
+            <ellipse cx="32" cy="36.3" rx="2.7" ry="2.9" fill="url(#awcRibbon)"/>
+            <path d="M32 34.1v4.4" stroke="#7d1710" stroke-opacity="0.6" stroke-width="0.9" stroke-linecap="round"/>
+            <!-- 飘带高光：双环上缘细亮线 -->
+            <path d="M19.8 33.6C21.8 31.6 24 30.6 26.2 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
+            <path d="M44.2 33.6C42.2 31.6 40 30.6 37.8 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
+            <!-- 杯身高光弧 + 右上星芒点缀 -->
+            <path d="M19 12c0 8 2.5 12.5 7 15" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.6" stroke-linecap="round"/>
+            <path d="M46.5 13.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff8d9" opacity="0.9"/>
+        </svg>
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
@@ -922,7 +974,7 @@
     <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-1"></script>
-    <script src="ach-trigger.js?v=20261105-1"></script>
+    <script src="ach-trigger.js?v=20261105-4"></script>
     <script src="tetris.js?v=20261105-2"></script>
 </body>
 </html>

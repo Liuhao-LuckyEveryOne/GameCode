@@ -1,18 +1,21 @@
 /* ======================================================================
- * 成就墙 · 相片墙触发器（全站共享样式）v1.0 (20261105)
- * 以「迷你相片墙」示意成就陈列：六张微缩相片（色相取六款游戏主题色）
- * 微倾钉挂于暗色玻璃底板上，悬停时依次摆正上浮提亮 + 斜向光泽掠过，
+ * 成就墙 · 金杯触发器（全站共享样式）v1.4 (20261105)
+ * 以「一座鎏金大金杯 + 颈间红蝴蝶结」示意成就陈列：杯口沿 / 杯身 / 杯耳 /
+ * 杯颈 / 双层底座金色渐变精修，杯颈处系一枚红绸蝴蝶结（双环左右环抱、
+ * 结心收束 + 两条燕尾短垂带），替代此前的自杯底垂落长飘带，
+ * 悬停时金杯上浮增辉并泛出鎏金光晕，
  * 替代传统文字按钮，成为各页成就墙 / 成就殿堂的炫酷可视化入口。
+ * （v1.0 相片墙 → v1.1 奖杯龛 → v1.2 领奖台金字塔 → v1.3 单座鎏金金杯+飘带
+ *    → v1.4 飘带改系颈间蝴蝶结）
  * 使用方式：
- *   - 结构：button.achWallTrigger > .awt-grid(6×.awt-tile)
- *           + .awt-caption(.awt-label 文案 + .awt-key 徽标)
+ *   - 结构：button.achWallTrigger > svg.aw-cup（内联金杯，渐变随 SVG 自带）
+ *           + .awt-caption（.awt-label 文案 + .awt-key 徽标）
  *   - 主题色：元素上以 style="--awt-h:<颜色>" 指定（描边 / 标签辉光取此色）
  *   - 尺寸：组件内部全部以 em 度量，改 font-size 即整体缩放
- *           （游戏页与大厅统一 9.8px 小尺寸档：高 72px、宽 117px——
- *           底边与页内全屏按钮底边对齐、宽度与覆盖层「✕ 返回游戏厅」按钮持平）
- *   - 定位：游戏页加 .awt-fixed（固定左上角原「← 游戏厅」返回链接位，
- *           底边 88px 与右上角全屏按钮底边平齐）；大厅自带 .awt-hall 定位规则
- *           （同款左上角，选择器带元素名压过基座定位）
+ *           （游戏页与大厅统一 9.8px 小尺寸档：72×72 正方形——
+ *           上缘与音效键 top 16px 持平，底边 16+72=88px 与全屏键下缘持平）
+ *   - 定位：游戏页加 .awt-fixed（固定左上角原「← 游戏厅」返回链接位）；
+ *           大厅自带 .awt-hall 定位规则（同款左上角，选择器带元素名压过基座定位）
  * 接线：游戏页引入 ach-trigger.js（点击等效按 V）；大厅由 index.js 绑定
  * ==================================================================== */
 
@@ -23,11 +26,12 @@
     display: inline-flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.4em;
+    justify-content: center; /* 内容在锁高按钮内垂直居中（72px 正方形） */
+    gap: 0.3em;
     width: auto;
     height: auto;
     margin: 0;
-    padding: 0.55em 0.75em 0.5em;
+    padding: 0.45em 0.5em;
     line-height: 1.1;
     font-family: 'Press Start 2P', monospace;
     color: var(--awt-h);
@@ -65,48 +69,24 @@
 .achWallTrigger:hover::after,
 .achWallTrigger:focus-visible::after { transform: translateX(440%) rotate(10deg); }
 
-/* ---------- 相片墙：3×2 微缩相片，色相依次取六款游戏主题色 ---------- */
-.awt-grid {
-    display: grid;
-    grid-template-columns: repeat(3, auto);
-    gap: 0.4em 0.45em;
-}
-/* 每张「相片」= 米白相纸边框 + 底部厚白脚（相片墙识别特征）+ 投影；随 em 缩放 */
-.awt-tile {
-    --h: 48; /* 相片芯色相（HSL hue），逐张覆盖 */
-    width: 1.9em;
-    height: 2.2em;
-    padding: 0.14em 0.14em 0.42em;
-    background: linear-gradient(#f7f2e4, #dcd5c0);
-    border-radius: 0.12em;
-    box-shadow: 0 0.18em 0.45em rgba(0, 0, 0, 0.55);
+/* ---------- 鎏金金杯：形体为各页内联 SVG（svg.aw-cup）——杯口沿 / 杯身 /
+   杯耳 / 杯颈 / 双层底座金色渐变 + 颈间红绸蝴蝶结（双环 + 结心 + 燕尾短垂带）
+   + 高光星芒；此处仅控制尺寸 / 落影 / 悬停反馈，渐变与形体由内联 SVG 自带 defs 承载 ---------- */
+.aw-cup {
+    display: block;
+    width: 4.5em;
+    height: 4.5em;
+    filter: drop-shadow(0 0.18em 0.3em rgba(0, 0, 0, 0.55)), /* 金杯落影：脱离按钮底面 */
+            drop-shadow(0 0 0.45em rgba(255, 210, 62, 0.38)); /* 鎏金微辉：静态也泛金 */
     transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.35s ease;
 }
-/* 相片芯：主题色对角渐变 + 左上高光斑 + 内辉光（radial 叠 linear 双层背景） */
-.awt-tile::before {
-    content: '';
-    display: block;
-    width: 100%;
-    height: 100%;
-    border-radius: 0.06em;
-    background:
-        radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.55) 0 0.22em, transparent 65%),
-        linear-gradient(140deg, hsl(var(--h) 92% 62%), hsl(calc(var(--h) + 46) 85% 40%));
-    box-shadow: inset 0 0 0.3em hsl(var(--h) 92% 65% / 0.85);
-}
-/* 钉挂姿态：逐张微倾 + 轻微错位模拟手工钉挂；色相 140/190/48/330/28/270
-   依次对应 snake 绿 / tetris 青 / pac 黄 / bee 粉 / pinball 橙 / klotski 紫 */
-.awt-tile:nth-child(1) { --h: 140; transform: rotate(-7deg) translateY(0.06em); }
-.awt-tile:nth-child(2) { --h: 190; transform: rotate(5deg) translateY(-0.03em); transition-delay: 0.04s; }
-.awt-tile:nth-child(3) { --h: 48;  transform: rotate(-4deg) translateY(0.08em); transition-delay: 0.08s; }
-.awt-tile:nth-child(4) { --h: 330; transform: rotate(6deg) translateY(-0.05em); transition-delay: 0.12s; }
-.awt-tile:nth-child(5) { --h: 28;  transform: rotate(-6deg) translateY(0.04em); transition-delay: 0.16s; }
-.awt-tile:nth-child(6) { --h: 270; transform: rotate(4deg) translateY(0.07em); transition-delay: 0.20s; }
-/* 悬停：相片依次摆正上浮放大 + 提亮（transition-delay 形成左上→右下的传播涟漪） */
-.achWallTrigger:hover .awt-tile,
-.achWallTrigger:focus-visible .awt-tile {
-    transform: rotate(0deg) translateY(-0.14em) scale(1.15);
-    filter: brightness(1.3) saturate(1.15);
+/* 悬停：金杯上浮放大 + 增辉泛出鎏金光晕（drop-shadow 保留金杯剪影形状辉光） */
+.achWallTrigger:hover .aw-cup,
+.achWallTrigger:focus-visible .aw-cup {
+    transform: translateY(-0.12em) scale(1.07);
+    filter: drop-shadow(0 0.22em 0.34em rgba(0, 0, 0, 0.55)),
+            drop-shadow(0 0 0.62em rgba(255, 210, 62, 0.6)),
+            brightness(1.12);
 }
 
 /* ---------- 题注：名称 + 徽标（游戏页显示按键 V / 大厅显示总数 58） ---------- */
@@ -131,23 +111,21 @@
 }
 
 /* ---------- 游戏页固定变体：左上角小尺寸（原「← 游戏厅」返回链接位），
-   底边 16+72=88px 与右上角全屏按钮（top 60px + 高 28px）底边精确对齐，
-   宽 117px 与覆盖层左下角「✕ 返回游戏厅」按钮实测宽度持平 ---------- */
+   72×72 正方形：上缘与音效键 top 16px 持平，底边 16+72=88px 与全屏键下缘持平 ---------- */
 .awt-fixed {
     position: fixed;
     left: 16px;
     top: 16px;
     z-index: 10;
-    height: 72px;           /* 高 72px：底边恰落全屏按钮底边线上（16+72=88） */
-    width: 117px;           /* 宽 117px：与覆盖层「✕ 返回游戏厅」按钮等宽（内容+内边距撑开值） */
+    height: 72px;           /* 正方形锁高：与音效键上缘 / 全屏键下缘双对齐 */
+    width: 72px;            /* 同高同宽：正方形金杯按钮 */
     box-sizing: border-box; /* height/width 口径含内边距与描边；显式声明不依赖页面全局规则 */
-    justify-content: center;/* flex 纵向布局：内容在 72px 高度内垂直居中充满 */
-    font-size: 9.8px;       /* em 总缩放：7.14em×9.8px + 2px 描边 ≈ 72px，恰好充满按钮高度 */
+    font-size: 9.8px;       /* em 总缩放：金杯 4.5em + 题注 + 内边距 ≈ 70px，居中充满按钮 */
 }
 
-/* 减动效偏好：停用扫光与全部过渡，仅保留静态相片墙形态 */
+/* 减动效偏好：停用扫光与全部过渡，仅保留静态金杯形态 */
 @media (prefers-reduced-motion: reduce) {
     .achWallTrigger,
     .achWallTrigger::after,
-    .awt-tile { transition: none !important; }
+    .aw-cup { transition: none !important; }
 }

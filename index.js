@@ -1691,8 +1691,12 @@ document.addEventListener('keydown', e => {
         setTimeout(reveal, LOADING_TIMEOUT_MS);
         const close = document.createElement('button');
         close.className = 'overlay-close';
-        close.textContent = '✕ 返回游戏厅';
-        // ✕ 按钮配色跟随所点卡片主题色（与该游戏页音效/全屏开关、页内返回链接同源）
+        // 返回按钮图案化：像素小房子图标示意（样式见 index.html .close-ico，宽 72px 同左上角金杯入口），
+        // 去文字后语义由 aria-label / title 承载，读屏与悬停提示仍为「返回游戏厅」
+        close.innerHTML = '<i class="close-ico" aria-hidden="true"></i>';
+        close.setAttribute('aria-label', '返回游戏厅');
+        close.title = '返回游戏厅';
+        // 返回按钮配色跟随所点卡片主题色（与该游戏页音效/全屏开关同源）
         close.style.setProperty('--close-glow', glowRgb || '255, 210, 62');
         close.addEventListener('click', closeGame);
         overlay.appendChild(frame);
