@@ -1,7 +1,7 @@
 ﻿<!DOCTYPE html>
 <!-- ==================================================================
      小蜜蜂游戏页（固定射击）
-     结构：左上角返回链接 → 右上角音效开关/全屏切换 → 标题 →
+     结构：左上角成就墙入口 → 右上角音效开关/全屏切换 → 标题 →
           主布局（左侧游戏容器：480×560 画布 + 开始/结束两块遮罩 +
           右侧 STATS 记分面板 + KEYS 键位说明栏）
      玩法：蜂群横移下压 + 随机俯冲 + 精英蜂 + 每 5 波 Boss 战；
@@ -76,7 +76,7 @@
         #edgeBeam {
             position: fixed;
             inset: 0;
-            z-index: 6; /* 置于暗角之上、返回链接与右上角按钮(10)之下：不挡操作 */
+            z-index: 6; /* 置于暗角之上、左上角成就墙入口与右上角按钮(10)之下：不挡操作 */
             pointer-events: none;
             padding: 4px; /* 光带厚度 */
             /* 遮罩挖空内容区：仅保留 padding 形成的四周环形带 */
@@ -107,25 +107,6 @@
         /* 光束匀速自转一周：形成光带沿四边连续巡游的观感 */
         @keyframes beamOrbit {
             to { transform: rotate(1turn); }
-        }
-        /* ---------- 返回链接：固定左上角，回到游戏大厅 ---------- */
-        .back-link {
-            position: fixed;
-            top: 16px;
-            left: 16px;
-            z-index: 10;
-            padding: 8px 14px;
-            color: var(--neon-pink); /* 与右上音效/全屏开关同主题色 */
-            text-decoration: none;
-            font-size: 13px;
-            letter-spacing: 2px;
-            border: 1px solid rgba(255, 62, 165, 0.4);
-            border-radius: 6px;
-            transition: all 0.2s;
-        }
-        .back-link:hover {
-            background: rgba(255, 62, 165, 0.12);
-            box-shadow: 0 0 12px rgba(255, 62, 165, 0.5);
         }
         /* ---------- 音效开关按钮（固定右上角，粉色随蜜蜂页主题、对齐大厅卡片霓虹色，覆盖全局 button 主题底色） ---------- */
         .sound-toggle {
@@ -670,13 +651,12 @@
         button, a { touch-action: manipulation; }
     </style>
     <!-- 成就墙·相片墙触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-1">
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-4">
 </head>
 <body>
     <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
     <div id="edgeBeam" aria-hidden="true"></div>
-    <!-- 固定按钮区：返回链接（左上）+ 音效开关 / 全屏切换（右上） -->
-    <a class="back-link" href="index.html?v=20261105-1">&larr; 游戏厅</a>
+    <!-- 固定按钮区：成就墙入口（左上）+ 音效开关 / 全屏切换（右上） -->
     <!-- 成就墙·相片墙触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
     <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-pink)" title="成就墙（快捷键 V）">
         <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
@@ -771,10 +751,10 @@
     <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → bee.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
     <script src="audio.js?v=20261105-1"></script>
     <script src="fx.js?v=20261104-5"></script>
-    <script src="fullscreen.js?v=20261104-3"></script>
+    <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-1"></script>
     <script src="ach-trigger.js?v=20261105-1"></script>
-    <script src="bee.js?v=20261105-3"></script>
+    <script src="bee.js?v=20261105-4"></script>
 </body>
 </html>

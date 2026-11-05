@@ -406,13 +406,26 @@
             pointer-events: none;
         }
         /* ---------- 成就殿堂：相片墙入口 + 全屏鎏金覆盖层（全面超越游戏内成就墙的旗舰展示） ---------- */
-        /* 相片墙入口（.achWallTrigger 基座样式见共享 ach-trigger.css）：固定于全屏按钮下方一行
-           （声音键 → 全屏键 → 成就殿堂相片墙），字号 11px 较游戏页入口整体放大一号；
+        /* 相片墙入口（.achWallTrigger 基座样式见共享 ach-trigger.css）：固定左上角，
+           原返回链接位腾给入口；top 16 + 高 72 = 底边 88px，与右上角全屏按钮
+           （top 60 + 高 28）底边精确对齐；宽 117px 与覆盖层「✕ 返回游戏厅」按钮持平；
+           字号 9.8px 与游戏页入口一致（小尺寸档）；
            z-index 与按钮簇(10)一致。
            选择器带元素名 button 提高优先级（0,1,1 胜 0,1,0）：本内联样式表先于 ach-trigger.css
-           加载，同优先级下外部表的 .achWallTrigger{position:relative} 会反超盖掉 fixed 定位——
-           入口将回落文档流左上角，并以自身高度撑高 100vh 布局引发整页滚动条 */
-        button.awt-hall { position: fixed; top: 104px; right: 16px; z-index: 10; font-size: 11px; }
+           加载，同优先级下外部表的 .achWallTrigger{position:relative;height:auto;width:auto}
+           会反超盖掉 fixed 定位与固定高宽——入口将回落文档流，并以自身高度撑高 100vh
+           布局引发整页滚动条 */
+        button.awt-hall {
+            position: fixed;
+            left: 16px;
+            top: 16px;
+            z-index: 10;
+            height: 72px;           /* 高 72px：底边 16+72=88px 恰落全屏按钮底边线上 */
+            width: 117px;           /* 宽 117px：与覆盖层「✕ 返回游戏厅」按钮实测宽度持平 */
+            box-sizing: border-box; /* height/width 口径含内边距与描边 */
+            justify-content: center;/* flex 纵向布局：内容在 72px 高度内垂直居中充满 */
+            font-size: 9.8px;       /* 与游戏页 .awt-fixed 同款小尺寸档缩放 */
+        }
         /* 殿堂容器：全屏固定覆盖层，flex 居中殿堂面板；
            结构 = 暗幕（径向暗角 + 磨砂）→ 旋转金色神辉光束 → 漂浮金尘 → 居中鎏金面板 */
         #trophyHall {
@@ -482,7 +495,7 @@
         /* 殿堂面板：鎏金双层描边 + 深色琉璃底，弹性浮现进场；列向布局（饰条/头部/主视觉/行列表/页脚） */
         .th-panel {
             position: relative;
-            width: min(680px, 92vw);
+            width: min(860px, 94vw);
             max-height: min(86vh, 780px);
             display: flex;
             flex-direction: column;
@@ -602,13 +615,17 @@
             transition: background 0.2s, transform 0.2s;
         }
         .th-close:hover { background: rgba(255, 210, 62, 0.15); transform: scale(1.06); }
-        /* 主视觉区：132px 总进度环（开幕弧线扫入 + 光晕呼吸 + 三星公转）+ 称号与里程碑侧栏 */
+        /* 主视觉区：132px 总进度环（开幕弧线扫入 + 光晕呼吸 + 三星公转）+ 称号与里程碑侧栏；
+           面板加宽后限宽居中，环与侧栏不随相片墙散开 */
         .th-hero {
             display: flex;
             align-items: center;
             gap: 24px;
             padding: 6px 20px 12px;
             flex: none;
+            width: 100%;
+            max-width: 660px;
+            margin: 0 auto;
         }
         .th-ring-wrap { position: relative; width: 132px; height: 132px; flex: none; }
         .th-ring-wrap > svg { display: block; transform: rotate(-90deg); } /* 进度环从 12 点方向起画 */
@@ -728,98 +745,129 @@
             0%, 100% { box-shadow: 0 0 0 rgba(255, 210, 62, 0); border-color: rgba(255, 255, 255, 0.22); }
             50% { box-shadow: 0 0 9px rgba(255, 210, 62, 0.5); border-color: rgba(255, 210, 62, 0.6); }
         }
-        /* 行列表：可滚动区（矮视口时裁切滚动） */
-        .th-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 14px 14px; }
-        .th-grid { display: flex; flex-direction: column; gap: 8px; }
-        /* 行卡片：瀑布交错入场（--i 序号内联注入驱动 animation-delay），
-           悬停浮起 + 描金边 + 环境辉光；全成就行鎏金底 + 内金光呼吸 */
-        .th-row {
-            --row-hue: #ffd23e; /* 游戏主题色（行内 style 注入），徽章/进度条引用 */
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 9px 12px;
-            font-size: 10px;
-            color: #c8d4f2;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-            border: 1px solid rgba(255, 255, 255, 0.09);
-            border-radius: 9px;
-            transition: transform 0.2s ease-out, border-color 0.2s, box-shadow 0.2s, background 0.2s;
-            animation: thRowIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
-            animation-delay: calc(0.14s + var(--i) * 0.05s);
-        }
-        @keyframes thRowIn {
-            from { opacity: 0; transform: translateY(14px) scale(0.97); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .th-row:hover {
-            transform: translateY(-2px);
-            border-color: rgba(255, 210, 62, 0.4);
-            background: rgba(255, 255, 255, 0.07);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35), 0 0 12px rgba(255, 210, 62, 0.12);
-        }
-        .th-row.is-done {
-            background: linear-gradient(180deg, rgba(255, 210, 62, 0.13), rgba(255, 154, 62, 0.07));
-            border-color: rgba(255, 210, 62, 0.55);
-            animation: thRowIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both,
-                       thDoneBreath 2.8s ease-in-out calc(0.7s + var(--i) * 0.05s) infinite;
-        }
-        @keyframes thDoneBreath {
-            0%, 100% { box-shadow: inset 0 0 12px rgba(255, 210, 62, 0.10); }
-            50% { box-shadow: inset 0 0 20px rgba(255, 210, 62, 0.22); }
-        }
-        /* 游戏铭牌：主题色（currentColor）描边小铭牌 */
-        .th-badge {
-            width: 64px;
-            padding: 4px 0;
-            text-align: center;
-            font-size: 8px;
-            letter-spacing: 1px;
-            color: var(--row-hue);
-            border: 1px solid currentColor;
-            border-radius: 4px;
-            text-shadow: 0 0 7px currentColor;
-            background: rgba(0, 0, 0, 0.30);
+        /* 相片墙：可滚动区（矮视口时裁切滚动） */
+        .th-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 18px 16px; }
+        .th-grid { display: flex; flex-direction: column; gap: 18px; }
+        /* 分区墙区：主题色铭牌行（图钉 + 游戏名 + 计数 + 点亮奖杯 + 渐隐细线）
+           + 拍立得相片流式挂墙；--hue/--hue-bg 由 JS 按游戏主题色注入 */
+        .th-sec { --hue: #ffd23e; --hue-bg: #ffd23e2e; }
+        .th-sec-head { display: flex; align-items: center; gap: 9px; }
+        .th-sec-head.th-in { animation: thSecIn 0.45s ease-out both; animation-delay: var(--d); }
+        /* 图钉：主题色球钉 + 高光点 + 辉光 */
+        .th-pin {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
             flex: none;
+            background: radial-gradient(circle at 30% 28%, #fff 8%, var(--hue) 46%, rgba(0, 0, 0, 0.45));
+            box-shadow: 0 0 8px var(--hue);
         }
-        /* 计数：主数字金色，斜杠与总数弱化灰 */
-        .th-count { width: 44px; text-align: right; color: #ffd23e; flex: none; }
-        .th-count i { font-style: normal; color: #8f9bc4; font-size: 8px; }
-        /* 进度条：条内斜向高光循环流光扫过（reduced-motion 停用） */
-        .th-bar {
-            flex: 1;
-            height: 7px;
-            position: relative;
-            background: rgba(255, 255, 255, 0.08);
-            border-radius: 4px;
-            overflow: hidden;
+        .th-sec-head b {
+            font-weight: normal;
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: var(--hue);
+            text-shadow: 0 0 8px var(--hue);
         }
-        .th-bar i {
-            position: absolute;
-            inset: 0 auto 0 0;
-            display: block;
-            background-image: linear-gradient(90deg, var(--row-hue), #ffd23e);
-            border-radius: 4px;
-            transition: width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1);
-        }
-        .th-bar i::after {
-            content: '';
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: 0;
-            width: 40%;
-            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.5), transparent);
-            transform: translateX(-160%) skewX(-16deg);
-            animation: thSweep 2.6s ease-in-out infinite;
-        }
-        /* 行尾奖杯：未成暗灰轮廓；全成金色点亮 + 周期辉光呼吸 */
-        .th-cup { width: 16px; height: 16px; color: rgba(143, 155, 196, 0.35); flex: none; transition: color 0.3s; }
-        .th-cup svg { display: block; width: 100%; height: 100%; }
-        .th-row.is-done .th-cup { color: #ffd23e; animation: thCupGlow 2.8s ease-in-out infinite; }
+        /* 墙区计数：主数字金色，斜杠与总数弱化灰 */
+        .th-sec-count { color: #ffd23e; font-size: 11px; }
+        .th-sec-count i { font-style: normal; color: #8f9bc4; font-size: 8px; }
+        /* 全成就墙区：铭牌行点亮奖杯 + 周期辉光呼吸 */
+        .th-sec-cup { width: 14px; height: 14px; color: #ffd23e; animation: thCupGlow 2.8s ease-in-out infinite; }
+        .th-sec-cup svg { display: block; width: 100%; height: 100%; }
         @keyframes thCupGlow {
             0%, 100% { filter: drop-shadow(0 0 4px rgba(255, 210, 62, 0.55)); }
             50% { filter: drop-shadow(0 0 9px rgba(255, 210, 62, 0.95)); }
+        }
+        .th-sec-line {
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, var(--hue), rgba(255, 255, 255, 0.08) 45%, transparent);
+            opacity: 0.5;
+        }
+        .th-sec-wall { display: flex; flex-wrap: wrap; gap: 16px 9px; padding-top: 8px; }
+        /* 拍立得成就相片：白相纸 + 撕口胶带 + 微倾钉墙（--tilt/--tape/--d/--hue 由 JS 注入）；
+           悬停摆正放大浮现；未解锁整卡灰暗、悬停「显影」偷看 */
+        .th-photo {
+            position: relative;
+            width: 88px;
+            margin: 7px 0 0;
+            padding: 6px 6px 7px;
+            background: linear-gradient(175deg, #fdfdf6, #e6e4d8);
+            border-radius: 3px;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 10px rgba(0, 0, 0, 0.45);
+            transform: rotate(var(--tilt));
+            transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.22s, filter 0.25s;
+        }
+        .th-photo:hover {
+            z-index: 7;
+            transform: rotate(0deg) scale(1.22) translateY(-4px);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55), 0 0 16px rgba(255, 255, 255, 0.28);
+        }
+        /* 胶带：半透明撕口贴条压住相片顶边（clip-path 造不规则撕纸边） */
+        .th-tape {
+            position: absolute;
+            top: -9px;
+            left: 50%;
+            width: 44px;
+            height: 15px;
+            transform: translateX(-50%) rotate(var(--tape));
+            background: linear-gradient(180deg, rgba(255, 250, 225, 0.42), rgba(255, 250, 225, 0.24));
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            clip-path: polygon(4% 0, 96% 7%, 100% 94%, 2% 100%);
+        }
+        /* 图案区：主题色渐变示意底 + emoji 成像（已解锁）；未解锁叠 ? 遮罩 */
+        .th-shot {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 56px;
+            border-radius: 2px;
+            overflow: hidden;
+            background: linear-gradient(160deg, var(--hue-bg), rgba(12, 12, 30, 0.92) 74%);
+        }
+        .th-emoji { font-size: 26px; line-height: 1; text-shadow: 0 0 12px var(--hue-bg); }
+        .th-q {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: rgba(255, 255, 255, 0.14);
+            background: rgba(6, 6, 18, 0.42);
+        }
+        /* 稀有度描金条：未解锁暗槽；解锁后按稀有度点亮（银/青/紫/金），传说条最醒目 */
+        .th-rar { display: block; height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(20, 20, 40, 0.12); }
+        .is-got.rar-common .th-rar { background: #9fb0cd; }
+        .is-got.rar-rare .th-rar { background: linear-gradient(90deg, #35e0ff, #8ef4ff); box-shadow: 0 0 6px rgba(53, 224, 255, 0.5); }
+        .is-got.rar-epic .th-rar { background: linear-gradient(90deg, #b06cff, #d8aaff); box-shadow: 0 0 6px rgba(176, 108, 255, 0.5); }
+        .is-got.rar-legendary .th-rar { background: linear-gradient(90deg, #ff9a3e, #ffd23e, #fff3b8); box-shadow: 0 0 7px rgba(255, 210, 62, 0.6); }
+        /* 相片题名：相纸上的深字；未解锁弱化 */
+        .th-name { margin-top: 6px; text-align: center; font-size: 8px; line-height: 1.3; color: #3c4254; }
+        .th-photo:not(.is-got) { filter: grayscale(0.92) brightness(0.7); }
+        .th-photo:not(.is-got) .th-name { color: #9aa0b0; }
+        /* 未解锁悬停「显影」：短暂恢复彩色偷看目标图案 */
+        .th-photo:not(.is-got):hover { filter: grayscale(0.25) brightness(0.92); }
+        /* 传说相片：金辉呼吸 */
+        .is-got.rar-legendary { animation: thLegendGlow 2.6s ease-in-out infinite; }
+        @keyframes thLegendGlow {
+            0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 10px rgba(0, 0, 0, 0.45); }
+            50% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 10px rgba(0, 0, 0, 0.45), 0 0 18px rgba(255, 210, 62, 0.55); }
+        }
+        /* 开幕钉墙入场：相片从下方缩放弹入并落回各自微倾角
+           （to 帧只写 opacity 不写 transform：fill-mode both 结束后不锁定静态 transform，
+            悬停摆正不受动画填充干扰；JS 仅开幕渲染时挂 .th-in，常规刷新不重播） */
+        .th-photo.th-in { animation: thPhotoIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: var(--d); }
+        @keyframes thPhotoIn {
+            from { opacity: 0; transform: translateY(20px) rotate(calc(var(--tilt) * 3)) scale(0.45); }
+            to { opacity: 1; }
+        }
+        @keyframes thSecIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
         }
         /* 页脚提示：暗金 kbd 字 */
         .th-foot {
@@ -832,14 +880,15 @@
             border-top: 1px solid rgba(255, 255, 255, 0.06);
         }
         .th-foot b { color: #ffd23e; font-weight: normal; }
-        /* 减少动态效果：殿堂全部装饰动画停用、过渡瞬时（面板直显、进度环与进度条直接到位） */
+        /* 减少动态效果：殿堂全部装饰动画停用、过渡瞬时（面板直显、进度环直接到位、相片直接就位） */
         @media (prefers-reduced-motion: reduce) {
-            .th-veil, .th-panel, .th-row, #trophyHall.is-perfect .th-panel,
-            .th-rays, .th-dust, .th-orbit, .th-strip::after, .th-bar i::after,
+            .th-veil, .th-panel, #trophyHall.is-perfect .th-panel,
+            .th-rays, .th-dust, .th-orbit, .th-strip::after,
             .th-title, .th-head .cup-ico, .th-ring-glow, .th-pip.is-next i,
-            .th-row.is-done, .th-row.is-done .th-cup,
+            .th-sec-head.th-in, .th-photo.th-in, .th-sec-cup,
+            .is-got.rar-legendary,
             #trophyHall.is-perfect .th-total, .th-rank-name.th-rank-pop { animation: none; }
-            .th-ring-fg, .th-bar i, .th-pip i { transition: none; }
+            .th-ring-fg, .th-pip i, .th-photo { transition: none; }
         }
         .card .play {
             display: inline-block;
@@ -1651,7 +1700,7 @@
         button, a { touch-action: manipulation; }
     </style>
     <!-- 成就墙·相片墙触发器共享样式：大厅入口与各游戏入口共用同一相片墙组件 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-1">
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-4">
 </head>
 <!-- data-fs-keep-title：声明大厅页全屏时标题（副标题+ARCADE）保留在内容流中，
      随 .layout 整体缩放居中，保证"副标题紧挨主标题+卡片上方"的展示关系与非全屏一致；
@@ -1667,9 +1716,9 @@
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
     <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
     <!-- 成就殿堂入口：迷你相片墙形态（六张微缩相片取六款游戏主题色，鎏金题注+总数徽标），
-         固定右上角全屏按钮下方；点击开合全站成就殿堂鎏金覆盖层。index.js 的投币豁免、
-         点外关闭均以 #trophyToggle 判定，改造样式时须保留该 id -->
-    <button id="trophyToggle" class="achWallTrigger awt-hall" type="button" style="--awt-h: #ffd23e" title="全站成就殿堂（58 项）">
+         固定右下角（宽 150px 与声音/全屏按钮一致）；点击开合全站成就殿堂鎏金覆盖层。
+         index.js 的投币豁免、点外关闭均以 #trophyToggle 判定，改造样式时须保留该 id -->
+    <button id="trophyToggle" class="achWallTrigger awt-hall" type="button" style="--awt-h: #ffd23e" title="全站成就殿堂（58 项，快捷键 V）">
         <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
         <span class="awt-caption"><span class="awt-label">成就殿堂</span><span class="awt-key">58</span></span>
     </button>
@@ -1688,7 +1737,7 @@
          不再有卡片逐一浮现的过程；每张卡片含一个 160×160 Canvas，由 index.js 驱动对应的预览动画 -->
     <div class="cards">
         <!-- 贪吃蛇卡片：预览 id=snakePreview，霓虹绿色 -->
-        <a class="card" href="snake.html?v=20261105-3" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
+        <a class="card" href="snake.html?v=20261105-5" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-snake" hidden></span>
             <canvas id="snakePreview" width="160" height="160"></canvas>
@@ -1698,7 +1747,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 俄罗斯方块卡片：预览 id=tetrisPreview，霓虹青色 -->
-        <a class="card" href="tetris.html?v=20261105-3" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
+        <a class="card" href="tetris.html?v=20261105-5" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-tetris" hidden></span>
             <canvas id="tetrisPreview" width="160" height="160"></canvas>
@@ -1708,7 +1757,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 吃豆人卡片：预览 id=pacPreview，霓虹黄色 -->
-        <a class="card" href="pac.html?v=20261105-3" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
+        <a class="card" href="pac.html?v=20261105-5" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pac" hidden></span>
             <canvas id="pacPreview" width="160" height="160"></canvas>
@@ -1718,7 +1767,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 小蜜蜂卡片：预览 id=beePreview，霓虹粉色 -->
-        <a class="card" href="bee.html?v=20261105-4" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
+        <a class="card" href="bee.html?v=20261105-6" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-bee" hidden></span>
             <canvas id="beePreview" width="160" height="160"></canvas>
@@ -1728,7 +1777,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 3D弹球卡片：预览 id=pinballPreview，霓虹紫色 -->
-        <a class="card" href="pinball.html?v=20261105-3" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
+        <a class="card" href="pinball.html?v=20261105-5" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pinball" hidden></span>
             <canvas id="pinballPreview" width="160" height="160"></canvas>
@@ -1738,7 +1787,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 华容道卡片：预览 id=klotskiPreview，霓虹赤红色（与游戏墙体色同源） -->
-        <a class="card" href="klotski.html?v=20261105-3" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
+        <a class="card" href="klotski.html?v=20261105-5" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-klotski" hidden></span>
             <canvas id="klotskiPreview" width="160" height="160"></canvas>
@@ -1748,7 +1797,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 1024卡片：预览 id=n1024Preview，霓虹橙色（数字方块合并玩法，三档难度） -->
-        <a class="card" href="1024.html?v=20261105-3" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
+        <a class="card" href="1024.html?v=20261105-5" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-1024" hidden></span>
             <canvas id="n1024Preview" width="160" height="160"></canvas>
@@ -1767,8 +1816,11 @@
          暗幕聚光 + 旋转金色神辉 + 漂浮金尘三重氛围铺垫，鎏金面板内含：
          顶部流光镀金饰条 / 奖杯头部（鎏金 shimmer 标题 + 总数奖牌胶囊）/
          主视觉 132px 总进度环（开幕弧线扫入 + 光晕呼吸 + 三星公转）与殿堂称号、四阶里程碑轨道 /
-         七游戏行卡片瀑布入场（主题铭牌 + 计数 + 流光进度条 + 奖杯点亮）。
-         由 index.js 控制显示与关闭（入口按钮、Esc、点击暗幕、✕ 均可关闭） -->
+         七游戏分区相片墙：成就化作拍立得相片钉墙（撕口胶带 + emoji 示意图 + 稀有度描金条
+         + 微倾悬停摆正放大；未解锁灰暗叠 ?、悬停显影偷看；全成就墙区铭牌点亮奖杯），
+         开幕瀑布钉墙入场（thPhotoIn）。
+         由 index.js 控制显示与关闭（入口按钮 / V 键开合 / Esc / 点击暗幕 / ✕ 均可；
+         V 键开合为全屏下的可靠开关——Esc 会被浏览器优先接管用于退出全屏） -->
     <div id="trophyHall" hidden role="dialog" aria-label="成就殿堂">
         <div class="th-veil"></div>
         <div class="th-rays"></div>
@@ -1811,9 +1863,9 @@
          fullscreen.js 提供全局 FS（仅供本页全屏按钮使用）；index.js 依赖 SFX，须放在其之后 -->
     <script src="audio.js?v=20261105-1"></script>
     <script src="fx.js?v=20261104-5"></script>
-    <script src="fullscreen.js?v=20261104-3"></script>
+    <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，大厅键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-1"></script>
-    <script src="index.js?v=20261105-2"></script>
+    <script src="index.js?v=20261105-5"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 ﻿<!DOCTYPE html>
 <!-- ==================================================================
      华容道游戏页
-     结构：左上角返回链接 → 右上角固定按钮（音效开关 / 全屏）→ 舞台容器 #stage
+     结构：左上角成就墙入口 → 右上角固定按钮（音效开关 / 全屏）→ 舞台容器 #stage
           （"华容道"彩色标题 + 主布局整体包裹，非全屏时由页尾 fitStage 脚本
           等比缩放至完整落入视口，消除滚动条）→
           主布局（左：456×605 棋盘画布 + 开始/通关两块遮罩，高度与右侧说明栏上下对齐；右：侧边信息栏
@@ -85,7 +85,7 @@
         #edgeBeam {
             position: fixed;
             inset: 0;
-            z-index: 6; /* 置于暗角之上、返回链接与右上角按钮(10)之下：不挡操作 */
+            z-index: 6; /* 置于暗角之上、左上角成就墙入口与右上角按钮(10)之下：不挡操作 */
             pointer-events: none;
             padding: 4px; /* 光带厚度 */
             /* 遮罩挖空内容区：仅保留 padding 形成的四周环形带 */
@@ -116,25 +116,6 @@
         /* 光束匀速自转一周：形成光带沿四边连续巡游的观感 */
         @keyframes beamOrbit {
             to { transform: rotate(1turn); }
-        }
-        /* ---------- 返回链接：固定左上角，回到游戏大厅 ---------- */
-        .back-link {
-            position: fixed;
-            top: 16px;
-            left: 16px;
-            z-index: 10;
-            padding: 8px 14px;
-            color: var(--neon-red); /* 与右上音效/全屏开关同主题色 */
-            text-decoration: none;
-            font-size: 13px;
-            letter-spacing: 2px;
-            border: 1px solid rgba(255, 85, 64, 0.4);
-            border-radius: 6px;
-            transition: all 0.2s;
-        }
-        .back-link:hover {
-            background: rgba(255, 85, 64, 0.12);
-            box-shadow: 0 0 12px rgba(255, 85, 64, 0.5);
         }
         /* 音效开关按钮（固定右上角，覆盖全局 button 主题底色） */
         .sound-toggle {
@@ -764,13 +745,12 @@
         button, a { touch-action: manipulation; }
     </style>
     <!-- 成就墙·相片墙触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-1">
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-4">
 </head>
 <body>
     <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
     <div id="edgeBeam" aria-hidden="true"></div>
-    <!-- 固定按钮区：返回链接（左上）+ 音效开关 / 全屏切换（右上） -->
-    <a class="back-link" href="index.html?v=20261105-1">&larr; 游戏厅</a>
+    <!-- 固定按钮区：成就墙入口（左上）+ 音效开关 / 全屏切换（右上） -->
     <!-- 成就墙·相片墙触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
     <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-gold)" title="成就墙（快捷键 V）">
         <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
@@ -907,11 +887,11 @@
     <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → klotski.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
     <script src="audio.js?v=20261105-1"></script>
     <script src="fx.js?v=20261104-5"></script>
-    <script src="fullscreen.js?v=20261104-3"></script>
+    <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-1"></script>
     <script src="ach-trigger.js?v=20261105-1"></script>
-    <script src="klotski.js?v=20261105-2"></script>
+    <script src="klotski.js?v=20261105-3"></script>
     <!-- 非全屏视口适配：整体内容（标题+主布局）高约 690px，小视口下出现页面滚动条；
          fitStage 将 #stage 等比缩放至完整落入视口并隐藏文档滚动条（只缩不放，大屏保持原貌）。
          全屏态由 fullscreen.js 负责（其缩放 .layout）：此处以 .layout 是否带内联 transform

@@ -7,8 +7,8 @@
  * 按钮文案为"动作提示"语义并以「·」分隔：未全屏显示「全屏 · 开」（提示可开启）、全屏中显示「全屏 · 关」（提示可关闭），
  * 并支持全局快捷键 F 切换（与音效 M 键同模式：
  * 捕获阶段监听防游戏侧拦截，输入场景不占用，嵌入模式转发父页统一处理）
- * 另承担"返回游戏厅"的退出演出：独立打开时先播 CRT 关机动画（整页坍缩熄灭）再导航，
- * 嵌入时转发父页由大厅播放关机演出（initStandaloneExit / initEmbed）
+ * 游戏页左上角"← 游戏厅"返回链接已移除（位置让给成就墙入口）：
+ * 返回大厅由嵌入模式的父页覆盖层 ✕ 按钮 / 独立模式的浏览器后退承担
  *
  * 全屏切换附带过渡演出（感知强化版）：全视口 CRT 通电闪白脉冲（径向辉光 0.42s 快闪）
  * + 游戏区提亮聚焦（轻内容时 brightness 1.45→1 先行回落，含 iframe/Canvas 自动跳过）
@@ -18,7 +18,6 @@
  * 嵌入模式（?embed=1）：页面作为大厅的 iframe 子页运行时，
  * 全屏状态统一由大厅（顶层文档）持有，子页通过 postMessage 与父页通信：
  *   子 → 父：{ type:'arcade:fs' }    请求切换全屏（等价于父页点击其全屏按钮）
- *   子 → 父：{ type:'arcade:exit' }  请求关闭覆盖层（"← 游戏厅"链接被拦截转发）
  *   子 → 父：{ type:'arcade:hello' } 子页就绪报到，父页回复当前全屏状态
  *   父 → 子：{ type:'arcade:fs', fs:boolean } 广播全屏状态（含切换与回复）
  * 由此保证"大厅 ↔ 各游戏"之间全屏状态无缝保持，退出亦全局生效
@@ -456,52 +455,16 @@ const FS = (() => {
 
     /**
      * 嵌入模式初始化（子页角色）：
-     * 1. 拦截"← 游戏厅"链接，改为通知父页关闭覆盖层（避免 iframe 内导航破坏全屏链）
-     * 2. 监听父页全屏状态广播，同步按钮文本与游戏区缩放
-     * 3. 向父页报到，请求一次当前全屏态（覆盖广播早于 iframe 就绪而丢失的情况）
+     * 1. 监听父页全屏状态广播，同步按钮文本与游戏区缩放
+     * 2. 向父页报到，请求一次当前全屏态（覆盖广播早于 iframe 就绪而丢失的情况）
      */
     function initEmbed() {
-        document.querySelectorAll('a.back-link').forEach(a => {
-            a.addEventListener('click', e => {
-                e.preventDefault(); // 阻止 iframe 内导航
-                window.parent.postMessage({ type: 'arcade:exit' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
-            });
-        });
         window.addEventListener('message', e => {
             if (e.source !== window.parent) return; // 只信任父页消息
             const d = e.data;
             if (d && d.type === 'arcade:fs') sync(!!d.fs);
         });
         window.parent.postMessage({ type: 'arcade:hello' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
-    }
-
-    /**
-     * 独立打开模式（非嵌入）装配：拦截"← 游戏厅"链接，先播 CRT 关机动画再导航回大厅——
-     * 整页纵向坍缩为过曝亮线后收束熄灭（Web Animations API，参数与大厅覆盖层关闭的
-     * crtShrink 关键帧一致），导航后由大厅自身的 CRT 开机动画接棒，形成"断电 → 通电"闭环；
-     * 嵌入模式不介入（关机演出由父页在大厅侧播放，子页仅转发 arcade:exit）
-     */
-    function initStandaloneExit() {
-        let leaving = false; // 演出期间防重复触发（重复点击不重启动画、不重设导航计时）
-        document.querySelectorAll('a.back-link').forEach(a => {
-            a.addEventListener('click', e => {
-                // 嵌入模式走 arcade:exit 转发；用户偏好"减少动态效果"时直接导航，两者均不拦截
-                if (EMBED || REDUCED || leaving) return;
-                e.preventDefault();
-                leaving = true;
-                // 坍缩基点取视口中心（补偿页面滚动偏移），保证亮线出现在可视区正中
-                document.body.style.transformOrigin =
-                    '50% ' + (window.scrollY + window.innerHeight / 2) + 'px';
-                // 0.45s：加速坍缩（强缓入）→ 过曝亮线（brightness 抬升）→ 横向收束熄灭
-                document.body.animate([
-                    { transform: 'scaleY(1)', opacity: 1, filter: 'brightness(1)' },
-                    { transform: 'scaleY(0.004)', opacity: 1, filter: 'brightness(2.4)', offset: 0.55, easing: 'ease-out' },
-                    { transform: 'scaleY(0.004) scaleX(0.08)', opacity: 0, filter: 'brightness(3.2)' }
-                ], { duration: 450, easing: 'cubic-bezier(0.62, 0, 0.84, 0.34)', fill: 'forwards' });
-                // 演出播完再导航，随后由大厅的 CRT 开机动画完成"重新通电"
-                setTimeout(() => { location.href = a.href; }, 470);
-            });
-        });
     }
 
     /**
@@ -545,9 +508,9 @@ const FS = (() => {
         applyFsScale(lastFs, false);
     });
 
-    // 嵌入模式装配
+    // 嵌入模式装配；独立打开（浏览器直接访问游戏页）无额外装配——
+    // "← 游戏厅"返回链接已移除（位置让给成就墙入口），返回大厅由父页覆盖层 ✕ / 浏览器后退承担
     if (EMBED) initEmbed();
-    else initStandaloneExit(); // 独立模式装配：返回大厅前先播 CRT 关机动画
 
     return {
         /** 切换全屏入口（供按钮 onclick 调用） */

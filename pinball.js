@@ -2246,7 +2246,7 @@ document.addEventListener('fullscreenchange', () => {
     else SFX.crtOff();
 });
 
-// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态（arcade:exit 为返回大厅请求）
+// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
 window.addEventListener('message', e => {
     const d = e.data;
     if (!d || typeof d !== 'object') return;
@@ -2260,8 +2260,6 @@ window.addEventListener('message', e => {
         embedFsLast = fs;
     } else if (d.type === 'arcade:save') {
         saveSnapshot(); // 父页关闭 iframe 覆盖层前下发：保存当前局进度快照
-    } else if (d.type === 'arcade:exit') {
-        SFX.crtOff(); // 返回游戏厅：CRT 关机音
     }
 });
 
@@ -2272,12 +2270,7 @@ window.addEventListener('resize', () => {
     tableLayerDirty = true; // 画布物理分辨率/DPR 已变：下一帧重建台面静态层
 });
 
-// 左上角"← 游戏厅"返回链接：跳转前先保存当前局进度快照（不拦截默认导航，saveSnapshot 内部自判状态）
-document.querySelector('.back-link').addEventListener('click', () => {
-    saveSnapshot();
-});
-
-// 页面隐藏 / 关闭（含返回大厅导航、刷新、关标签）：saveSnapshot 内部自判——
+// 页面隐藏 / 关闭（含父页移除 iframe、刷新、关标签）：saveSnapshot 内部自判——
 // 进行中或暂停中写入快照，未开始 / 已结束界面则清除过期快照
 window.addEventListener('pagehide', () => {
     saveSnapshot();

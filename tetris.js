@@ -1795,10 +1795,7 @@ function restoreSnapshot() {
     }
 }
 
-// 返回游戏厅链接：放行默认跳转前先保存进度快照（不阻止默认行为，跳转照常）
-document.querySelector('.back-link').addEventListener('click', () => saveSnapshot());
-
-// 页面卸载（刷新 / 关闭 / 跳转）：进行中或暂停中的局写入快照（未开始/已结束由 saveSnapshot 内部清除）
+// 页面卸载（刷新 / 关闭 / 父页移除 iframe）：进行中或暂停中的局写入快照（未开始/已结束由 saveSnapshot 内部清除）
 window.addEventListener('pagehide', () => saveSnapshot());
 
 // ---------- CRT 开关机音效双监听 ----------
@@ -1810,7 +1807,7 @@ document.addEventListener('fullscreenchange', () => {
     else SFX.crtOff();
 });
 
-// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态（arcade:exit 为返回大厅请求）
+// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
 window.addEventListener('message', e => {
     const d = e.data;
     if (!d || typeof d !== 'object') return;
@@ -1824,8 +1821,6 @@ window.addEventListener('message', e => {
         embedFsLast = fs;
     } else if (d.type === 'arcade:save') {
         saveSnapshot(); // 父页关闭覆盖层前下发：保存进度镜像快照
-    } else if (d.type === 'arcade:exit') {
-        SFX.crtOff(); // 返回游戏厅：CRT 关机音
     }
 });
 

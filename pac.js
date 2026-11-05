@@ -1909,8 +1909,7 @@ function checkFruitSpawn() {
 /* ===================== CRT 全屏音 ===================== */
 
 // CRT 开关机音：本页独立打开时监听全屏切换；嵌入模式（iframe）中
-// fullscreenchange 不穿越文档边界，改由父页大厅广播 arcade:fs 消息驱动；
-// arcade:exit 为子页请求关闭覆盖层的转发信号，同样以关机音收尾
+// fullscreenchange 不穿越文档边界，改由父页大厅广播 arcade:fs 消息驱动
 document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) SFX.crtOn();
     else SFX.crtOff();
@@ -1921,8 +1920,6 @@ window.addEventListener('message', e => {
     if (d.type === 'arcade:fs') {
         if (d.fs) SFX.crtOn();
         else SFX.crtOff();
-    } else if (d.type === 'arcade:exit') {
-        SFX.crtOff();
     } else if (d.type === 'arcade:save') {
         saveSnapshot(); // 父页关闭覆盖层前下发：镜像当前局进度到 localStorage
     }
@@ -1930,10 +1927,7 @@ window.addEventListener('message', e => {
 
 /* ===================== 进度快照触发点 ===================== */
 
-// 左上角「← 游戏厅」返回链接：先镜像当前局进度再放行默认跳转（不调用 preventDefault）
-const backLink = document.querySelector('.back-link');
-if (backLink) backLink.addEventListener('click', () => { saveSnapshot(); });
-// 页面隐藏/关闭（含父页移除 iframe、刷新、跳转）：进行中/暂停中镜像，未开始/已结束则清除残留快照
+// 页面隐藏/关闭（含父页移除 iframe、刷新）：进行中/暂停中镜像，未开始/已结束则清除残留快照
 window.addEventListener('pagehide', () => { saveSnapshot(); });
 
 /* ===================== 输入处理 ===================== */

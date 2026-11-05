@@ -10,7 +10,7 @@
    游戏覆盖层开关（LOADING 霓虹过渡 / 游戏期冻结大厅动效 / 关闭时下发 arcade:save 快照保存）+
    七段卡片预览动画 + 卡片 3D 视差 + 鼠标光晕 + 卡片音效分派 +
    提示条淡出 + 待机吸引模式 + 投币口金币飞入 +
-   成就殿堂开关与渲染（鎏金覆盖层 / 称号里程碑 / 七游戏行瀑布入场）
+   成就殿堂开关与渲染（鎏金覆盖层 / 称号里程碑 / 七游戏分区相片墙瀑布钉墙入场）
    ================================================================== */
 'use strict';
 // ---------- 跨帧消息投递目标：供大厅向游戏 iframe 投递存档通知等消息使用 ----------
@@ -112,41 +112,128 @@ function readBest(keys, direction) {
     return best;
 }
 
-/** 成就殿堂数据源：各游戏成就存档键与总数，顺序与大厅卡片排列一致
- *  （七款游戏均已升级 v2 对象存档 {unlocked:{id:时间戳}, best:{统计}}，
- *   成就数量：snake/tetris/pac/pinball/klotski/1024 各 8 条，bee 10 条，全站共 58 条） */
+/** 成就殿堂数据源：各游戏存档键、中文墙区名与成就相片表，顺序与大厅卡片排列一致
+ *  （七款游戏均已升级 v2 对象存档 {unlocked:{id:时间戳}, best:{统计}}）。
+ *  photos 为殿堂相片墙的展示用精简拷贝，五元组 [id, 名称, emoji 示意图, 稀有度, 描述]，
+ *  id 与各游戏 ACHIEVEMENTS 定义表一一对应（snake.js/tetris.js/pac.js/bee.js/
+ *  pinball.js/klotski.js/1024.js），游戏侧增删成就时须同步本表；
+ *  成就数量：snake/tetris/pac/pinball/klotski/1024 各 8 条，bee 10 条，全站共 58 条 */
 const ACH_DEFS = [
-    { id: 'snake', key: 'arcade_ach_snake', total: 8 },
-    { id: 'tetris', key: 'arcade_ach_tetris', total: 8 },
-    { id: 'pac', key: 'arcade_ach_pac', total: 8 },
-    { id: 'bee', key: 'arcade_ach_bee', total: 10 },
-    { id: 'pinball', key: 'arcade_ach_pinball', total: 8 },
-    { id: 'klotski', key: 'arcade_ach_klotski', total: 8 },
-    { id: '1024', key: 'arcade_ach_1024', total: 8 }
+    {
+        id: 'snake', key: 'arcade_ach_snake', name: '贪吃蛇', photos: [
+            ['score100', '百分俱乐部', '🏆', 'rare', '单局得分达到 100'],
+            ['score250', '得分大师', '👑', 'epic', '单局得分达到 250'],
+            ['length30', '长蛇盘踞', '🐍', 'common', '蛇身长度达到 30 节'],
+            ['length50', '巨蟒传说', '🐲', 'legendary', '蛇身长度达到 50 节'],
+            ['combo5', '连击好手', '⚡', 'common', '单局连击达到 ×5'],
+            ['combo8', '连击风暴', '🌟', 'rare', '单局连击达到 ×8'],
+            ['gold5', '淘金高手', '💰', 'rare', '单局捕获 5 枚金苹果'],
+            ['eat100', '大胃王', '🍎', 'epic', '单局吃掉 100 个食物']
+        ]
+    },
+    {
+        id: 'tetris', key: 'arcade_ach_tetris', name: '俄罗斯方块', photos: [
+            ['score10000', '得分好手', '🎯', 'rare', '单局得分达到 10,000'],
+            ['score30000', '得分专家', '💠', 'epic', '单局得分达到 30,000'],
+            ['score100000', '十万俱乐部', '👑', 'legendary', '单局得分达到 100,000'],
+            ['lines40', '行云流水', '🧱', 'common', '累计消除 40 行'],
+            ['lines100', '消行大师', '🏗️', 'epic', '累计消除 100 行'],
+            ['level5', '高速运转', '⚡', 'common', '等级达到 5'],
+            ['level10', '十级高手', '🌟', 'legendary', '等级达到 10'],
+            ['tetris4', 'TETRIS！', '💥', 'rare', '单次消除 4 行']
+        ]
+    },
+    {
+        id: 'pac', key: 'arcade_ach_pac', name: '吃豆人', photos: [
+            ['dots500', '豆豆大胃王', '🍒', 'common', '跨局累计吃豆 500 颗'],
+            ['score5000', '街机新秀', '🎯', 'common', '单局得分达到 5000'],
+            ['ghost2', '连环反杀', '👻', 'common', '单次能量期吃掉 2 只幽灵'],
+            ['allDots', '颗粒归仓', '🧹', 'rare', '单关吃光全部豆子'],
+            ['level3', '深入迷宫', '🗺️', 'rare', '单局推进到第 3 关'],
+            ['score20000', '高分传说', '🏆', 'epic', '单局得分达到 20000'],
+            ['dots2000', '千豆百炼', '💠', 'epic', '跨局累计吃豆 2000 颗'],
+            ['combo4', '四连反杀', '⚡', 'legendary', '单次能量期吃掉 4 只幽灵']
+        ]
+    },
+    {
+        id: 'bee', key: 'arcade_ach_bee', name: '小蜜蜂', photos: [
+            ['firstBlood', '初战告捷', '🚀', 'common', '击落第一只蜜蜂'],
+            ['hundred', '百人斩', '💯', 'rare', '累计击落 100 只蜜蜂'],
+            ['combo10', '十连击', '🔥', 'common', '单局连击数达到 10'],
+            ['combo25', '连击大师', '⚡', 'epic', '单局连击数达到 25'],
+            ['boss1', '弑君者', '👑', 'epic', '击败一只蜂王 Boss'],
+            ['wave10', '十波坚守', '🛡️', 'rare', '单局到达第 10 波'],
+            ['score10k', '万分俱乐部', '🏆', 'legendary', '单局得分达到 10000'],
+            ['bomb10', '爆破专家', '💣', 'rare', '累计使用 10 枚炸弹道具'],
+            ['dash30', '幻影步', '💨', 'common', '单局冲刺 30 次'],
+            ['perfect', '完美防御', '✨', 'epic', '任意一波未掉命通关']
+        ]
+    },
+    {
+        id: 'pinball', key: 'arcade_ach_pinball', name: '3D弹球', photos: [
+            ['score20k', '两万分俱乐部', '🎯', 'common', '单局得分达到 20,000'],
+            ['score100k', '十万俱乐部', '💠', 'epic', '单局得分达到 100,000'],
+            ['score500k', '五十万传奇', '👑', 'legendary', '单局得分达到 500,000'],
+            ['combo30', '连击三十', '🔥', 'common', '连击计数达到 30 次'],
+            ['combo100', '连击破百', '⚡', 'epic', '连击计数达到 100 次'],
+            ['mult5', '倍率全开', '✖️', 'common', '连击倍率提升至 ×5'],
+            ['jackpot', '头奖时刻', '🎰', 'rare', '触发一次 JACKPOT 大奖'],
+            ['multiball3', '三球齐飞', '🎱', 'rare', '同场保持 3 颗弹球']
+        ]
+    },
+    {
+        id: 'klotski', key: 'arcade_ach_klotski', name: '华容道', photos: [
+            ['firstWin', '初出茅庐', '🚩', 'common', '首次通关任意布局'],
+            ['steps50', '渐入佳境', '👣', 'common', '单局滑动步数达到 50 步'],
+            ['wins5', '常胜将军', '🎖️', 'rare', '累计通关 5 次'],
+            ['rankS', '神机妙算', '🧠', 'epic', '任意布局以 S 级评级通关'],
+            ['wins20', '百战不殆', '⚔️', 'epic', '累计通关 20 次'],
+            ['speed300', '兵贵神速', '⚡', 'epic', '单局 5 分钟内通关'],
+            ['optimal', '一步不差', '👑', 'legendary', '以理论最少步数通关任意布局'],
+            ['allClear', '十八连破', '🏰', 'legendary', '全部 18 个难度×布局均已通关']
+        ]
+    },
+    {
+        id: '1024', key: 'arcade_ach_1024', name: '1024!', photos: [
+            ['merge256', '初窥门径', '🌱', 'common', '合成出 256 方块'],
+            ['max512', '更上层楼', '🔢', 'rare', '单局合成出 512 方块'],
+            ['merge1024', '巅峰达成', '👑', 'legendary', '合成出 1024 方块'],
+            ['score3000', '小有所成', '🎯', 'common', '单局得分达到 3000'],
+            ['score10000', '万分俱乐部', '🏆', 'epic', '单局得分达到 10000'],
+            ['merges100', '百合并', '✨', 'rare', '单局合并次数达到 100 次'],
+            ['merges1000', '千锤百炼', '⚒️', 'epic', '累计合并次数达到 1000 次'],
+            ['moves2000', '步步为营', '👣', 'common', '单局滑动步数达到 2000 步']
+        ]
+    }
 ];
 /** 参与游玩时长统计的游戏 id（与卡片 href 解析出的 game id 一致） */
 const PLAYTIME_IDS = ['snake', 'tetris', 'pac', 'bee', 'pinball', 'klotski', '1024'];
-/** 全站成就总数（进度环分母） */
-const ACH_TOTAL = ACH_DEFS.reduce((sum, def) => sum + def.total, 0);
+/** 全站成就总数（进度环分母）：由相片表逐游戏聚合派生，避免平行维护 total 数字 */
+const ACH_TOTAL = ACH_DEFS.reduce((sum, def) => sum + def.photos.length, 0);
 
 /**
- * 统计某游戏已解锁的成就数量：兼容三代存档格式——
- * ① v1 纯数组 [id1, id2...] 取数组长度；
- * ② 过渡对象 { unlocked: [...] } 取 unlocked 数组长度；
- * ③ v2 对象 { unlocked: {id: 时间戳}, best: {} }（现行格式）取 unlocked 键数量
- * @param {{id: string, key: string, total: number}} def 成就定义项
- * @returns {number} 已解锁数量（0~total 钳位；键缺失 / JSON 损坏 / localStorage 不可用时为 0）
+ * 读取某游戏的成就解锁映射：兼容三代存档格式——
+ * ① v1 纯数组 [id1, id2...] → {id: 0}（旧档无时间戳，仅「已达成」语义）；
+ * ② 过渡对象 { unlocked: [...] } → 同上转换；
+ * ③ v2 对象 { unlocked: {id: 时间戳} }（现行格式）→ 原样返回 unlocked 映射
+ * @param {{id: string, key: string, name: string, photos: Array}} def 成就定义项
+ * @returns {Object} 解锁映射（键为成就 id，值为解锁时间戳，0 = 旧档迁移）；
+ *                   键缺失 / JSON 损坏 / 存储不可用时为空对象
  */
-function readAchCount(def) {
+function readUnlockMap(def) {
     try {
         const data = JSON.parse(localStorage.getItem(def.key));
-        if (!data) return 0; // 键不存在：无任何解锁
-        // 按存档代际分派计数方式：数组取 length，v2 对象取 Object.keys 数量
-        const got = Array.isArray(data) ? data.length
-            : (Array.isArray(data.unlocked) ? data.unlocked.length
-            : (data.unlocked && typeof data.unlocked === 'object' ? Object.keys(data.unlocked).length : 0));
-        return Math.max(0, Math.min(def.total, got)); // 钳位防脏数据越界污染进度环
-    } catch (e) { return 0; } // JSON 损坏 / 存储不可用：按 0 处理，不中断面板渲染
+        if (!data) return {}; // 键不存在：无任何解锁
+        // v1 纯数组档与过渡数组档统一转为「已解锁、时间戳 0」的映射
+        const list = Array.isArray(data) ? data : (Array.isArray(data.unlocked) ? data.unlocked : null);
+        if (list) {
+            const m = {};
+            for (let i = 0; i < list.length; i++) m[list[i]] = 0;
+            return m;
+        }
+        const map = data.unlocked;
+        return map && typeof map === 'object' ? map : {};
+    } catch (e) { return {}; } // JSON 损坏 / 存储不可用：按空映射处理，不中断面板渲染
 }
 
 /**
@@ -274,7 +361,7 @@ function refreshLastBadge() {
     window.addEventListener('storage', () => { refreshBest(); refreshLastBadge(); refreshTimeBadges(); });
 })();
 
-// ---------- 成就殿堂：全站成就旗舰展示覆盖层（七游戏共 58 项），入口按钮 / Esc / 点暗幕 / ✕ 关闭 ----------
+// ---------- 成就殿堂：全站成就旗舰展示覆盖层（七游戏共 58 项），入口按钮 / V 键开合 / Esc / 点暗幕 / ✕ 关闭 ----------
 /** 成就殿堂最近一次关闭的时刻（performance.now()，初始极小值）：供投币监听豁免「刚关闭殿堂」的手势——
     殿堂关闭监听挂 document、投币监听挂 window，冒泡阶段 document 先于 window 触发，
     关闭手势先行把殿堂置 hidden，投币监听再查 hidden 已失效，须以时间戳判定 */
@@ -312,49 +399,61 @@ let trophyClosedAt = -1e9;
     let lastRank = null;
 
     /**
-     * 读取某游戏最近一次解锁成就的时间戳（v2 存档 unlocked 映射中的最大值）
-     * @param {{id: string, key: string, total: number}} def 成就定义项
-     * @returns {number} 最近解锁时间戳（毫秒）；三代旧存档 / 无解锁 / 存储不可用时为 0
-     */
-    function readLastUnlockTs(def) {
-        try {
-            const data = JSON.parse(localStorage.getItem(def.key));
-            const map = data && data.unlocked;
-            if (!map) return 0;
-            let latest = 0;
-            for (const k in map) {
-                const ts = Number(map[k]);
-                if (ts > latest) latest = ts;
-            }
-            return latest;
-        } catch (e) { return 0; }
-    }
-
-    /**
-     * 聚合渲染殿堂：七游戏行卡片（主题铭牌 + 计数 + 流光进度条 + 奖杯）
-     * + 总进度环 + 殿堂称号 + 里程碑轨道；全成就行鎏金点亮
-     * @param {boolean} opening 是否为开幕渲染（进度环从零弧线扫入 + 中心百分数滚动 + 满环烟花礼赞）
+     * 聚合渲染殿堂：七游戏分区相片墙（墙区铭牌 + 拍立得成就相片钉墙）
+     * + 总进度环 + 殿堂称号 + 里程碑轨道；全成就墙区点亮奖杯，满环触发面板鎏金 perfect 态
+     * @param {boolean} opening 是否为开幕渲染（相片瀑布钉墙入场 + 进度环从零弧线扫入
+     *                          + 中心百分数滚动 + 满环烟花礼赞）；常规刷新无入场动画，避免闪烁
      */
     function render(opening) {
         let unlocked = 0;
-        let rows = '';
+        let gi = 0; // 全局线性索引：驱动开幕瀑布钉墙入场的 animation-delay
+        let secs = '';
         for (let i = 0; i < ACH_DEFS.length; i++) {
             const def = ACH_DEFS[i];
-            const got = readAchCount(def);
-            unlocked += got;
-            const pct = Math.round(got / def.total * 100);
+            const map = readUnlockMap(def); // 单游戏一次读取，循环内逐成就查表，禁止重复 IO
             const hue = HUES[def.id] || '#ffd23e';
-            const done = got >= def.total; // 全成就行：铭牌进度条转主题金渐变、奖杯点亮、行鎏金底
-            const lastTs = readLastUnlockTs(def);
-            const tip = lastTs > 0 ? '最近解锁：' + new Date(lastTs).toLocaleString() : '尚无解锁记录';
-            // --i 驱动行瀑布入场的 animation-delay；--row-hue 为行主题色（铭牌文字/进度条渐变引用）
-            rows += '<div class="th-row' + (done ? ' is-done' : '') + '" style="--i:' + i + ';--row-hue:' + hue + '" title="' + tip + '">'
-                + '<span class="th-badge">' + def.id.toUpperCase() + '</span>'
-                + '<span class="th-count">' + got + '<i>/' + def.total + '</i></span>'
-                + '<span class="th-bar"><i style="width:' + pct + '%"></i></span>'
-                + '<span class="th-cup">' + CUP_SVG + '</span></div>';
+            let got = 0;
+            let cards = '';
+            for (let p = 0; p < def.photos.length; p++) {
+                const ph = def.photos[p]; // 五元组 [id, 名称, emoji, 稀有度, 描述]
+                const has = map[ph[0]] !== undefined; // v2 映射键存在即已解锁（值可能为 0 = 旧档迁移）
+                if (has) got++;
+                // 确定性伪随机微倾角（±2.2°）与胶带转角：相片错落钉墙，每次渲染不跳变
+                const tilt = (((i * 37 + p * 11) % 9) - 4) * 0.55;
+                const tape = ((i + p) % 2) ? 3.5 : -4;
+                let tip = ph[4];
+                if (has) {
+                    const ts = Number(map[ph[0]]);
+                    tip += '　' + (ts > 0 ? '解锁于 ' + new Date(ts).toLocaleString() : '已解锁（旧档迁移）');
+                } else {
+                    tip += '　尚未解锁（悬停可显影）';
+                }
+                // --d 为瀑布入场 delay；--tilt/--tape 微倾角；--hue 主题色（墙区/相片引用）；
+                // --hue-bg 为主题色 18% 透明底（8 位 hex），仅作相片图案区渐变叠色
+                cards += '<figure class="th-photo' + (has ? ' is-got' : '')
+                    + ' rar-' + ph[3] + (opening && !REDUCED_MOTION ? ' th-in' : '')
+                    + '" style="--tilt:' + tilt + 'deg;--tape:' + tape + 'deg;--hue:' + hue
+                    + ';--hue-bg:' + hue + '2e;--d:' + (0.16 + gi * 0.018).toFixed(3)
+                    + 's" title="' + tip + '">'
+                    + '<i class="th-tape" aria-hidden="true"></i>'
+                    + '<span class="th-shot"><span class="th-emoji" aria-hidden="true">' + ph[2]
+                    + '</span>' + (has ? '' : '<span class="th-q" aria-hidden="true">?</span>')
+                    + '</span>'
+                    + '<span class="th-rar" aria-hidden="true"></span>'
+                    + '<figcaption class="th-name">' + ph[1] + '</figcaption></figure>';
+                gi++;
+            }
+            const done = got >= def.photos.length; // 全成就墙区：铭牌旁点亮奖杯
+            secs += '<section class="th-sec" style="--hue:' + hue + ';--hue-bg:' + hue + '2e">'
+                + '<div class="th-sec-head' + (opening && !REDUCED_MOTION ? ' th-in' : '')
+                + '" style="--d:' + (0.06 + (gi - def.photos.length) * 0.018).toFixed(3) + 's">'
+                + '<i class="th-pin" aria-hidden="true"></i><b>' + def.name + '</b>'
+                + '<span class="th-sec-count">' + got + '<i>/' + def.photos.length + '</i></span>'
+                + (done ? '<span class="th-sec-cup">' + CUP_SVG + '</span>' : '')
+                + '<span class="th-sec-line" aria-hidden="true"></span></div>'
+                + '<div class="th-sec-wall">' + cards + '</div></section>';
         }
-        gridEl.innerHTML = rows;
+        gridEl.innerHTML = secs;
         totalEl.textContent = unlocked + ' / ' + ACH_TOTAL;
         // 满环 perfect 态：面板金辉呼吸与奖牌脉冲由 #trophyHall.is-perfect 驱动
         hall.classList.toggle('is-perfect', unlocked >= ACH_TOTAL);
@@ -406,10 +505,12 @@ let trophyClosedAt = -1e9;
     function open() { render(true); hall.hidden = false; SFX.hallOpen(); }
     /** 统一关闭：收起殿堂并盖时间戳（trophyClosedAt 供投币监听豁免本次手势，见顶部注释） */
     function close() { hall.hidden = true; trophyClosedAt = performance.now(); SFX.uiClick(); }
-    btn.addEventListener('click', () => {
-        if (hall.hidden) open();
-        else close();
-    });
+    /** 开合切换：关态开墙、开态关墙（入口按钮与 V 键共用同一入口） */
+    function toggle() { if (hall.hidden) open(); else close(); }
+    btn.addEventListener('click', toggle);
+    // V 键开合（全站统一开墙键，与各游戏内成就墙一致：关态按 V 开、开态按 V 关）。
+    // 全屏模式下 Esc 会被浏览器优先接管用于退出全屏，V 是不受影响的开合键
+    document.addEventListener('keydown', e => { if (e.code === 'KeyV' && !e.repeat) toggle(); });
     document.getElementById('thClose').addEventListener('click', close);
     // 点击暗幕（veil）关闭；点击殿堂与入口按钮之外的区域也关闭（pointerdown 覆盖鼠标/触屏）
     hall.querySelector('.th-veil').addEventListener('pointerdown', close);
@@ -417,7 +518,7 @@ let trophyClosedAt = -1e9;
         if (hall.hidden) return;
         if (!hall.contains(e.target) && !btn.contains(e.target)) close();
     });
-    // Esc 关闭（全站统一关墙键，与各游戏内成就墙交互习惯一致）
+    // Esc 关闭（次选关墙键：仅非全屏场景可靠，全屏下浏览器优先响应退出全屏，改用 V 键开合）
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !hall.hidden) close(); });
     // 游戏在 iframe 内解锁成就后本页 storage 事件触发：殿堂打开期间实时刷新进度（非开幕渲染，环平滑过渡到新值）
     window.addEventListener('storage', () => { if (!hall.hidden) render(false); });
@@ -1404,7 +1505,7 @@ document.addEventListener('keydown', e => {
      * 关闭游戏覆盖层并还原页面滚动
      * 关闭不再直接淡出，而是播放 CRT 关机演出：游戏画面坍缩为过曝亮线（crtShrink）→
      * 白热余辉收束熄灭（crtDie）→ 黑底末段淡出露出大厅（overlayOut），0.55s 与开机
-     * 白幕的仪式感形成"断电 → 通电"闭环；✕ 按钮与游戏内"← 游戏厅"（arcade:exit）均经此路径
+     * 白幕的仪式感形成"断电 → 通电"闭环；覆盖层左下角 ✕ 按钮经此路径
      */
     function closeGame() {
         if (!overlay) return;
@@ -1604,16 +1705,15 @@ document.addEventListener('keydown', e => {
         });
     });
 
-    // 子页消息：arcade:exit = 游戏内点击"← 游戏厅"，请求关闭覆盖层回大厅
+    // 子页消息：arcade:playtime = 游玩时长冲账（父页累计落盘 arcade_playtime_<id> 并刷新卡片角标）
     window.addEventListener('message', e => {
         // 来源校验：仅接受同源消息；file:// 直开时本页与子页 origin 字面量均为 "null"，
         // 仅当本页自身也是 file:// 协议时一并放行；其余来源（第三方页面嵌入本页等）一律
         // 忽略，防止伪造关闭覆盖层。http(s) 部署下不再永久豁免 'null' 来源
         if (e.origin !== location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
         const d = e.data;
-        if (d && d.type === 'arcade:exit') closeGame();
-        // 游玩时长上报：子页 FX.playtime 周期冲账，父页累计落盘 arcade_playtime_<id> 并刷新卡片角标
-        else if (d && d.type === 'arcade:playtime' && PLAYTIME_IDS.indexOf(d.id) !== -1
+        // 游玩时长上报：子页 FX.playtime 周期冲账，父页累计落盘并刷新卡片角标
+        if (d && d.type === 'arcade:playtime' && PLAYTIME_IDS.indexOf(d.id) !== -1
             && typeof d.seconds === 'number' && d.seconds > 0) {
             addPlaytime(d.id, d.seconds);
             refreshTimeBadges();

@@ -3327,13 +3327,7 @@ window.addEventListener('message', e => {
     if (d && d.type === 'arcade:save') saveSnapshot(); // 返回大厅前的进度镜像
 });
 
-// 触发点 b：左上角「← 游戏厅」返回链接 —— 跳转前先保存快照，再放行默认导航
-// （绝不 preventDefault，不阻断返回大厅的原生跳转行为）
-document.querySelector('.back-link').addEventListener('click', () => {
-    saveSnapshot();
-});
-
-// 触发点 c：页面卸载兜底（关闭标签页 / 刷新 / 链接跳转 / iframe 被移除均触发）
+// 触发点 b：页面卸载兜底（关闭标签页 / 刷新 / 父页移除 iframe 均触发）
 // —— 进行中保存快照；未开始 / 已通关则由 saveSnapshot 清除
 window.addEventListener('pagehide', () => {
     saveSnapshot();

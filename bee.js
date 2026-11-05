@@ -2886,11 +2886,7 @@ window.addEventListener('message', e => {
     if (d && d.type === 'arcade:save') saveSnapshot();
 });
 
-// 左上角「← 游戏厅」返回链接：跳转离开前保存当前局快照（进行中/暂停中写入，
-// 未开始/已结束移除），不阻止默认跳转
-document.querySelector('.back-link').addEventListener('click', () => saveSnapshot());
-
-// 页面卸载（关闭/刷新/跳转）兜底保存：仅在游戏进行中（含暂停态）写入快照
+// 页面卸载（关闭/刷新/父页移除 iframe）兜底保存：仅在游戏进行中（含暂停态）写入快照
 window.addEventListener('pagehide', () => {
     if (gameState === 'playing') saveSnapshot();
 });
