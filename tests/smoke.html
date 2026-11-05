@@ -13,7 +13,7 @@
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
        S4 ✕ 关闭豁免      —— ✕ 按钮关闭后紧接点击不投币
        S5 400ms 窗口过期  —— 关闭超过 400ms 后点击 → 恢复正常投币
-       S6 成就聚合        —— readAchCount 钳位/损坏 JSON 容错 + 面板 15/28 + 七行齐全
+       S6 成就聚合        —— 仅凭存档 + DOM：三代存档解析/钳位/损坏 JSON 容错 + 面板 20/58 + 各行计数
        S7 嵌入协议握手    —— snake.html?embed=1 加载后父页收到 arcade:hello
                               与 {type:'arcade:audio',act:'hello'} 两条报到
        S8 成就写入幂等    —— unlockAchievement 重复调用同 id → 存档不产生重复条目
@@ -256,24 +256,35 @@ async function s5_windowExpires() {
     return '关闭 500ms 后点击恢复投币，豁免窗口正确过期';
 }
 
-/** S6 成就聚合：readAchCount 钳位/容错 + 面板总数与行数齐全 */
+/** S6 成就聚合：只依赖「存档结构 + DOM 输出」，全程不调用页面内部函数
+ *  （此前断言直接调 readAchCount / readUnlockMap，页面一改名就误红——内部重构不应影响本用例）
+ *  种子覆盖三代存档形态与损坏档，断言全部落在成就殿堂面板的可见结果：
+ *  v1 纯数组（贪吃蛇 2 项）· v1 数组含超额脏键（俄罗斯方块 10 键 > 成就表 8 → 面板自然钳位 8）
+ *  · 过渡对象型 {unlocked:[...]}（小蜜蜂 10 项全满）· 损坏 JSON（吃豆人 → 0） */
 async function s6_achAggregate() {
     lsClear();
-    lsSet('arcade_ach_snake', '["a","b"]');                                  // 正常：2 项
-    lsSet('arcade_ach_tetris', '["1","2","3","4","5"]');                     // 脏数据 5>3：钳位 3
-    lsSet('arcade_ach_bee', '{"unlocked":[1,2,3,4,5,6,7,8,9,10]}');          // 对象型：10 项
-    lsSet('arcade_ach_pac', '{{{bad json');                                  // 损坏 JSON：按 0
+    const snakeIds = ['score100', 'length30'];
+    const tetrisIds = ['score10000', 'score30000', 'score100000', 'lines40', 'lines100', 'level5', 'level10', 'tetris4'];
+    const beeIds = ['firstBlood', 'hundred', 'combo10', 'combo25', 'boss1', 'wave10', 'score10k', 'bomb10', 'dash30', 'perfect'];
+    lsSet('arcade_ach_snake', JSON.stringify(snakeIds));                                  // v1 数组：2 项
+    lsSet('arcade_ach_tetris', JSON.stringify(tetrisIds.concat(['ghostA', 'ghostB'])));   // 脏数据 10 键 > 成就表 8：面板钳位 8
+    lsSet('arcade_ach_bee', JSON.stringify({ unlocked: beeIds }));                        // 过渡对象型：10 项全满
+    lsSet('arcade_ach_pac', '{{{bad json');                                               // 损坏 JSON：按 0
     const frame = await loadPage('../index.html');
-    const win = frame.contentWindow;
-    ok(win.readAchCount({ id: 'snake', key: 'arcade_ach_snake', total: 3 }) === 2, 'snake 正常计数不为 2');
-    ok(win.readAchCount({ id: 'tetris', key: 'arcade_ach_tetris', total: 3 }) === 3, 'tetris 脏数据未钳位到 3');
-    ok(win.readAchCount({ id: 'bee', key: 'arcade_ach_bee', total: 10, obj: true }) === 10, 'bee 对象型计数不为 10');
-    ok(win.readAchCount({ id: 'pac', key: 'arcade_ach_pac', total: 3 }) === 0, 'pac 损坏 JSON 未按 0 容错');
-    frame.contentDocument.getElementById('trophyToggle').click(); // 开殿堂触发真实 ACH_DEFS 聚合渲染
     const doc = frame.contentDocument;
-    ok(doc.getElementById('thTotal').textContent === '15 / 58', '殿堂总数不为 15/58（实际 ' + doc.getElementById('thTotal').textContent + '）');
-    ok(doc.getElementById('thGrid').children.length === 7, '殿堂游戏行数不为 7（华容道等可能缺席）');
-    return '计数 2/钳位3/对象10/损坏0 全对，殿堂聚合 15/58 七行齐全';
+    doc.getElementById('trophyToggle').click();                                            // 开殿堂触发真实 ACH_DEFS 聚合渲染
+    const secs = Array.from(doc.querySelectorAll('#thGrid .th-sec'));
+    const byName = new Map(secs.map(s => [s.querySelector('.th-sec-head b').textContent, s]));
+    const count = n => (byName.get(n) ? byName.get(n).querySelector('.th-sec-count').textContent : '缺行'); // 「已解锁/总数」
+    const locked = n => (byName.get(n) ? byName.get(n).querySelectorAll('.th-q').length : -1);           // 未解锁缩略图上的问号遮罩数
+    ok(doc.getElementById('thTotal').textContent === '20 / 58', '殿堂总数不为 20/58（实际 ' + doc.getElementById('thTotal').textContent + '）');
+    ok(secs.length === 7, '殿堂游戏行数不为 7（实际 ' + secs.length + '）');
+    ok(count('贪吃蛇') === '2/8', '贪吃蛇行计数不为 2/8（实际 ' + count('贪吃蛇') + '）');
+    ok(count('俄罗斯方块') === '8/8', '脏键未被成就表钳位到 8（实际 ' + count('俄罗斯方块') + '）');
+    ok(count('吃豆人') === '0/8', '损坏 JSON 未按 0 容错（实际 ' + count('吃豆人') + '）');
+    ok(count('小蜜蜂') === '10/10', '对象型存档计数不为 10/10（实际 ' + count('小蜜蜂') + '）');
+    ok(locked('贪吃蛇') === 6 && locked('俄罗斯方块') === 0 && locked('小蜜蜂') === 0, '未解锁问号遮罩数与存档不符');
+    return '仅凭存档 + DOM：殿堂 20/58、七行齐全、计数 2/8·8/8·0/8·10/10 全对、问号遮罩 6/0/0';
 }
 
 /** S7+S8 共用 snake 嵌入页：S7 断言两条协议报到，S8 断言成就写入幂等 */

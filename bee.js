@@ -241,7 +241,8 @@ const DIFFICULTIES = {
     hard: { name: '困难', lives: 2, bullet: 1.15, fire: 1.35, swarm: 1.15, dive: 1.3, bossHp: 1.25 }
 };
 /** 当前难度 key（启动时从 localStorage 恢复，非法值回退普通） */
-let difficulty = localStorage.getItem(DIFFICULTY_KEY);
+let difficulty = null;
+try { difficulty = localStorage.getItem(DIFFICULTY_KEY); } catch (e) { /* 存储被禁（隐私模式/禁 Cookie）时按未存档处理 */ }
 if (!DIFFICULTIES[difficulty]) difficulty = 'normal';
 /** 当前难度的参数配置（各处计算经它取乘数，避免散落硬编码） */
 let diffCfg = DIFFICULTIES[difficulty];
@@ -340,7 +341,8 @@ let bombFlashTimer = 0;
 /** 本局是否刷新了历史最高分（结算面板据此显示"新纪录"提示） */
 let isNewRecord = false;
 /** 历史最高分（localStorage 持久化，键 beeHighScore）；|| 0 兜底脏数据，避免历史存储被污染成非数字时解析出 NaN */
-let highScore = parseInt(localStorage.getItem('beeHighScore') || '0', 10) || 0;
+let highScore = 0;
+try { highScore = parseInt(localStorage.getItem('beeHighScore') || '0', 10) || 0; } catch (e) { /* 存储被禁时从 0 起算，不阻断页面初始化 */ }
 /** 当前连击数（COMBO_WINDOW 内连续击杀的次数） */
 let comboCount = 0;
 /** 连击窗口剩余时间（秒），归零则连击清零 */

@@ -69,7 +69,9 @@ const BEST_DEFS = [
             'klotskiBest_hengdao', 'klotskiBest_zhihui', 'klotskiBest_jiezu'
         ]
     },
-    { id: '1024', keys: ['1024BestScore'], direction: 'high' }
+    // 1024.js 自 2026-11 起主用 1024HighScore，1024BestScore 仅为旧存档迁移源，
+    // 两个键一并读取（readBest 取最大值），避免大厅漏掉新纪录
+    { id: '1024', keys: ['1024HighScore', '1024BestScore'], direction: 'high' }
 ];
 const LAST_PLAYED_KEY = 'arcade_last'; // 「上次游玩」记录键：值为最近启动的游戏 id
 
@@ -2075,6 +2077,8 @@ document.addEventListener('keydown', e => {
             // 关闭监听先行置 hidden，故连同 400ms 内刚关闭的时间戳一并豁免
             const hall = document.getElementById('trophyHall');
             if (k === 'Escape' && hall && (!hall.hidden || performance.now() - trophyClosedAt < 400)) return;
+            // V 键是成就殿堂开关（document 级监听已先行开合），与鼠标点入口同理不触发投币
+            if (e.code === 'KeyV') return;
             // 焦点在音效/全屏/音量控件上时放行回车/空格：应激活控件本身而非投币
             if ((k === 'Enter' || k === ' ') && e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #trophyToggle')) return;
             // 关键修复：阻断按键派发结束后的默认动作——投币会同步摘除 pre-coin 门禁，

@@ -230,8 +230,12 @@ const FX = (() => {
     function shake(el, intensity = 4, duration = 240) {
         if (!el || prefersReduced) return;
         const until = performance.now() + duration;
-        // 换目标：复位旧元素 transform 并丢弃旧状态（旧驱动循环在下一帧检测到状态已换自动退出）
-        if (shakeState && shakeState.el !== el) shakeState.el.style.transform = '';
+        // 换目标：复位旧元素 transform 并把状态切到新元素（驱动循环每帧读 shakeState.el，
+        // 未同步赋值时新元素永远抖不起来、旧元素被后续帧继续抖动）
+        if (shakeState && shakeState.el !== el) {
+            shakeState.el.style.transform = '';
+            shakeState.el = el;
+        }
         if (!shakeState) {
             shakeState = { el, raf: 0 };
             // 驱动循环：每帧按剩余时长比例衰减幅度，随机方向偏移；结束/目标被移除时复位收尾
@@ -356,6 +360,7 @@ const FX = (() => {
         let id = null;      // 游戏 id（init 时写入）
         let acc = 0;        // 未冲账的累计毫秒数
         let last = 0;       // 上一帧 rAF 时间戳
+        let lastVisible = true; // 上一帧是否可见：仅连续可见帧才累计，切后台回来的首帧不计入
         let inited = false; // 幂等保护
         /** 冲账阈值：累计满 15 秒落盘一次，控制写入频率；离页时不足额由 pagehide 兜底 */
         const FLUSH_MS = 15000;
@@ -380,9 +385,16 @@ const FX = (() => {
             }
         }
 
-        /** rAF 驱动：仅页面可见时累计（帧间隔钳位 5 秒，切后台回来不补大段时长） */
+        /**
+         * rAF 驱动：仅页面可见时累计；切后台期间 rAF 暂停，恢复后的首帧 t-last 可能是整段隐藏时长，
+         * 故要求「上一帧也可见」才累计——首帧只校正基准，不计入任何时长（否则会被 5 秒钳位
+         * 白送最多 5 秒游玩时长）
+         * @param {number} t rAF 时间戳（毫秒）
+         */
         function frame(t) {
-            if (document.visibilityState === 'visible') acc += Math.min(t - last, 5000);
+            const visible = document.visibilityState === 'visible';
+            if (visible && lastVisible) acc += Math.min(t - last, 5000);
+            lastVisible = visible;
             last = t;
             if (acc >= FLUSH_MS) flush();
             requestAnimationFrame(frame);

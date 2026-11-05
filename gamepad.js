@@ -101,18 +101,20 @@ var GP = { connected: false };
      */
     function press(key, code) {
         if (held[code]) return;
-        held[code] = true;
+        held[code] = key; // 同时记录 e.key，供 release 还原一致的键名
         synth('keydown', key, code);
     }
 
     /**
-     * 模拟某键松开（未按下则忽略）；键盘事件构造用 key 与 code 同值的方向键约定
-     * @param {string} code 目标键 code（方向键 key==code，与 press 时的 key 一致）
+     * 模拟某键松开（未按下则忽略）；回放 press 时记录的原 key，
+     * 保证 Space(' ')/KeyP/KeyM/KeyV 等 key≠code 的按键在 keyup 侧同样可被 e.key 命中
+     * @param {string} code 目标键 code
      */
     function release(code) {
-        if (!held[code]) return;
+        const key = held[code];
+        if (!key) return;
         held[code] = false;
-        synth('keyup', code, code);
+        synth('keyup', key, code);
     }
 
     /**

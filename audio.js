@@ -32,6 +32,9 @@
  *                静音即全零）；大厅据此驱动环绕灯带亮度/色相与投币口脉冲——音乐真响灯带真亮
  * v2.10（20261105）：新增成就殿堂开幕音 SFX.hallOpen——上行五连琶音 + 高音闪光长尾，
  *                大厅成就殿堂（鎏金覆盖层）揭幕仪式音
+ * v3.1（20261105）：双通道解耦修复——BGM 改为与 SFX 并联（music 独立增益直入静音闸 gate，不再经 master），
+ *                音效档调「关」不会再连 BGM 一起哑掉；muted 统一由 gate 归零（频谱同步归零）；
+ *                旧键迁移整段包 try（存储被禁时降级默认而非中断引擎）、档位钳位防 NaN
  * 音控状态通过 localStorage（键 arcadeAudio）在所有页面间共享；
  * 嵌入模式（?embed 于 iframe 内运行）下状态由大厅（父页）统一持有，经 postMessage 实时同步大厅与游戏
  */
@@ -47,7 +50,9 @@ const SFX = (() => {
     const AUDIO_KEY = 'arcadeAudio';       // 音控状态持久化键（JSON：{m:是否静音, b:BGM 档位, s:SFX 档位}）
     const VOL_STEPS = [0, 1 / 3, 2 / 3, 1]; // 4 档音量：静音 / 低 / 中 / 高
     /** 档位钳位（防脏数据越界） @param {number} n 原始档位值 @returns {number} 0~3 的合法档位 */
-    const clampStep = (n) => Math.min(Math.max(n, 0), VOL_STEPS.length - 1);
+    // 非数值（伪造消息的字符串/NaN）按 0 兜底：原实现 Math.max(NaN,0) 仍为 NaN，
+    // 会让 VOL_STEPS[NaN] 得到 undefined 并传给 setTargetAtTime 抛 TypeError，写坏档位
+    const clampStep = (n) => (Number.isFinite(n) ? Math.min(Math.max(Math.round(n), 0), VOL_STEPS.length - 1) : 0);
     // 启动状态：优先读新键；新键缺失（v2.2 及更早）时从旧键 arcadeSound/arcadeVol 一次性迁移
     const boot = (() => {
         try {
@@ -57,12 +62,14 @@ const SFX = (() => {
             }
         } catch (e) { /* 脏数据走旧键迁移 */ }
         // 旧版迁移：arcadeSound==='off'（总开关关闭）映射为静音；arcadeVol 双通道档位原样保留
-        let m = localStorage.getItem('arcadeSound') === 'off';
-        let b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1;
+        // 整段包 try：存储被禁（隐私模式 / 部分 file:// 场景）时 getItem 本身会抛错，
+        // 若只包住 JSON.parse，异常会掀翻整个音效 IIFE，导致全站无声
+        let m = false, b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1;
         try {
+            m = localStorage.getItem('arcadeSound') === 'off';
             const v = JSON.parse(localStorage.getItem('arcadeVol') || 'null');
             if (v && Number.isInteger(v.b) && Number.isInteger(v.s)) { b = clampStep(v.b); s = clampStep(v.s); }
-        } catch (e) { /* 旧音量脏数据回退默认满档 */ }
+        } catch (e) { /* 旧键不可读或脏数据：回退默认（有声 + 双通道满档） */ }
         return { m, b, s };
     })();
     let muted = boot.m;                 // 一键静音标志（独立于档位：静音不破坏设置，恢复时档位无损还原）
@@ -117,11 +124,16 @@ const SFX = (() => {
     }
 
     /**
-     * 应用音量档位到音频图：静音时 master 增益归零，SFX 通道直达 master；BGM 通道经 bgm.sync() 收敛淡入目标
-     * （bgm/master 定义于后文，本函数仅在事件回调中运行，运行时必然已初始化）
+     * 应用音量档位到音频图：SFX 档只作用于 master（音效链），BGM 档由 bgm.sync() 独立收敛到 music 分层，
+     * 两条通道互不牵连（v3.1 修正：此前 BGM 串在 master 之后，音效档调「关」会把音乐一起哑掉）；
+     * muted 是总闸，单独经 gate 归零，静音时两条通道同时断开、频谱随之归零
+     * （bgm/master/gate 定义于后文，本函数仅在事件回调中运行，运行时必然已初始化）
      */
     function applyVol() {
-        if (ctx && master) master.gain.setTargetAtTime(muted ? 0 : VOL_STEPS[vol.s], ctx.currentTime, 0.04);
+        if (ctx && master) {
+            master.gain.setTargetAtTime(VOL_STEPS[vol.s], ctx.currentTime, 0.04);
+            gate.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.04);
+        }
         bgm.sync(); // BGM 分层按新档位淡入/淡出（BGM 档位 0 或静音时整个挂起静默）
     }
 
@@ -142,8 +154,9 @@ const SFX = (() => {
         broadcastAudio();
     }
 
-    let master = null; // 主输出增益节点（SFX 汇总出口，增益值 = SFX 音量档）
-    let music = null;  // BGM 专用增益节点（与 SFX 分层，支持淡入淡出）
+    let master = null; // SFX 汇总增益节点（增益值 = SFX 音量档，只作用于音效链）
+    let music = null;  // BGM 专用增益节点（增益值 = BGM 音量档；与 master 并联，不经音效档与声像）
+    let gate = null;   // 总静音闸（两条通道汇合处、analyser 之前：muted 整体归零，频谱同步回暗）
     let panner = null; // v2.8 立体声定位节点（主输出 → destination 之间串接；缺失时直连）
     let panTimer = 0;  // 声像自动回中定时器句柄
     let analyser = null;     // v2.9 频谱分析节点（主输出链末端串接，供大厅灯带采样实时频谱）
@@ -151,16 +164,20 @@ const SFX = (() => {
     const LV = { b: 0, t: 0, e: 0 }; // level() 复用返回对象（60fps 高频调用，避免每帧新建小对象）
 
     /**
-     * 惰性创建主输出增益节点（初始增益取 SFX 音量档位值）
-     * v2.8：主输出后串接 StereoPannerNode（浏览器不支持时自动退化为直连，全部居中）
-     * v2.9：输出链末端（destination 前）再串接 AnalyserNode——SFX 与 BGM 汇合并经静音/音量
-     *       增益后的最终信号在此采样，静音或零音量时频谱自然归零，视觉联动随之回暗
-     * @returns {GainNode} 主输出节点
+     * 惰性搭建音频输出图（两条通道在此一次性并联）
+     * 拓扑：SFX → master(SFX 档) → panner(可选) → gate → analyser → destination
+     *       BGM → music(BGM 档，由 bgm.sync 淡入淡出) ──┘（不经 master，也不受声像影响）
+     * v2.8：SFX 链串接 StereoPannerNode（浏览器不支持时自动退化为直连，全部居中）
+     * v2.9：汇合处串接 AnalyserNode——两条通道经各自音量档与静音闸后的最终信号在此采样，
+     *       静音或零音量时频谱自然归零，视觉联动随之回暗
+     * @returns {GainNode} SFX 主增益节点（音效链入口）
      */
     function out() {
         if (!master) {
             master = ctx.createGain();
             master.gain.value = VOL_STEPS[vol.s];
+            gate = ctx.createGain();
+            gate.gain.value = muted ? 0 : 1;      // 总静音闸初值同步当前静音态
             analyser = ctx.createAnalyser();
             analyser.fftSize = 256;               // 128 个频桶（每桶约 172Hz@44.1kHz）：粒度足够且读取开销小
             analyser.smoothingTimeConstant = 0.5; // 分析器内置平滑：读数平稳，配合调用方二次平滑
@@ -168,11 +185,15 @@ const SFX = (() => {
             if (ctx.createStereoPanner) { // 旧浏览器无此 API 时跳过，pan() 同步短路，听感不变
                 panner = ctx.createStereoPanner();
                 master.connect(panner);
-                panner.connect(analyser);
+                panner.connect(gate);
             } else {
-                master.connect(analyser);
+                master.connect(gate);
             }
+            gate.connect(analyser);
             analyser.connect(ctx.destination); // 两条分支最终都经频谱节点落地（分析节点不影响音质）
+            music = ctx.createGain();         // BGM 分层与 SFX 并联：独立档位、独立淡入淡出
+            music.gain.value = 0;
+            music.connect(gate);
         }
         return master;
     }
@@ -182,7 +203,7 @@ const SFX = (() => {
      * @returns {GainNode} BGM 分层节点
      */
     function musicOut() {
-        if (!music) { music = ctx.createGain(); music.gain.value = 0; music.connect(out()); }
+        out(); // 确保整张音频图（含 gate 与 music 分层）已搭好；music 在 out() 内创建并接在 gate 之前
         return music;
     }
 

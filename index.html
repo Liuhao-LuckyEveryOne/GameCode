@@ -1940,7 +1940,7 @@
          不再有卡片逐一浮现的过程；每张卡片含一个 160×160 Canvas，由 index.js 驱动对应的预览动画 -->
     <div class="cards">
         <!-- 贪吃蛇卡片：预览 id=snakePreview，霓虹绿色 -->
-        <a class="card" href="snake.html?v=20261105-7" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
+        <a class="card" href="snake.html?v=20261105-8" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-snake" hidden></span>
             <canvas id="snakePreview" width="160" height="160"></canvas>
@@ -1950,7 +1950,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 俄罗斯方块卡片：预览 id=tetrisPreview，霓虹青色 -->
-        <a class="card" href="tetris.html?v=20261105-7" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
+        <a class="card" href="tetris.html?v=20261105-8" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-tetris" hidden></span>
             <canvas id="tetrisPreview" width="160" height="160"></canvas>
@@ -1960,7 +1960,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 吃豆人卡片：预览 id=pacPreview，霓虹黄色 -->
-        <a class="card" href="pac.html?v=20261105-7" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
+        <a class="card" href="pac.html?v=20261105-8" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pac" hidden></span>
             <canvas id="pacPreview" width="160" height="160"></canvas>
@@ -1970,7 +1970,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 小蜜蜂卡片：预览 id=beePreview，霓虹粉色 -->
-        <a class="card" href="bee.html?v=20261105-8" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
+        <a class="card" href="bee.html?v=20261105-9" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-bee" hidden></span>
             <canvas id="beePreview" width="160" height="160"></canvas>
@@ -1980,7 +1980,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 3D弹球卡片：预览 id=pinballPreview，霓虹紫色 -->
-        <a class="card" href="pinball.html?v=20261105-7" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
+        <a class="card" href="pinball.html?v=20261105-8" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pinball" hidden></span>
             <canvas id="pinballPreview" width="160" height="160"></canvas>
@@ -1990,7 +1990,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 华容道卡片：预览 id=klotskiPreview，霓虹赤红色（与游戏墙体色同源） -->
-        <a class="card" href="klotski.html?v=20261105-7" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
+        <a class="card" href="klotski.html?v=20261105-8" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-klotski" hidden></span>
             <canvas id="klotskiPreview" width="160" height="160"></canvas>
@@ -2000,7 +2000,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 1024卡片：预览 id=n1024Preview，霓虹橙色（数字方块合并玩法，三档难度） -->
-        <a class="card" href="1024.html?v=20261105-7" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
+        <a class="card" href="1024.html?v=20261105-8" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-1024" hidden></span>
             <canvas id="n1024Preview" width="160" height="160"></canvas>
@@ -2066,11 +2066,11 @@
     </div>
     <!-- 脚本加载顺序：audio.js 提供全局 SFX（音效开关按钮、卡片音效与 index.js 都依赖它），
          fullscreen.js 提供全局 FS（仅供本页全屏按钮使用）；index.js 依赖 SFX，须放在其之后 -->
-    <script src="audio.js?v=20261105-1"></script>
-    <script src="fx.js?v=20261104-5"></script>
+    <script src="audio.js?v=20261105-2"></script>
+    <script src="fx.js?v=20261104-6"></script>
     <script src="fullscreen.js?v=20261105-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，大厅键位零改动获得手柄支持 -->
-    <script src="gamepad.js?v=20261105-1"></script>
-    <script src="index.js?v=20261105-9"></script>
+    <script src="gamepad.js?v=20261105-2"></script>
+    <script src="index.js?v=20261105-10"></script>
 </body>
 </html>
