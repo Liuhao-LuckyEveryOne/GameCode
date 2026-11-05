@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<!-- ==================================================================
+     像素街机厅 · 运行时冒烟测试（tests/smoke.html）
+
+     背景：tests/check.py 为纯静态文本检查，无法验证事件时序、状态机流转等
+     运行时行为（2026-11-04 投币豁免监听时序缺陷即漏网于此）。本页在真实浏览器
+     里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
+     行为级验证——零依赖（无 node / playwright），与项目工具链一致。
+
+     覆盖场景（14 项）：
+       S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
+       S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
+       S3 Esc 关闭豁免    —— Esc 关闭手势不投币
+       S4 ✕ 关闭豁免      —— ✕ 按钮关闭后紧接点击不投币
+       S5 400ms 窗口过期  —— 关闭超过 400ms 后点击 → 恢复正常投币
+       S6 成就聚合        —— readAchCount 钳位/损坏 JSON 容错 + 面板 15/28 + 七行齐全
+       S7 嵌入协议握手    —— snake.html?embed=1 加载后父页收到 arcade:hello
+                              与 {type:'arcade:audio',act:'hello'} 两条报到
+       S8 成就写入幂等    —— unlockAchievement 重复调用同 id → 存档不产生重复条目
+       S9 俄罗斯方块核心  —— 旋转矩阵顺/逆/往返自洽 + collide 底越界/末行/左右越界四例
+       S10 吃豆人核心     —— 格心像素换算 + 迷宫通行判定（全墙行/豆子通道/墙格）三例
+       S11 1024 核心      —— dateSeed FNV 基值与确定性 + mulberry32 同种子序列 + isValidBoard 四例
+       S12 弹球台核心     —— 透视投影远/近端点（含深度缩放系数）+ 挡板尖端三角解算
+       S13 华容道核心     —— 纪录/评级键拼装 + 空存档 readBest + 摆盘像素定位 + 滑动范围四例
+       S14 蜜蜂核心       —— isHit AABB 重叠/分离/贴边严格边界三例
+     注：S9~S14 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
+         改 audio.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归。
+
+     运行方式：先起服（python server.py），浏览器访问
+       http://localhost:8765/tests/smoke.html
+     页面自动串行执行全部场景，结果实时渲染；automation 可读
+       window.SMOKE_RESULTS / document.title / #summary
+     注意：file:// 直开下同源策略阻断 iframe 内部访问，必须经 http 起服运行。
+
+     数据安全：启动时快照 localStorage 全部键值，结束时（含 pagehide 兜底）
+     清除并原样恢复——测试写入的种子数据与成就不会污染真实存档。
+     ================================================================== -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>运行时冒烟测试 · 像素街机厅</title>
+<style>
+    /* 深色控制台风：与街机厅观感呼应，结果一眼可辨（绿过红败） */
+    body { background: #0a0a14; color: #e8e8ff; font: 14px/1.7 Consolas, 'Microsoft YaHei', monospace; margin: 0; padding: 24px 28px; }
+    h1 { font-size: 17px; color: #ffd23e; margin: 0 0 4px; }
+    .sub { color: #8a8ab0; font-size: 12px; margin-bottom: 14px; }
+    #summary { font-size: 16px; font-weight: 700; padding: 10px 14px; border: 1px solid #33335c; border-radius: 6px; margin-bottom: 14px; }
+    #summary.all-pass { color: #39ff6a; border-color: #39ff6a; }
+    #summary.has-fail { color: #ff3ea5; border-color: #ff3ea5; }
+    #summary.pending { color: #8a8ab0; }
+    ol#results { margin: 0 0 16px; padding-left: 22px; }
+    ol#results li { margin-bottom: 4px; }
+    ol#results li.pass { color: #39ff6a; }
+    ol#results li.fail { color: #ff3ea5; font-weight: 700; }
+    ol#results li small { color: #8a8ab0; font-weight: 400; }
+    #rerun { background: #1c1c40; color: #35e0ff; border: 1px solid #35e0ff; border-radius: 4px; padding: 6px 14px; font: inherit; cursor: pointer; }
+    /* 测试舞台：iframe 实景运行区（缩小尺寸仅为页面可读，断言不依赖视口大小） */
+    #stage { margin-top: 12px; }
+    #stage iframe { width: 480px; height: 340px; border: 1px solid #33335c; margin-right: 10px; background: #000; }
+</style>
+</head>
+<body>
+<h1>运行时冒烟测试 · 像素街机厅</h1>
+<div class="sub">真实浏览器 + 同源 iframe + 合成 DOM 事件；自动快照/恢复 localStorage，不污染真实存档</div>
+<div id="summary" class="pending">准备运行…</div>
+<ol id="results"></ol>
+<button id="rerun" type="button">重新运行</button>
+<div id="stage"></div>
+<script>
+'use strict';
+// ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------
+const RESULTS = [];          // 全部场景结果 { name, pass, detail }
+let restored = false;        // localStorage 恢复幂等标记（finally 与 pagehide 双路只恢复一次）
+let running = false;         // 防重复运行标记
+
+/**
+ * 记录并渲染一条场景结果
+ * @param {string} name 场景名
+ * @param {boolean} pass 是否全部断言通过
+ * @param {string} detail 明细（断言失败原因或通过摘要）
+ */
+function record(name, pass, detail) {
+    RESULTS.push({ name, pass, detail });
+    const li = document.createElement('li');
+    li.className = pass ? 'pass' : 'fail';
+    li.textContent = (pass ? 'PASS  ' : 'FAIL  ') + name;
+    const small = document.createElement('small');
+    small.textContent = ' — ' + detail;
+    li.appendChild(small);
+    document.getElementById('results').appendChild(li);
+    console.log((pass ? '[PASS] ' : '[FAIL] ') + name + ' — ' + detail);
+}
+
+/**
+ * 汇总收尾：更新总结条 / 页面标题 / window.SMOKE_RESULTS（自动化契约出口）
+ */
+function finish() {
+    const passed = RESULTS.filter(r => r.pass).length;
+    const sum = document.getElementById('summary');
+    sum.textContent = '运行完成：' + passed + '/' + RESULTS.length + ' 通过';
+    sum.className = passed === RESULTS.length ? 'all-pass' : 'has-fail';
+    document.title = (passed === RESULTS.length ? '冒烟通过 ' : '冒烟失败 ') + passed + '/' + RESULTS.length;
+    window.SMOKE_RESULTS = RESULTS;
+    console.log('冒烟测试结束：' + passed + '/' + RESULTS.length);
+}
+
+// ---------- localStorage 保护：快照 → 清空 → 测试 → 恢复（含 pagehide 兜底） ----------
+let SNAPSHOT = [];
+/** 快照当前全部 localStorage 键值（测试种子需要干净环境，真实存档测试后原样归还） */
+function snapshotLS() {
+    SNAPSHOT = [];
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            SNAPSHOT.push([k, localStorage.getItem(k)]);
+        }
+    } catch (e) { /* 存储不可用：按空快照处理 */ }
+}
+/** 恢复快照（幂等）：清掉测试期间的全部写入再原样写回 */
+function restoreLS() {
+    if (restored) return;
+    restored = true;
+    try {
+        localStorage.clear();
+        for (const kv of SNAPSHOT) localStorage.setItem(kv[0], kv[1]);
+    } catch (e) { /* 存储不可用：静默 */ }
+}
+/** 测试用安全写 */
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 静默 */ } }
+/** 测试用安全清空 */
+function lsClear() { try { localStorage.clear(); } catch (e) { /* 静默 */ } }
+
+// ---------- iframe 场景驱动 ----------
+const stage = document.getElementById('stage');
+let seq = 0; // 场景序号：拼入 iframe 查询串强制绕缓存，保证每场景全新加载
+
+/**
+ * 在舞台加载一个待测页面，等 load 事件后再稳定 350ms（脚本监听均已就绪）
+ * @param {string} path 相对 tests/ 的页面路径（../index.html 或 ../snake.html）
+ * @returns {Promise<HTMLIFrameElement>} 就绪的 iframe
+ */
+function loadPage(path) {
+    return new Promise((resolve, reject) => {
+        const frame = document.createElement('iframe');
+        let done = false;
+        // r= 随机绕缓存保证每场景全新状态；路径已带查询串（如 ?embed=1）时以 & 续接，避免出现双 ?
+        frame.src = path + (path.includes('?') ? '&' : '?') + 'v=20261104-12&r=' + (++seq);
+        frame.onload = () => {
+            if (done) return;
+            done = true;
+            setTimeout(() => resolve(frame), 350); // 稳定期：等各模块初始化监听挂载完成
+        };
+        stage.appendChild(frame);
+        setTimeout(() => { if (!done) { done = true; reject(new Error(path + ' 加载超时')); } }, 8000);
+    });
+}
+/** 销毁当前全部 iframe：场景间状态彻底隔离 */
+function clearStage() { stage.innerHTML = ''; }
+
+/**
+ * 在 iframe 的 body 上派发冒泡合成事件（模拟用户在页面中央按下/按键，
+ * 事件沿 body → document → window 冒泡，命中两条路径的全部监听）
+ * @param {HTMLIFrameElement} frame 目标 iframe
+ * @param {string} type 事件类型（pointerdown / keydown）
+ * @param {Function} Ctor 事件构造器（PointerEvent / KeyboardEvent）
+ * @param {Object} init 事件初始化参数（如 { key: 'Escape' }）
+ */
+function fire(frame, type, Ctor, init) {
+    const opts = Object.assign({ bubbles: true, cancelable: true }, init);
+    frame.contentDocument.body.dispatchEvent(new Ctor(type, opts));
+}
+/** 断言辅助：条件不成立即抛错（由场景捕获后整体记 FAIL） */
+function ok(cond, msg) { if (!cond) throw new Error(msg); }
+
+// ---------- 跨 iframe 消息收集：S7 协议握手断言的数据源（注册一次，全程收集） ----------
+const msgLog = [];
+window.addEventListener('message', e => {
+    // 报文统一归一为对象存入：字符串报文（历史形态）包一层 { type }
+    msgLog.push(typeof e.data === 'string' ? { type: e.data } : e.data);
+});
+
+/**
+ * 等待基线之后到达的两条嵌入协议报到（fullscreen.js 的 arcade:hello + audio.js 的 audio hello）。
+ * 只检查基线之后的新增报文：报文日志跨场景累计，若检查全量会把上一场景的残留误认为本场景接线成功。
+ * @param {number} mark 调用前记录的 msgLog.length 基线（场景加载 iframe 前取值）
+ * @returns {Promise<void>} 收齐两条报到即 resolve；4 秒未齐 reject（公共库接线缺失）
+ */
+function waitHandshake(mark) {
+    return new Promise((resolve, reject) => {
+        const t0 = performance.now();
+        (function poll() {
+            const fresh = msgLog.slice(mark);
+            const hasHello = fresh.some(m => m.type === 'arcade:hello');
+            const hasAudioHello = fresh.some(m => m.type === 'arcade:audio' && m.act === 'hello');
+            if (hasHello && hasAudioHello) return resolve();
+            if (performance.now() - t0 > 4000) return reject(new Error('4s 内未收齐该页嵌入握手报文（arcade:hello / audio hello）'));
+            setTimeout(poll, 60);
+        })();
+    });
+}
+
+// ==================================================================
+// 十四个场景（每个 async 函数内部自包含：加载 → 操作 → 断言，抛错即败）
+// ==================================================================
+
+/** S1 投币基线：未开面板时点击任意处 → 正常投币（pre-coin 摘除） */
+async function s1_baselineCoin() {
+    const frame = await loadPage('../index.html');
+    fire(frame, 'pointerdown', PointerEvent);
+    ok(!frame.contentDocument.body.classList.contains('pre-coin'), '点击后 body 仍处于 pre-coin（投币未触发）');
+    return '点击即投币，pre-coin 已摘除';
+}
+
+/** S2 点外关闭豁免（时序回归核心）：面板打开时点外 → 面板关闭且不投币 */
+async function s2_clickOutsideExempt() {
+    const frame = await loadPage('../index.html');
+    frame.contentDocument.getElementById('trophyToggle').click(); // 开殿堂（合成 click 不派发 pointerdown）
+    const doc = frame.contentDocument;
+    ok(!doc.getElementById('trophyHall').hidden, '点击入口后殿堂未打开');
+    fire(frame, 'pointerdown', PointerEvent); // 点外手势：冒泡先经 document（关闭）再到 window（投币判定）
+    ok(doc.getElementById('trophyHall').hidden, '点外后殿堂未关闭');
+    ok(doc.body.classList.contains('pre-coin'), '关闭成就殿堂的手势误触发了投币（时序豁免失效）');
+    return '殿堂随点外关闭，且未触发投币';
+}
+
+/** S3 Esc 关闭豁免：Esc 关殿堂手势不投币 */
+async function s3_escExempt() {
+    const frame = await loadPage('../index.html');
+    frame.contentDocument.getElementById('trophyToggle').click();
+    const doc = frame.contentDocument;
+    fire(frame, 'keydown', KeyboardEvent, { key: 'Escape' });
+    ok(doc.getElementById('trophyHall').hidden, 'Esc 后殿堂未关闭');
+    ok(doc.body.classList.contains('pre-coin'), 'Esc 关闭成就殿堂误触发了投币');
+    return 'Esc 关闭殿堂且未触发投币';
+}
+
+/** S4 ✕ 关闭豁免：✕ 按钮关闭后紧接点击不投币 */
+async function s4_closeBtnExempt() {
+    const frame = await loadPage('../index.html');
+    frame.contentDocument.getElementById('trophyToggle').click();
+    const doc = frame.contentDocument;
+    doc.getElementById('thClose').click();
+    fire(frame, 'pointerdown', PointerEvent);
+    ok(doc.body.classList.contains('pre-coin'), '✕ 关闭后紧接点击误触发了投币');
+    return '✕ 关闭后紧接点击未触发投币';
+}
+
+/** S5 400ms 窗口过期：关闭超过 400ms 后点击 → 恢复正常投币（豁免不无限蔓延） */
+async function s5_windowExpires() {
+    const frame = await loadPage('../index.html');
+    frame.contentDocument.getElementById('trophyToggle').click();
+    fire(frame, 'keydown', KeyboardEvent, { key: 'Escape' }); // 先 Esc 关闭盖时间戳
+    await new Promise(r => setTimeout(r, 500));               // 等待超过 400ms 豁免窗口
+    fire(frame, 'pointerdown', PointerEvent);
+    ok(!frame.contentDocument.body.classList.contains('pre-coin'), '过期后点击仍被豁免（投币永久失效）');
+    return '关闭 500ms 后点击恢复投币，豁免窗口正确过期';
+}
+
+/** S6 成就聚合：readAchCount 钳位/容错 + 面板总数与行数齐全 */
+async function s6_achAggregate() {
+    lsClear();
+    lsSet('arcade_ach_snake', '["a","b"]');                                  // 正常：2 项
+    lsSet('arcade_ach_tetris', '["1","2","3","4","5"]');                     // 脏数据 5>3：钳位 3
+    lsSet('arcade_ach_bee', '{"unlocked":[1,2,3,4,5,6,7,8,9,10]}');          // 对象型：10 项
+    lsSet('arcade_ach_pac', '{{{bad json');                                  // 损坏 JSON：按 0
+    const frame = await loadPage('../index.html');
+    const win = frame.contentWindow;
+    ok(win.readAchCount({ id: 'snake', key: 'arcade_ach_snake', total: 3 }) === 2, 'snake 正常计数不为 2');
+    ok(win.readAchCount({ id: 'tetris', key: 'arcade_ach_tetris', total: 3 }) === 3, 'tetris 脏数据未钳位到 3');
+    ok(win.readAchCount({ id: 'bee', key: 'arcade_ach_bee', total: 10, obj: true }) === 10, 'bee 对象型计数不为 10');
+    ok(win.readAchCount({ id: 'pac', key: 'arcade_ach_pac', total: 3 }) === 0, 'pac 损坏 JSON 未按 0 容错');
+    frame.contentDocument.getElementById('trophyToggle').click(); // 开殿堂触发真实 ACH_DEFS 聚合渲染
+    const doc = frame.contentDocument;
+    ok(doc.getElementById('thTotal').textContent === '15 / 58', '殿堂总数不为 15/58（实际 ' + doc.getElementById('thTotal').textContent + '）');
+    ok(doc.getElementById('thGrid').children.length === 7, '殿堂游戏行数不为 7（华容道等可能缺席）');
+    return '计数 2/钳位3/对象10/损坏0 全对，殿堂聚合 15/58 七行齐全';
+}
+
+/** S7+S8 共用 snake 嵌入页：S7 断言两条协议报到，S8 断言成就写入幂等 */
+async function s7s8_embedAndAch() {
+    lsSet('arcade_ach_snake', '[]'); // 成就空档（v1 数组形态）：顺带走 snake.js 的 v1→v2 迁移路径，S8 断言基线确定为 0
+    const frame = await loadPage('../snake.html?embed=1'); // 查询串已带 embed，loadPage 会以 & 续接绕缓存参数
+    // S7 协议握手：等待两条报到（复用 waitHandshake；main() 开头已清空 msgLog，基线 0 即全量）
+    await waitHandshake(0);
+    record('S7 嵌入协议握手（arcade:hello + audio hello）', true, '两条报到报文均按 v2.3.1 修正指纹到达父页');
+    // S8 成就写入幂等：直接调用 snake.js 顶层全局 unlockAchievement（存档为 v2 对象格式 { unlocked: { id: 解锁时间戳 }, best }）
+    const win = frame.contentWindow;
+    win.unlockAchievement('__smoke_a');
+    win.unlockAchievement('__smoke_a'); // 重复调用应幂等短路（不覆盖时间戳、不产生第二条目）
+    win.unlockAchievement('__smoke_b');
+    let store = null;
+    try { store = JSON.parse(localStorage.getItem('arcade_ach_snake') || 'null'); } catch (e) { /* 损坏按空 */ }
+    ok(store && typeof store === 'object' && !Array.isArray(store), '成就存档不是 v2 对象格式（{ unlocked, best }）');
+    ok(store.unlocked && typeof store.unlocked['__smoke_a'] === 'number', '__smoke_a 未写入解锁时间戳');
+    ok(typeof store.unlocked['__smoke_b'] === 'number', '__smoke_b 未写入');
+    ok(Object.keys(store.unlocked).length === 2, '解锁映射键数不为 2（出现重复或冗余条目，幂等失效）');
+    record('S8 成就写入幂等', true, '重复解锁不产生重复条目，v2 存档恰含 2 枚测试章（均带解锁时间戳）');
+}
+
+// ---------- S9~S14 六游戏核心逻辑：纯函数级断言 + 公共库握手探针 ----------
+// 设计取舍：游戏核心状态多为闭包内变量（棋盘 / 幽灵相位 / 网格），外部不可注入，
+// 故选取挂在 window 上的纯函数断言其数学与几何正确性；顶层 const 常量（SRS 踢墙表、
+// 幽灵相位表、难度表等）不挂 window 无法直接断言，均以依赖它们的函数间接覆盖。
+
+/** S9 俄罗斯方块核心：旋转矩阵顺/逆/往返自洽 + 碰撞边界四例（SRS 踢墙表的判定基础） */
+async function s9_tetrisCore() {
+    const mark = msgLog.length; // 握手报文基线：只认本场景 iframe 新发出的报到
+    const frame = await loadPage('../tetris.html?embed=1');
+    await waitHandshake(mark); // 公共库接线：改 audio.js / fullscreen.js 后此断言最先变红
+    const win = frame.contentWindow;
+    // 旋转纯函数：非对称矩阵的顺/逆时针期望值（对称阵会掩盖旋转方向错误，必须用非对称）
+    ok(JSON.stringify(win.rotate([[1, 2], [3, 4]])) === JSON.stringify([[3, 1], [4, 2]]), '顺时针旋转矩阵结果错误');
+    ok(JSON.stringify(win.rotateCCW([[1, 2], [3, 4]])) === JSON.stringify([[2, 4], [1, 3]]), '逆时针旋转矩阵结果错误');
+    const m = [[1, 0, 1], [0, 1, 0], [1, 0, 1]];
+    ok(JSON.stringify(win.rotateCCW(win.rotate(m))) === JSON.stringify(m), '顺逆旋转往返不自洽（踢墙表将系统性偏移）');
+    // 碰撞边界：加载态空棋盘上探测（越界 true / 末行与最右列合法 false）
+    ok(win.collide(0, 20, [[1]]) === true, 'y=20 越出棋盘底未判碰撞');
+    ok(win.collide(0, 19, [[1]]) === false, 'y=19 合法末行误判碰撞');
+    ok(win.collide(-1, 0, [[1]]) === true, 'x=-1 左越界未判碰撞');
+    ok(win.collide(9, 0, [[1]]) === false, 'x=9 最右列误判碰撞');
+    ok(typeof win.startGame === 'function', '主初始化 startGame 缺失');
+    return '旋转顺/逆/往返自洽 + 碰撞边界四例全对，公共库握手两条到达';
+}
+
+/** S10 吃豆人核心：格心像素换算 + 迷宫通行判定三例（相位表为 const 不挂 window，以坐标函数间接覆盖坐标系正确性） */
+async function s10_pacCore() {
+    const mark = msgLog.length;
+    const frame = await loadPage('../pac.html?embed=1');
+    await waitHandshake(mark);
+    const win = frame.contentWindow;
+    ok(win.centerX(0) === 12, 'centerX(0) 不为 12（格心像素换算失准）');
+    ok(win.centerY(3) === 84, 'centerY(3) 不为 84（格心像素换算失准）');
+    ok(win.canPass(0, 0) === false, '迷宫首行全墙却判可通行');
+    ok(win.canPass(6, 10) === true, '隧道行豆子通道误判为墙');
+    ok(win.canPass(7, 10) === false, '隧道行墙体格误判可通行');
+    ok(typeof win.startGame === 'function', '主初始化 startGame 缺失');
+    return '格心换算两例 + 迷宫通行三区（全墙行/豆子通道/墙格）判定全对';
+}
+
+/** S11 1024 核心：FNV-1a 每日种子确定性 + mulberry32 同种子序列可复现 + 棋盘合法性校验四例 */
+async function s11_1024Core() {
+    const mark = msgLog.length;
+    const frame = await loadPage('../1024.html?embed=1');
+    await waitHandshake(mark);
+    const win = frame.contentWindow;
+    ok(win.dateSeed('') === 2166136261, 'dateSeed 空串基值不符 FNV-1a 规范初值');
+    ok(win.dateSeed('2026-11-04') === win.dateSeed('2026-11-04'), 'dateSeed 同串不同值（每日一题失去确定性）');
+    ok(win.dateSeed('a') !== win.dateSeed('b'), 'dateSeed 不同串哈希碰撞');
+    const ra = win.mulberry32(42);
+    const rb = win.mulberry32(42);
+    ok(ra() === rb() && ra() === rb() && ra() === rb(), 'mulberry32 同种子随机序列不可复现');
+    // 棋盘校验四例：isValidBoard 强制 SIZE×SIZE（默认难度 normal → 4×4），同时校验每格为 0 或 2 的幂
+    ok(win.isValidBoard([[2, 4, 0, 0], [8, 16, 0, 0], [0, 0, 0, 0], [0, 0, 2, 4]]) === true, '4×4 合法棋盘误判非法');
+    ok(win.isValidBoard([[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]) === true, '4×4 全零棋盘误判非法');
+    ok(win.isValidBoard([[2, 3, 0, 0], [4, 8, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]) === false, '含 3 非法值棋盘未拦截');
+    ok(win.isValidBoard([[2], [4]]) === false, '短行棋盘未拦截（尺寸校验失效）');
+    ok(typeof win.startGame === 'function', '主初始化 startGame 缺失');
+    return 'FNV 基值与确定性 + 随机序列可复现 + 棋盘校验四例全对';
+}
+
+/** S12 弹球台核心：透视投影远/近端点（含深度缩放系数）+ 挡板尖端三角解算 */
+async function s12_pinballCore() {
+    const mark = msgLog.length;
+    const frame = await loadPage('../pinball.html?embed=1');
+    await waitHandshake(mark);
+    const win = frame.contentWindow;
+    const top = win.project(200, 0);      // 台面远端中点：x 恰为中心线 250，纵深 s=0.5×1.15=0.575
+    ok(top.x === 250 && top.y === 36 && top.s === 0.575, '台面远端投影点/缩放系数不符（远小透视失真）');
+    const bottom = win.project(200, 560); // 台面近端中点：s=1.15 全尺寸
+    ok(bottom.x === 250 && bottom.y === 640 && bottom.s === 1.15, '台面近端投影点/缩放系数不符');
+    const tip = win.flipperTip({ ax: 100, ay: 500, side: 1, angle: 0, len: 60 }); // 纯三角：cos0=1、sin0=0
+    ok(tip.x === 160 && tip.y === 500, '挡板尖端三角解算错误');
+    ok(typeof win.launch === 'function' && typeof win.startGame === 'function', '主初始化 launch/startGame 缺失');
+    return '透视投影远/近端点（含 s=0.575/1.15）+ 挡板尖端解算全对';
+}
+
+/** S13 华容道核心：纪录/评级键拼装 + 空存档 readBest + 摆盘像素定位 + 滑动范围四例（checkWin 有通关副作用故不调用） */
+async function s13_klotskiCore() {
+    const mark = msgLog.length;
+    const frame = await loadPage('../klotski.html?embed=1');
+    await waitHandshake(mark);
+    const win = frame.contentWindow;
+    ok(win.bestKey('hengdao', 'normal') === 'klotskiBest_normal_hengdao', 'bestKey 存档键拼装不符');
+    ok(win.rankKey('hengdao', 'easy') === 'klotskiRank_easy_hengdao', 'rankKey 存档键拼装不符');
+    ok(win.readBest('hengdao', 'normal') === 0, '空存档 readBest 不为 0（纪录读取兜底失效）');
+    win.loadLayout(0); // 摆出横刀立马：曹操(1,0,2,2)、关羽(1,2,2,1)、底行四卒含(0,4)
+    const cao = win.pieceAt(228, 120); // 像素→格：PAD12+2×108=228 → col2，PAD12+1×108=120 → row1（曹操右下角格）
+    ok(cao && cao.t === 'cao' && cao.w === 2 && cao.h === 2, '像素(228,120)未定位到 2×2 曹操');
+    const sol = win.pieceAt(66, 498);  // PAD12+0.5×108=66 → col0.5，PAD12+4.5×108=498 → row4.5（底行左卒中心）
+    ok(sol && sol.t === 'sol', '像素(66,498)未定位到兵卒');
+    ok(win.slideRange(cao, 0, -1) === 0, '曹操上移越出棋盘顶未拦截');
+    ok(win.slideRange(cao, 0, 1) === 0, '曹操下移穿越关羽未拦截');
+    ok(win.slideRange(sol, 1, 0) === 2, '底行卒右移连滑两格（(1,4)(2,4) 连空）却判不可滑');
+    ok(win.slideRange(sol, 0, 1) === 0, '底行卒下移越出棋盘底未拦截');
+    ok(typeof win.startGame === 'function', '主初始化 startGame 缺失');
+    return '键拼装 + 空档兜底 + 摆盘像素定位 + 滑动范围四例全对';
+}
+
+/** S14 蜜蜂核心：isHit AABB 三例（重叠/分离/贴边严格不等号——贴边相切不算命中） */
+async function s14_beeCore() {
+    const mark = msgLog.length;
+    const frame = await loadPage('../bee.html?embed=1');
+    await waitHandshake(mark);
+    const win = frame.contentWindow;
+    ok(win.isHit(0, 0, 10, 10, 5, 5, 10, 10) === true, '重叠 AABB 未判命中');
+    ok(win.isHit(0, 0, 10, 10, 20, 20, 10, 10) === false, '分离 AABB 误判命中');
+    ok(win.isHit(0, 0, 10, 10, 10, 0, 10, 10) === false, '贴边相切误判命中（应为严格不等号边界）');
+    ok(typeof win.initGame === 'function' && typeof win.startGame === 'function', '主初始化 initGame/startGame 缺失');
+    return 'AABB 命中三例（重叠/分离/贴边严格边界）全对';
+}
+
+/**
+ * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
+ * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
+ */
+async function runScenarios(list) {
+    for (const [name, fn] of list) {
+        try {
+            const detail = await fn();
+            record(name, true, detail);
+        } catch (err) {
+            record(name, false, err && err.message ? err.message : String(err));
+        }
+        clearStage();
+    }
+}
+
+// ---------- 主流程：快照 → 串行执行十四场景 → 恢复 ----------
+async function main() {
+    if (running) return;
+    running = true;
+    restored = false;
+    document.getElementById('summary').textContent = '运行中…';
+    document.getElementById('summary').className = 'pending';
+    document.getElementById('results').innerHTML = '';
+    RESULTS.length = 0;
+    msgLog.length = 0;
+    clearStage();
+    snapshotLS();
+    lsClear(); // 种子前清空：成就 0 起、待机态必然成立（真实存档已快照待还）
+    const scenarios = [
+        ['S1 投币基线（点击即投币）', s1_baselineCoin],
+        ['S2 点外关闭豁免（不投币）', s2_clickOutsideExempt],
+        ['S3 Esc 关闭豁免（不投币）', s3_escExempt],
+        ['S4 ✕ 关闭豁免（不投币）', s4_closeBtnExempt],
+        ['S5 400ms 窗口过期恢复投币', s5_windowExpires],
+        ['S6 成就聚合（钳位/容错/总数）', s6_achAggregate],
+    ];
+    // 六游戏核心逻辑场景：注册于 S7/S8 之后，先回归大厅协议再逐游戏过核心
+    const coreScenarios = [
+        ['S9 俄罗斯方块核心（旋转/碰撞边界）', s9_tetrisCore],
+        ['S10 吃豆人核心（格心换算/通行判定）', s10_pacCore],
+        ['S11 1024 核心（种子/随机/棋盘校验）', s11_1024Core],
+        ['S12 弹球台核心（透视投影/挡板尖端）', s12_pinballCore],
+        ['S13 华容道核心（键拼装/摆盘/滑动）', s13_klotskiCore],
+        ['S14 蜜蜂核心（AABB 命中边界）', s14_beeCore],
+    ];
+    try {
+        await runScenarios(scenarios);
+        try {
+            await s7s8_embedAndAch(); // S7/S8 在函数内部自行 record（两场景共用一次加载）
+        } catch (err) {
+            record('S7/S8 嵌入协议 + 成就写入', false, err && err.message ? err.message : String(err));
+        }
+        await runScenarios(coreScenarios);
+    } finally {
+        clearStage();
+        restoreLS(); // 无论成败归还真实存档
+        finish();
+        running = false;
+    }
+}
+// pagehide 兜底：自动化中途关闭页面也归还存档
+window.addEventListener('pagehide', restoreLS);
+document.getElementById('rerun').addEventListener('click', main);
+main();
+</script>
+</body>
+</html>

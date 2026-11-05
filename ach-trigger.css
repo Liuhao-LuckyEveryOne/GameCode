@@ -1,0 +1,145 @@
+/* ======================================================================
+ * 成就墙 · 相片墙触发器（全站共享样式）v1.0 (20261105)
+ * 以「迷你相片墙」示意成就陈列：六张微缩相片（色相取六款游戏主题色）
+ * 微倾钉挂于暗色玻璃底板上，悬停时依次摆正上浮提亮 + 斜向光泽掠过，
+ * 替代传统文字按钮，成为各页成就墙 / 成就殿堂的炫酷可视化入口。
+ * 使用方式：
+ *   - 结构：button.achWallTrigger > .awt-grid(6×.awt-tile)
+ *           + .awt-caption(.awt-label 文案 + .awt-key 徽标)
+ *   - 主题色：元素上以 style="--awt-h:<颜色>" 指定（描边 / 标签辉光取此色）
+ *   - 尺寸：组件内部全部以 em 度量，改 font-size 即整体缩放
+ *           （游戏页 10px / 大厅 11px）
+ *   - 定位：游戏页加 .awt-fixed（固定右上角声音/全屏按钮簇左侧）；
+ *           大厅自带 .awt-hall 定位规则（固定全屏按钮下方）
+ * 接线：游戏页引入 ach-trigger.js（点击等效按 V）；大厅由 index.js 绑定
+ * ==================================================================== */
+
+/* ---------- 组件基座：玻璃暗底 + 主题色描边 + em 缩放 ---------- */
+.achWallTrigger {
+    --awt-h: #ffd23e; /* 主题色缺省鎏金；页面以 style="--awt-h:…" 覆盖 */
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4em;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0.55em 0.75em 0.5em;
+    line-height: 1.1;
+    font-family: 'Press Start 2P', monospace;
+    color: var(--awt-h);
+    background: rgba(8, 10, 24, 0.78);
+    border: 1px solid color-mix(in srgb, var(--awt-h) 40%, rgba(255, 255, 255, 0.14));
+    border-radius: 0.7em;
+    cursor: pointer;
+    overflow: hidden; /* 裁切光泽扫光出界部分 */
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+/* 悬停/聚焦上浮 + 主题色辉光；filter:none 抵消各页全局 button:hover 的亮度滤镜
+   （类+伪类选择器优先级高于 button:hover，保证覆盖生效） */
+.achWallTrigger:hover,
+.achWallTrigger:focus-visible {
+    filter: none;
+    outline: none;
+    transform: translateY(-0.2em);
+    border-color: var(--awt-h);
+    box-shadow: 0 0 1em color-mix(in srgb, var(--awt-h) 55%, transparent),
+                inset 0 0 0.9em color-mix(in srgb, var(--awt-h) 18%, transparent);
+}
+/* 斜向光泽扫过：高光条从左掠至右（纯 transform 动画，不引发布局重排） */
+.achWallTrigger::after {
+    content: '';
+    position: absolute;
+    top: -60%;
+    left: 0;
+    width: 34%;
+    height: 220%;
+    background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.30), transparent);
+    transform: translateX(-160%) rotate(10deg);
+    transition: transform 0.6s ease;
+    pointer-events: none;
+}
+.achWallTrigger:hover::after,
+.achWallTrigger:focus-visible::after { transform: translateX(440%) rotate(10deg); }
+
+/* ---------- 相片墙：3×2 微缩相片，色相依次取六款游戏主题色 ---------- */
+.awt-grid {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 0.4em 0.45em;
+}
+/* 每张「相片」= 米白相纸边框 + 底部厚白脚（相片墙识别特征）+ 投影；随 em 缩放 */
+.awt-tile {
+    --h: 48; /* 相片芯色相（HSL hue），逐张覆盖 */
+    width: 1.9em;
+    height: 2.2em;
+    padding: 0.14em 0.14em 0.42em;
+    background: linear-gradient(#f7f2e4, #dcd5c0);
+    border-radius: 0.12em;
+    box-shadow: 0 0.18em 0.45em rgba(0, 0, 0, 0.55);
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.35s ease;
+}
+/* 相片芯：主题色对角渐变 + 左上高光斑 + 内辉光（radial 叠 linear 双层背景） */
+.awt-tile::before {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 0.06em;
+    background:
+        radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.55) 0 0.22em, transparent 65%),
+        linear-gradient(140deg, hsl(var(--h) 92% 62%), hsl(calc(var(--h) + 46) 85% 40%));
+    box-shadow: inset 0 0 0.3em hsl(var(--h) 92% 65% / 0.85);
+}
+/* 钉挂姿态：逐张微倾 + 轻微错位模拟手工钉挂；色相 140/190/48/330/28/270
+   依次对应 snake 绿 / tetris 青 / pac 黄 / bee 粉 / pinball 橙 / klotski 紫 */
+.awt-tile:nth-child(1) { --h: 140; transform: rotate(-7deg) translateY(0.06em); }
+.awt-tile:nth-child(2) { --h: 190; transform: rotate(5deg) translateY(-0.03em); transition-delay: 0.04s; }
+.awt-tile:nth-child(3) { --h: 48;  transform: rotate(-4deg) translateY(0.08em); transition-delay: 0.08s; }
+.awt-tile:nth-child(4) { --h: 330; transform: rotate(6deg) translateY(-0.05em); transition-delay: 0.12s; }
+.awt-tile:nth-child(5) { --h: 28;  transform: rotate(-6deg) translateY(0.04em); transition-delay: 0.16s; }
+.awt-tile:nth-child(6) { --h: 270; transform: rotate(4deg) translateY(0.07em); transition-delay: 0.20s; }
+/* 悬停：相片依次摆正上浮放大 + 提亮（transition-delay 形成左上→右下的传播涟漪） */
+.achWallTrigger:hover .awt-tile,
+.achWallTrigger:focus-visible .awt-tile {
+    transform: rotate(0deg) translateY(-0.14em) scale(1.15);
+    filter: brightness(1.3) saturate(1.15);
+}
+
+/* ---------- 题注：名称 + 徽标（游戏页显示按键 V / 大厅显示总数 58） ---------- */
+.awt-caption {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+}
+.awt-label {
+    font-size: 0.72em;
+    letter-spacing: 0.14em;
+    white-space: nowrap;
+    text-shadow: 0 0 0.6em currentColor;
+}
+.awt-key {
+    font-size: 0.62em;
+    line-height: 1;
+    padding: 0.22em 0.5em;
+    border: 1px solid currentColor;
+    border-radius: 0.3em;
+    opacity: 0.72;
+}
+
+/* ---------- 游戏页固定变体：右上角按钮簇（声音/全屏各 150 宽 @ right:16）左侧 ---------- */
+.awt-fixed {
+    position: fixed;
+    top: 12px;
+    right: 180px;
+    z-index: 10;
+    font-size: 10px;
+}
+
+/* 减动效偏好：停用扫光与全部过渡，仅保留静态相片墙形态 */
+@media (prefers-reduced-motion: reduce) {
+    .achWallTrigger,
+    .achWallTrigger::after,
+    .awt-tile { transition: none !important; }
+}

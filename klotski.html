@@ -1,0 +1,983 @@
+﻿<!DOCTYPE html>
+<!-- ==================================================================
+     华容道游戏页
+     结构：左上角返回链接 → 右上角固定按钮（音效开关 / 全屏）→ 舞台容器 #stage
+          （"华容道"彩色标题 + 主布局整体包裹，非全屏时由页尾 fitStage 脚本
+          等比缩放至完整落入视口，消除滚动条）→
+          主布局（左：456×605 棋盘画布 + 开始/通关两块遮罩，高度与右侧说明栏上下对齐；右：侧边信息栏
+          STATS 步数·用时·最少步纪录·提示次数·最佳评级（侧栏末尾另有 KEYS 键位说明） /
+          LAYOUT 六种经典布局切换 /
+          DIFFICULTY 三档难度切换（新手·进阶·大师，无"无敌"档；
+          H 键提示按难度差异化：新手无限次 / 进阶每局 3 次 / 大师禁用） /
+          ACTIONS 撤销·重开·演示最佳解；通关结算含 S/A/B/C 评级徽章：
+          步数比率定级 + 提示次数封顶；P 键演示系统：自动复现当前布局 BFS 最佳解
+          （格步口径，各布局均可完整通关），通关走庆祝演出但不写纪录与评级）
+     暂停体系：空格手动暂停 + 窗口失焦自动暂停（回合制但用时参与评级，暂停冻结计时）
+     脚本：audio.js 公共音效库 / fullscreen.js 全屏控制 / klotski.js 游戏逻辑
+     触发器：ach-trigger.css + ach-trigger.js 相片墙成就墙触发器（点击等效按 V 开合成就墙）
+     视听增强：棋子精细纹理（确定性木纹线 / 曹操锦缎菱格+鎏金双线框+渐变铆钉+
+          描边王冠+鎏金文字 / 关羽绦带纹 / 武将束带扣 / 兵卒圆环徽章 / 边缘光影 /
+          浮雕文字）、悬停微光与手型光标、临门金色四角星迸发 + 墙体红金渐变、
+          出口常时呼吸微光、棋盘织锦底纹、舞台浮尘微尘、拖拽落点金色虚影、
+          连击里程碑飘字、开局"开演"金字、通关群子错峰欢呼弹跳、
+          S 级徽章金色光晕呼吸动画；曹操专属厚重滑音与庄重选中音、破门轰鸣音、
+          开局开演号角、换局木质翻牌音、连击递升音、逼近纪录心跳音
+     ================================================================== -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>华容道 - 像素街机厅</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        /* ---------- 主题变量：底色 / 面板 / 红·金霓虹 / 文字 ---------- */
+        :root {
+            --bg: #140a0a;
+            --panel: rgba(42, 18, 18, 0.96);
+            --neon-red: #ff5540;
+            --neon-gold: #ffd23e;
+            --neon-blue: #35e0ff;
+            --text: #ffece8;
+        }
+        /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
+        html { background: var(--bg); }
+
+        /* ---------- 基础布局：全屏垂直居中 ---------- */
+        * { box-sizing: border-box; }
+        body {
+            user-select: none; /* 全局禁止文本选取：鼠标拖动不再框选界面文字、不触发浏览器选中搜索 */
+            -webkit-user-select: none;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            background: radial-gradient(ellipse at 50% 0%, #401c1c 0%, var(--bg) 65%);
+            font-family: 'Microsoft YaHei', sans-serif;
+            color: var(--text);
+        }
+        /* CRT 扫描线氛围 */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 3px);
+        }
+        /* 视口边缘氛围灯带：弱于游戏区边框灯带，勾勒屏幕轮廓而不喧宾夺主 */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            transform: translateZ(0); /* 独立合成层：edgeFlow 的 box-shadow 每帧重绘隔离于本层，不再与 hover 重绘叠加波及整页引发闪屏 */
+            box-shadow: inset 0 0 64px rgba(255, 154, 62, 0.10);
+            animation: edgeFlow 8s ease-in-out infinite;
+        }
+        /* 边缘灯带流光：橙 → 粉 → 蓝循环（与画布灯带同节奏、低亮度） */
+        @keyframes edgeFlow {
+            0%, 100% { box-shadow: inset 0 0 64px rgba(255, 154, 62, 0.10); }
+            33% { box-shadow: inset 0 0 64px rgba(255, 62, 165, 0.11); }
+            66% { box-shadow: inset 0 0 64px rgba(53, 224, 255, 0.11); }
+        }
+        /* ---------- 视口四周环绕光带：主题色霓虹流光绕屏幕边缘匀速巡游 ---------- */
+        #edgeBeam {
+            position: fixed;
+            inset: 0;
+            z-index: 6; /* 置于暗角之上、返回链接与右上角按钮(10)之下：不挡操作 */
+            pointer-events: none;
+            padding: 4px; /* 光带厚度 */
+            /* 遮罩挖空内容区：仅保留 padding 形成的四周环形带 */
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            overflow: hidden;
+        }
+        /* 旋转光束：超大锥形渐变绕视口中心自转，两道主题色光带对置接力 */
+        #edgeBeam::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 142vmax; /* √2×视口较长边：内切圆恰好覆盖视口对角线，纹理面积较 200vmax 减半，降低全屏显存压力 */
+            height: 142vmax;
+            margin: -71vmax 0 0 -71vmax; /* 中心对齐视口中心 */
+            will-change: transform; /* 常驻合成层：避免超大纹理被反复驱逐/重建引发闪屏 */
+            background: conic-gradient(
+                transparent 0deg,
+                var(--neon-red) 22deg, var(--neon-red) 58deg, transparent 88deg,
+                transparent 180deg,
+                var(--neon-red) 202deg, var(--neon-red) 238deg, transparent 268deg);
+            opacity: 0.6; /* 亮度弱于机台边框灯带，氛围不喧宾夺主 */
+            animation: beamOrbit 10s linear infinite;
+        }
+        /* 光束匀速自转一周：形成光带沿四边连续巡游的观感 */
+        @keyframes beamOrbit {
+            to { transform: rotate(1turn); }
+        }
+        /* ---------- 返回链接：固定左上角，回到游戏大厅 ---------- */
+        .back-link {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 10;
+            padding: 8px 14px;
+            color: var(--neon-red); /* 与右上音效/全屏开关同主题色 */
+            text-decoration: none;
+            font-size: 13px;
+            letter-spacing: 2px;
+            border: 1px solid rgba(255, 85, 64, 0.4);
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .back-link:hover {
+            background: rgba(255, 85, 64, 0.12);
+            box-shadow: 0 0 12px rgba(255, 85, 64, 0.5);
+        }
+        /* 音效开关按钮（固定右上角，覆盖全局 button 主题底色） */
+        .sound-toggle {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 10;
+            margin-top: 0;
+            width: 150px;
+            padding: 8px 0;
+            text-align: center;
+            line-height: 1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--neon-gold);
+            background: rgba(42, 18, 18, 0.85);
+            border: 1px solid rgba(255, 210, 62, 0.4);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .sound-toggle:hover {
+            background: rgba(255, 210, 62, 0.12);
+            filter: none;
+            box-shadow: 0 0 12px rgba(255, 210, 62, 0.5);
+        }
+        /* 全屏按钮（固定右上角音效开关下方，覆盖全局 button 主题底色） */
+        .fs-toggle {
+            position: fixed;
+            top: 60px;
+            right: 16px;
+            z-index: 10;
+            margin-top: 0;
+            width: 150px;
+            padding: 8px 0;
+            text-align: center;
+            line-height: 1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--neon-gold);
+            background: rgba(42, 18, 18, 0.85);
+            border: 1px solid rgba(255, 210, 62, 0.4);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .fs-toggle:hover {
+            background: rgba(255, 210, 62, 0.12);
+            filter: none;
+            box-shadow: 0 0 12px rgba(255, 210, 62, 0.5);
+        }
+        /* ---------- 标题：华容道每字彩色霓虹（汉字由雅黑渲染，像素字体不含中文字形） ---------- */
+        h1.title {
+            font-family: 'Press Start 2P', 'Microsoft YaHei', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 8px;
+            text-indent: 4px; /* 补偿末字后字距的一半（letter-spacing 8px 使文字视觉偏左 4px） */
+            text-align: center;
+            margin: 0 0 18px;
+        }
+        /* 每个字带自身颜色的霓虹光晕 */
+        h1.title span { text-shadow: 0 0 16px currentColor; }
+        /* ---------- 主布局：左侧棋盘容器 + 右侧侧边信息栏 ---------- */
+        /* 顶边对齐：侧栏顶边与棋盘外框顶边平齐，底边按内容自然收尾 */
+        .layout {
+            display: flex;
+            gap: 18px;
+            align-items: flex-start;
+        }
+        /* 游戏容器（遮罩层相对其定位）与棋盘画布：456×605，红色霓虹边框 */
+        #gameContainer { position: relative; }
+        #game {
+            display: block;
+            /* 固定 CSS 逻辑尺寸：DPR 适配会放大画布物理分辨率（width/height 属性），
+               锁定显示尺寸保证布局恒为 456×605，clientWidth/Height 恒等于逻辑坐标 */
+            width: 456px;
+            height: 605px;
+            border: 3px solid var(--neon-red);
+            border-radius: 4px;
+            background-color: #1a0f12;
+            box-shadow: 0 0 18px rgba(255, 85, 64, 0.35), inset 0 0 30px rgba(255, 85, 64, 0.06);
+            /* 边框灯带：与 1024 机台同款三色流光循环 */
+            animation: canvasFlow 8s ease-in-out infinite;
+            /* 触屏拖动滑块时阻止页面滚动/缩放手势干扰 */
+            touch-action: none;
+        }
+        /* 边框流光灯带：主题红 → 鎏金 → 暖橙循环（贴合华容道主题色调） */
+        @keyframes canvasFlow {
+            0%, 100% { border-color: #ff5540; box-shadow: 0 0 28px rgba(255, 85, 64, 0.4), inset 0 0 40px rgba(255, 85, 64, 0.08); }
+            33% { border-color: #ffd23e; box-shadow: 0 0 32px rgba(255, 210, 62, 0.45), inset 0 0 40px rgba(255, 210, 62, 0.08); }
+            66% { border-color: #ff9a3e; box-shadow: 0 0 32px rgba(255, 154, 62, 0.45), inset 0 0 40px rgba(255, 154, 62, 0.08); }
+        }
+        /* ---------- 侧边信息栏 ---------- */
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 330px;
+        }
+        /* LAYOUT 与 DIFFICULTY 并排：压缩侧栏总高，为末尾逐键键位说明腾出空间；
+           宽度按内容非对称分配——LAYOUT 按钮文案仅四字，收窄为内容自适应宽，
+           DIFFICULTY 占据剩余全部宽度，保证「新手 · 提示+撤销」等长描述不换行 */
+        .options-row {
+            display: flex;
+            gap: 12px;
+        }
+        .options-row .panel-box:first-child { flex: 0 0 auto; }
+        .options-row .panel-box:last-child { flex: 1; }
+        .panel-box {
+            background: rgba(42, 18, 18, 0.85);
+            border: 1px solid rgba(255, 85, 64, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .panel-box h3 {
+            margin: 0 0 8px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            color: var(--neon-red);
+            letter-spacing: 2px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        .stat-row .label { color: #b08a8a; }
+        .stat-row .value {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+        }
+        #moveVal { color: var(--neon-gold); text-shadow: 0 0 8px rgba(255, 210, 62, 0.6); }
+        #timeVal { color: var(--neon-red); text-shadow: 0 0 8px rgba(255, 85, 64, 0.6); }
+        #bestVal { color: #7dff8a; text-shadow: 0 0 8px rgba(125, 255, 138, 0.6); }
+        #hintVal { color: #35e0ff; text-shadow: 0 0 8px rgba(53, 224, 255, 0.6); }
+        #rankVal { color: var(--neon-gold); text-shadow: 0 0 8px rgba(255, 210, 62, 0.6); }
+        /* 通关评级徽章：大字 + 分级配色（S 金 / A 绿 / B 蓝 / C 灰）；
+           结算面板弹出时徽章从小放大带回弹（winScreen 由 display:none 切换显示，
+           CSS 动画随之自动从头重播，无需 JS 触发） */
+        @keyframes rankPop {
+            0% { transform: scale(0.2); opacity: 0; }
+            60% { transform: scale(1.15); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .rank-badge {
+            font-size: 44px;
+            line-height: 1;
+            margin: 10px 0 2px;
+            font-weight: bold;
+            animation: rankPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+        /* S 级徽章专属：金色光晕呼吸 + 轻微缩放脉动（摘星的荣耀感，弹入动画结束后无缝接管） */
+        @keyframes rankShine {
+            0%, 100% { text-shadow: 0 0 14px rgba(255, 210, 62, 0.7), 0 0 30px rgba(255, 210, 62, 0.35); transform: scale(1); }
+            50% { text-shadow: 0 0 22px rgba(255, 230, 130, 1), 0 0 44px rgba(255, 210, 62, 0.6); transform: scale(1.06); }
+        }
+        .rank-s {
+            color: #ffd23e;
+            text-shadow: 0 0 18px rgba(255, 210, 62, 0.8);
+            /* 显式合并弹入 + 呼吸两段动画：否则此处 animation 声明会覆盖 .rank-badge 的 rankPop */
+            animation: rankPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both, rankShine 1.6s ease-in-out 0.5s infinite;
+        }
+        .rank-a { color: #7dff8a; text-shadow: 0 0 14px rgba(125, 255, 138, 0.7); }
+        .rank-b { color: #35e0ff; text-shadow: 0 0 14px rgba(53, 224, 255, 0.7); }
+        .rank-c { color: #b9a8a8; text-shadow: 0 0 10px rgba(185, 168, 168, 0.5); }
+        /* 减弱动态效果：系统开启"减弱动态效果"时评级徽章跳过弹入/呼吸动画，
+           直接静态展示（与 JS 侧 FX.prefersReduced 的粒子降级策略保持一致） */
+        @media (prefers-reduced-motion: reduce) {
+            .rank-badge, .rank-s { animation: none; }
+        }
+        #winRankDesc { font-size: 11px; color: #b99a9a; }
+        /* KEYS 双列网格：逐键一行拆分后压缩纵向高度，底边按内容自然收尾 */
+        .keys {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2px 12px;
+            align-content: start;
+        }
+        /* 标题 KEYS 跨双列全宽，独占一行，描述内容不与标题同行 */
+        .keys h3 { grid-column: 1 / -1; }
+        .keys p { margin: 0; font-size: 12px; color: #d8b8b8; }
+        .keys b { color: var(--neon-gold); font-weight: normal; }
+        /* ---------- 遮罩层：开始 / 胜利 / 暂停三块面板 ---------- */
+        #startScreen, #winScreen, #pauseScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            text-align: center;
+            background-color: var(--panel);
+            padding: 18px 16px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 85, 64, 0.4);
+            box-shadow: 0 0 24px rgba(255, 85, 64, 0.25);
+            animation: panelIn 0.3s ease-out; /* 面板入场：display 切换时自动重播 */
+        }
+        /* 面板入场动画：从略小略上位置淡入落定 */
+        @keyframes panelIn {
+            from { opacity: 0; transform: translate(-50%, -46%) scale(0.92); }
+            to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        }
+        /* 遮罩标题：金色 + 霓虹光晕 */
+        h2 { margin: 0 0 10px; font-size: 20px; letter-spacing: 4px; color: var(--neon-gold); text-shadow: 0 0 12px rgba(255, 210, 62, 0.6); }
+        p { margin: 6px 0; font-size: 13px; color: #d8b8b8; }
+        /* ---------- 开始面板美化：英文副题 / 提示信息块（红金主题） ---------- */
+        #startScreen h2 { margin-bottom: 6px; }
+        .start-sub {
+            margin: 0 0 10px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 9px;
+            letter-spacing: 4px;
+            color: var(--neon-gold);
+            opacity: 0.85;
+        }
+        .start-tips {
+            margin: 10px 0 0;
+            padding: 9px 12px;
+            background: rgba(255, 85, 64, 0.06);
+            border-top: 1px solid rgba(255, 85, 64, 0.35);
+            border-bottom: 1px solid rgba(255, 85, 64, 0.35);
+            border-radius: 6px;
+        }
+        /* 提示分区标题：主题色小标签 + 右侧延伸线 */
+        .start-tips .tips-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0 4px;
+            font-size: 11px;
+            letter-spacing: 3px;
+            color: var(--neon-red);
+        }
+        .start-tips .tips-head:first-child { margin-top: 0; }
+        .start-tips .tips-head::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: rgba(255, 85, 64, 0.25);
+        }
+        /* 玩法条目：整行排版，主题色箭头前缀 */
+        .start-tips .tips-row {
+            margin: 4px 0;
+            font-size: 13px;
+            line-height: 1.6;
+            text-align: left;
+        }
+        .start-tips .tips-row.rule::before {
+            content: "▸";
+            margin-right: 6px;
+            color: var(--neon-red);
+            font-size: 11px;
+        }
+        #newRecord {
+            color: var(--neon-red);
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(255, 85, 64, 0.6);
+        }
+        /* 全局按钮：开始 / 再来一局等主操作按钮（金色主题） */
+        button {
+            padding: 10px 22px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            color: #140a0a;
+            background-color: var(--neon-gold);
+            border: none;
+            border-radius: 5px;
+            margin-top: 12px;
+            letter-spacing: 2px;
+            box-shadow: 0 0 12px rgba(255, 210, 62, 0.45);
+            transition: all 0.15s;
+        }
+        button:hover {
+            filter: brightness(1.15);
+            box-shadow: 0 0 20px rgba(255, 210, 62, 0.7);
+        }
+        /* ---------- 布局/难度选择与侧栏工具按钮 ---------- */
+        /* 布局列表与难度列表共用竖排样式（间距收窄：6px） */
+        #layoutSelect,
+        #diffSelect {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        /* 布局/难度切换按钮：默认暗红底，选中态红底泛红光；
+           margin-top 必须清零覆盖全局 button 的 12px，否则与容器 gap 叠加导致间距过大 */
+        .layout-btn,
+        .diff-btn {
+            background-color: #3a2222;
+            color: #d8b8b8;
+            padding: 8px 14px;
+            font-size: 10px;
+            margin-top: 0;
+            box-shadow: none;
+            /* 按钮文案单行展示：配合 DIFFICULTY 面板加宽，禁止「新手 · 提示+撤销」等长描述折行 */
+            white-space: nowrap;
+        }
+        .layout-btn:hover,
+        .diff-btn:hover {
+            background-color: #4a2c2c;
+            filter: none;
+            box-shadow: none;
+        }
+        .layout-btn.active,
+        .diff-btn.active {
+            background-color: var(--neon-red);
+            color: #140a0a;
+            box-shadow: 0 0 12px rgba(255, 85, 64, 0.5);
+        }
+        .layout-btn.active:hover,
+        .diff-btn.active:hover {
+            box-shadow: 0 0 18px rgba(255, 85, 64, 0.7);
+        }
+        /* 每日一题布局按钮：右上角「今」金色角标（日期→布局映射每天确定，klotski.js 标记一次） */
+        .layout-btn.daily {
+            position: relative;
+        }
+        .layout-btn.daily::after {
+            content: "今";
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            padding: 2px 4px;
+            font-size: 9px;
+            line-height: 1;
+            color: #140a0a;
+            background-color: var(--neon-gold);
+            border-radius: 3px;
+            box-shadow: 0 0 8px rgba(255, 210, 62, 0.6);
+        }
+        /* 开始遮罩每日一题信息行：今日题目名 + 完成状态（金色小字） */
+        #dailyLine {
+            margin: 10px 0 2px;
+            font-size: 12px;
+            letter-spacing: 1px;
+            color: var(--neon-gold);
+            text-shadow: 0 0 8px rgba(255, 210, 62, 0.45);
+        }
+        /* 结算面板每日一题完成标记：金色，样式参照新纪录 */
+        #dailyDone {
+            color: var(--neon-gold);
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(255, 210, 62, 0.6);
+        }
+        /* 结算面板成就解锁提示行：青绿色醒目字色，与金色新纪录/每日标记形成层次 */
+        #achUnlocked {
+            color: #39ff6a;
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(57, 255, 106, 0.6);
+        }
+        /* 侧栏 撤销/重开 工具按钮：并排两枚暗红小按钮 */
+        .util-row {
+            display: flex;
+            gap: 8px;
+        }
+        .util-btn {
+            flex: 1;
+            margin-top: 0;
+            background-color: #3a2222;
+            color: #d8b8b8;
+            padding: 8px 0;
+            font-size: 10px;
+            box-shadow: none;
+        }
+        .util-btn:hover {
+            background-color: #4a2c2c;
+            filter: none;
+            box-shadow: none;
+        }
+        /* 撤销按钮禁用态（大师难度）：整体置灰 */
+        .util-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+        .util-btn:disabled:hover {
+            background-color: #3a2222;
+            filter: none;
+            box-shadow: none;
+        }
+        /* ===================== 成就墙（DOM 版，snake 同款交互） ===================== */
+        /* 遮罩：全屏半透明黑底 + 毛玻璃，flex 居中成就面板；z-20 压过全部游戏 UI（灯带 6 / 固定按钮 10） */
+        #achWall {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+            background: rgba(12, 7, 7, 0.78);
+            -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+        }
+        #achWall[hidden] { display: none; }
+        /* 成就面板：红金主题渐变底 + 霓虹描边，纵向 flex（头部 / 总进度 / 卡片网格） */
+        .ach-panel {
+            display: flex;
+            flex-direction: column;
+            width: min(720px, 94vw);
+            max-height: 86vh;
+            overflow: hidden;
+            background: linear-gradient(160deg, rgba(38, 17, 17, 0.98), rgba(23, 11, 11, 0.98));
+            border: 1px solid rgba(255, 85, 64, 0.35);
+            border-radius: 14px;
+            box-shadow: 0 0 40px rgba(255, 85, 64, 0.25), inset 0 0 60px rgba(0, 0, 0, 0.5);
+            animation: achPanelIn 0.28s ease-out;
+        }
+        /* 面板入场：略小淡入落定 */
+        @keyframes achPanelIn {
+            from { opacity: 0; transform: scale(0.94); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        /* 面板头部：标题 + 已解锁计数 + 关闭按钮 */
+        .ach-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 18px 10px;
+            border-bottom: 1px solid rgba(255, 85, 64, 0.25);
+        }
+        .ach-title {
+            font-family: 'Press Start 2P', 'Microsoft YaHei', monospace;
+            font-size: 13px;
+            letter-spacing: 2px;
+            color: var(--neon-gold);
+            text-shadow: 0 0 12px rgba(255, 210, 62, 0.6);
+        }
+        .ach-count {
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: #c9a8a0;
+        }
+        /* 关闭按钮：暗底描边小按钮，悬停泛红光 */
+        .ach-close {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            margin: 0;
+            font-size: 16px;
+            line-height: 1;
+            color: #d8b8b8;
+            background: rgba(255, 85, 64, 0.08);
+            border: 1px solid rgba(255, 85, 64, 0.35);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .ach-close:hover {
+            background: rgba(255, 85, 64, 0.2);
+            filter: none;
+            box-shadow: 0 0 10px rgba(255, 85, 64, 0.5);
+        }
+        /* 总进度条：解锁占比一览（金色→暖橙渐变，与画布流光同色系） */
+        .ach-progress { padding: 10px 18px 0; }
+        .ach-bar {
+            height: 6px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 3px;
+        }
+        .ach-bar-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, #ffd23e, #ff9a3e);
+            box-shadow: 0 0 8px rgba(255, 210, 62, 0.6);
+            transition: width 0.35s ease-out;
+        }
+        /* 卡片网格：自适应多列，超出面板高度时滚动 */
+        .ach-grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            padding: 14px 18px 18px;
+            overflow-y: auto;
+        }
+        /* 成就卡片：图标 + 名称/稀有度/描述/分类 + 进度条 */
+        .ach-card {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 85, 64, 0.22);
+            border-radius: 10px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        /* 未解锁：图标置灰、名字减淡，暗示"待解锁" */
+        .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
+        .ach-card.locked .ach-name { color: rgba(255, 236, 232, 0.5); }
+        .ach-icon { font-size: 24px; line-height: 1.2; }
+        .ach-info { flex: 1; min-width: 0; }
+        .ach-name-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .ach-name {
+            font-size: 13px;
+            font-weight: bold;
+            color: var(--text);
+        }
+        /* 稀有度小徽章：四档配色（普通灰 / 稀有青 / 史诗粉 / 传说金） */
+        .ach-rarity {
+            padding: 1px 6px;
+            font-size: 9px;
+            letter-spacing: 1px;
+            border-radius: 999px;
+            border: 1px solid currentColor;
+        }
+        .r-common { color: #b9a8a8; }
+        .r-rare { color: #35e0ff; }
+        .r-epic { color: #ff62d8; }
+        .r-legendary { color: var(--neon-gold); }
+        .ach-desc {
+            margin-top: 4px;
+            font-size: 11px;
+            line-height: 1.5;
+            color: rgba(255, 236, 232, 0.55);
+        }
+        .ach-cat {
+            margin-top: 3px;
+            font-size: 10px;
+            letter-spacing: 1px;
+            color: rgba(216, 184, 184, 0.5);
+        }
+        /* 卡片进度条：当前值/目标值（解锁后拉满） */
+        .ach-prog { margin-top: 6px; }
+        .ach-prog-bar {
+            height: 4px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 2px;
+        }
+        .ach-prog-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, #35e0ff, #39ff6a);
+            transition: width 0.3s ease-out;
+        }
+        .ach-prog-text {
+            margin-top: 2px;
+            font-size: 9px;
+            text-align: right;
+            color: rgba(255, 236, 232, 0.45);
+        }
+        /* 已解锁卡片：边框/辉光按稀有度点亮 */
+        .ach-card.unlocked.r-common { border-color: rgba(185, 168, 168, 0.55); box-shadow: 0 0 8px rgba(185, 168, 168, 0.18); }
+        .ach-card.unlocked.r-rare { border-color: rgba(53, 224, 255, 0.55); box-shadow: 0 0 10px rgba(53, 224, 255, 0.22); }
+        .ach-card.unlocked.r-epic { border-color: rgba(255, 98, 216, 0.55); box-shadow: 0 0 12px rgba(255, 98, 216, 0.25); }
+        .ach-card.unlocked.r-legendary { border-color: rgba(255, 210, 62, 0.6); }
+        /* 传说卡片：金色光晕呼吸（全站最高荣誉感） */
+        @keyframes achLegendPulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(255, 210, 62, 0.25); }
+            50% { box-shadow: 0 0 20px rgba(255, 210, 62, 0.5); }
+        }
+        .ach-card.unlocked.r-legendary { animation: achLegendPulse 2.2s ease-in-out infinite; }
+        /* 成就 toast 容器：右上角悬浮队列，pointer-events 放行避免挡操作 */
+        .ach-toast-stack {
+            position: fixed;
+            top: 106px;
+            right: 16px;
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        /* 单条 toast：解锁瞬间从右侧滑入，停留后滑出（动画由 CSS 延迟接力） */
+        .ach-toast {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            min-width: 220px;
+            max-width: 300px;
+            padding: 10px 14px;
+            background: linear-gradient(120deg, rgba(38, 17, 17, 0.95), rgba(23, 11, 11, 0.95));
+            border: 1px solid rgba(255, 210, 62, 0.5);
+            border-radius: 10px;
+            box-shadow: 0 0 18px rgba(255, 210, 62, 0.3);
+            animation: achToastIn 0.3s ease-out, achToastOut 0.3s ease-in 2.8s forwards;
+        }
+        .ach-toast.r-epic { border-color: rgba(255, 98, 216, 0.6); box-shadow: 0 0 18px rgba(255, 98, 216, 0.35); }
+        .ach-toast.r-legendary { border-color: rgba(255, 210, 62, 0.7); box-shadow: 0 0 22px rgba(255, 210, 62, 0.45); }
+        .ach-toast .t-icon { font-size: 22px; line-height: 1; }
+        .ach-toast .t-title {
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: var(--neon-gold);
+            text-shadow: 0 0 8px rgba(255, 210, 62, 0.5);
+        }
+        .ach-toast .t-name { font-size: 13px; font-weight: bold; color: var(--text); }
+        @keyframes achToastIn {
+            from { opacity: 0; transform: translateX(120%); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes achToastOut {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(120%); }
+        }
+        /* 窄屏：面板铺满视口、网格降为窄列、toast 贴顶收窄 */
+        @media (max-width: 640px) {
+            #achWall { padding: 10px; }
+            .ach-panel { width: 96vw; max-height: 92vh; }
+            .ach-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); padding: 12px; }
+            .ach-head { padding: 12px 12px 8px; }
+            .ach-progress { padding: 8px 12px 0; }
+            .ach-toast-stack { top: 90px; right: 10px; left: 10px; }
+            .ach-toast { max-width: none; }
+        }
+        /* 减弱动态效果：系统开启时跳过入场/出场/呼吸动画，直接静态展示 */
+        @media (prefers-reduced-motion: reduce) {
+            .ach-panel, .ach-toast, .ach-card.unlocked.r-legendary { animation: none; }
+            .ach-toast { opacity: 0; animation: none; }
+            /* 保留可读性：toast 改为无动画直接显示（2.8s 后由 JS 移除节点） */
+            .ach-toast.show-reduced { opacity: 1; }
+            .ach-bar-fill, .ach-prog-fill { transition: none; }
+        }
+        /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
+        button, a { touch-action: manipulation; }
+    </style>
+    <!-- 成就墙·相片墙触发器共享样式 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-1">
+</head>
+<body>
+    <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
+    <div id="edgeBeam" aria-hidden="true"></div>
+    <!-- 固定按钮区：返回链接（左上）+ 音效开关 / 全屏切换（右上） -->
+    <a class="back-link" href="index.html?v=20261105-1">&larr; 游戏厅</a>
+    <!-- 成就墙·相片墙触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
+    <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-gold)" title="成就墙（快捷键 V）">
+        <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
+        <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
+    </button>
+    <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
+    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <!-- 舞台容器：标题 + 主布局整体包裹（固定按钮不放入，避免 transform 破坏 fixed 定位）；
+         非全屏时由页尾 fitStage 脚本缩放至完整落入视口，消除滚动条 -->
+    <main id="stage">
+    <h1 class="title">
+        <span style="color:#ff5540">华</span><span style="color:#ffd23e">容</span><span style="color:#ff8866">道</span>
+    </h1>
+    <div class="layout">
+        <div id="gameContainer">
+            <!-- 游戏主画布：456×605（含四周 12px 墙距与底部 41px 出口区，单格 CELL=108），
+                 总高与右侧说明栏自然高度相近；klotski.js 在其上绘制棋盘、滑块与通关纸屑 -->
+            <canvas id="game" width="456" height="605"></canvas>
+            <!-- 开始遮罩：默认显示，含玩法说明与开始按钮 -->
+            <div id="startScreen">
+                <h2>华容道</h2>
+                <p class="start-sub">KLOTSKI</p>
+                <!-- 每日一题信息行：klotski.js 按当日日期写入题目名与完成状态 -->
+                <p id="dailyLine"></p>
+                <div class="start-tips">
+                    <div class="tips-head">玩法要点</div>
+                    <div class="tips-row rule">移动滑块腾出通路，助曹操移出下方出口</div>
+                    <div class="tips-row rule">步数越少评级越高，冲击 S 级</div>
+                    <div class="tips-row rule">带「今」角标的布局是每日一题，当日通关留成绩</div>
+                    <div class="tips-row rule">空格暂停/继续，窗口失焦自动暂停，暂停期间计时冻结</div>
+                </div>
+                <button onclick="startGame()">开始游戏</button>
+            </div>
+            <!-- 通关遮罩：显示最终步数/用时与新纪录标记，提供再来一局按钮 -->
+            <div id="winScreen" style="display: none;">
+                <h2>曹操逃脱！</h2>
+                <p>步数: <span id="finalMoves">0</span></p>
+                <p>用时: <span id="finalTime">0:00</span></p>
+                <div id="winRank" class="rank-badge rank-s">S</div>
+                <p id="winRankDesc"></p>
+                <p id="newRecord" style="display: none;">新纪录！</p>
+                <!-- 每日一题完成标记：当日布局玩家通关时由 klotski.js 显示 -->
+                <p id="dailyDone" style="display: none;">今日一题完成</p>
+                <!-- 成就解锁提示：本次通关有新成就时由 klotski.js 绿色展示成就名 -->
+                <p id="achUnlocked" style="display: none;"></p>
+                <button onclick="restartLayout()">再来一局</button>
+            </div>
+            <!-- 暂停遮罩：空格手动暂停或窗口失焦自动暂停时显示，形态与开始/胜利面板一致 -->
+            <div id="pauseScreen" style="display: none;">
+                <h2>已暂停</h2>
+                <p>按空格键继续 · 计时已冻结</p>
+            </div>
+        </div>
+        <!-- 侧边信息栏：STATS 实时统计 / LAYOUT 布局 + DIFFICULTY 难度（并排）/ ACTIONS 撤销重开演示 / KEYS 逐键说明（侧栏末尾） -->
+        <div class="side-panel">
+            <div class="panel-box">
+                <h3>STATS</h3>
+                <div class="stat-row"><span class="label">步数</span><span class="value" id="moveVal">0</span></div>
+                <div class="stat-row"><span class="label">用时</span><span class="value" id="timeVal">0:00</span></div>
+                <div class="stat-row"><span class="label">最少步</span><span class="value" id="bestVal">--</span></div>
+                <div class="stat-row"><span class="label">提示</span><span class="value" id="hintVal">--</span></div>
+                <div class="stat-row"><span class="label">评级</span><span class="value" id="rankVal">--</span></div>
+            </div>
+            <!-- 布局与难度并排：压缩侧栏总高，为末尾 KEYS 逐键说明腾出空间 -->
+            <div class="options-row">
+                <div class="panel-box">
+                    <h3>LAYOUT</h3>
+                    <div id="layoutSelect">
+                        <button class="layout-btn active" data-index="0" onclick="selectLayout(this)">横刀立马</button>
+                        <button class="layout-btn" data-index="1" onclick="selectLayout(this)">指挥若定</button>
+                        <button class="layout-btn" data-index="2" onclick="selectLayout(this)">捷足先登</button>
+                        <button class="layout-btn" data-index="3" onclick="selectLayout(this)">过五关</button>
+                        <button class="layout-btn" data-index="4" onclick="selectLayout(this)">近在咫尺</button>
+                        <button class="layout-btn" data-index="5" onclick="selectLayout(this)">兵临城下</button>
+                    </div>
+                </div>
+                <!-- 难度切换：新手（方向提示+撤销+H 提示无限）/ 进阶（默认，H 提示每局 3 次）/ 大师（禁用撤销与 H 提示），不设"无敌"档 -->
+                <div class="panel-box">
+                    <h3>DIFFICULTY</h3>
+                    <div id="diffSelect">
+                        <button class="diff-btn" data-index="0" onclick="selectDifficulty(this)" title="选中棋子显示可滑方向提示，可撤销，H 提示无限次">新手 · 提示+撤销</button>
+                        <button class="diff-btn active" data-index="1" onclick="selectDifficulty(this)" title="标准规则，可撤销，H 提示每局 3 次">进阶 · 可撤销</button>
+                        <button class="diff-btn" data-index="2" onclick="selectDifficulty(this)" title="无提示，禁用撤销与 H 提示">大师 · 禁用撤销</button>
+                    </div>
+                </div>
+            </div>
+            <div class="panel-box">
+                <h3>ACTIONS</h3>
+                <div class="util-row">
+                    <button id="undoBtn" class="util-btn" onclick="undoMove()">撤销(U)</button>
+                    <button class="util-btn" onclick="restartLayout()">重开(R)</button>
+                </div>
+                <!-- 演示按钮独占一行：自动复现当前布局 BFS 最佳解（格步口径，随布局不同） -->
+                <button class="util-btn" style="margin-top: 8px; width: 100%;" onclick="startDemo()" title="自动演示当前布局的最佳解法（P 键），通关不计入纪录与评级">演示最佳解(P)</button>
+            </div>
+            <!-- KEYS 末尾双列网格：逐键一行拆分，方向键与 WASD 合并描述，底边按内容自然收尾 -->
+            <div class="panel-box keys">
+                <h3>KEYS</h3>
+                <p><b>拖动</b> / <b>点击</b> 移滑块</p>
+                <p><b data-code="ArrowUp">↑</b> / <b data-code="KeyW">W</b> 上移滑块</p>
+                <p><b data-code="ArrowDown">↓</b> / <b data-code="KeyS">S</b> 下移滑块</p>
+                <p><b data-code="ArrowLeft">←</b> / <b data-code="KeyA">A</b> 左移滑块</p>
+                <p><b data-code="ArrowRight">→</b> / <b data-code="KeyD">D</b> 右移滑块</p>
+                <p><b data-code="KeyU">U</b> 撤销</p>
+                <p><b data-code="KeyR">R</b> 重开</p>
+                <p><b data-code="KeyH">H</b> 提示</p>
+                <p><b data-code="Space">空格</b> 暂停/继续</p>
+                <p><b data-code="KeyP">P</b> 演示最佳解</p>
+                <p><b data-code="KeyV">V</b> 成就墙</p>
+                <p><b>1~6</b> 切换布局</p>
+            </div>
+        </div>
+    </div>
+    </main>
+    <!-- 成就墙：全屏遮罩 + 面板（头部计数 / 总进度条 / 卡片网格），V 键开关、Esc 或点遮罩关闭；
+         卡片网格由 klotski.js 按成就定义表动态填充 -->
+    <div id="achWall" hidden>
+        <div class="ach-panel">
+            <div class="ach-head">
+                <div class="ach-title">成就墙</div>
+                <div class="ach-head-right">
+                    <span id="achCount" class="ach-count">0/8</span>
+                    <button id="achClose" class="ach-close" type="button" aria-label="关闭成就墙">×</button>
+                </div>
+            </div>
+            <div class="ach-progress">
+                <div class="ach-bar"><div id="achBarFill" class="ach-bar-fill"></div></div>
+            </div>
+            <div id="achGrid" class="ach-grid"></div>
+        </div>
+    </div>
+    <!-- 成就解锁 toast 容器：右上角悬浮队列，解锁瞬间滑入展示后自动移除 -->
+    <div id="achToastStack" class="ach-toast-stack"></div>
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → klotski.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <script src="audio.js?v=20261105-1"></script>
+    <script src="fx.js?v=20261104-5"></script>
+    <script src="fullscreen.js?v=20261104-3"></script>
+    <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
+    <script src="gamepad.js?v=20261105-1"></script>
+    <script src="ach-trigger.js?v=20261105-1"></script>
+    <script src="klotski.js?v=20261105-2"></script>
+    <!-- 非全屏视口适配：整体内容（标题+主布局）高约 690px，小视口下出现页面滚动条；
+         fitStage 将 #stage 等比缩放至完整落入视口并隐藏文档滚动条（只缩不放，大屏保持原貌）。
+         全屏态由 fullscreen.js 负责（其缩放 .layout）：此处以 .layout 是否带内联 transform
+         识别全屏态，全屏时清空舞台缩放避免双重缩小，退出全屏后经事件重新适配 -->
+    <script>
+    (function () {
+        /** 舞台容器：缩放目标（含标题与 .layout 主布局） */
+        const stage = document.getElementById('stage');
+        /** 缩放安全边距（px）：保证缩放后内容四边不贴视口边缘 */
+        const MARGIN = 24;
+
+        /**
+         * 将舞台适配至视口：视口不足时平移+等比缩小舞台并隐藏文档滚动条；
+         * 视口充足时还原原生尺寸；fullscreen.js 接管缩放期间（全屏态）主动让位
+         * @returns {void} 无返回值，直接操作 DOM 内联样式
+         */
+        function fitStage() {
+            // 全屏态识别：.layout 挂有 fullscreen.js 写入的内联 transform，
+            // 此时清空舞台自身缩放避免双重缩小，滚动条已由 fullscreen.js 隐藏
+            const layout = document.querySelector('.layout');
+            if (layout && layout.style.transform) {
+                stage.style.transform = '';
+                stage.style.transformOrigin = '';
+                return;
+            }
+            // 先清除旧变换再测量，确保拿到未缩放状态的原生布局框（与 fullscreen.js 同思路）
+            stage.style.transform = '';
+            const rect = stage.getBoundingClientRect();
+            // 缩放比取宽、高两个约束中较小者，且以 1 封顶：只缩小不放大，大屏保持原貌
+            const scale = Math.min(1,
+                (window.innerWidth - MARGIN) / rect.width,
+                (window.innerHeight - MARGIN) / rect.height
+            );
+            if (scale >= 1) {
+                // 视口充足：维持原生尺寸，恢复文档滚动条默认行为
+                document.documentElement.style.overflow = '';
+                return;
+            }
+            // body 为垂直居中布局且流高可超出视口：平移使舞台中心对齐视口中心，
+            // 配合围绕自身中心缩放，保证缩放后四边均完整落在视口内
+            const dx = window.innerWidth / 2 - (rect.left + rect.width / 2);
+            const dy = window.innerHeight / 2 - (rect.top + rect.height / 2);
+            stage.style.transformOrigin = 'center center';
+            stage.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(' + scale + ')';
+            // transform 不改变文档流，流高超出仍会触发滚动条；视觉框已完整入视口，直接隐藏
+            document.documentElement.style.overflow = 'hidden';
+        }
+
+        // 窗口尺寸变化（调整窗口 / 旋转屏幕 / 嵌入页尺寸变化）时重新适配
+        window.addEventListener('resize', fitStage);
+        // 全部资源加载完毕后再适配一次（兜底初次测量的字体/样式差异）
+        window.addEventListener('load', fitStage);
+        // Press Start 2P 网络字体换入会改变标题高度，字体就绪后重新适配
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitStage);
+        // 全屏状态变化时重新适配：fullscreenchange 事件中 fullscreen.js 的监听先注册先执行，
+        // 本监听随后执行——退出全屏时 .layout 内联 transform 已被清空，此处补做舞台适配
+        document.addEventListener('fullscreenchange', fitStage);
+        document.addEventListener('webkitfullscreenchange', fitStage);
+        // 嵌入模式（?embed=1）下全屏由大厅持有，fullscreenchange 不在 iframe 内触发；
+        // 与 fullscreen.js 同听 arcade:fs 广播，延迟一拍等其 sync 先行完成，再行适配
+        window.addEventListener('message', e => {
+            if (e.data && e.data.type === 'arcade:fs') setTimeout(fitStage, 0);
+        });
+        // 页面装配完成立即做首次适配
+        fitStage();
+    })();
+    </script>
+</body>
+</html>

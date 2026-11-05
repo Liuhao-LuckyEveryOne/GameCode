@@ -1,0 +1,780 @@
+﻿<!DOCTYPE html>
+<!-- ==================================================================
+     小蜜蜂游戏页（固定射击）
+     结构：左上角返回链接 → 右上角音效开关/全屏切换 → 标题 →
+          主布局（左侧游戏容器：480×560 画布 + 开始/结束两块遮罩 +
+          右侧 STATS 记分面板 + KEYS 键位说明栏）
+     玩法：蜂群横移下压 + 随机俯冲 + 精英蜂 + 每 5 波 Boss 战；
+          特殊蜂种（分裂蜂/自爆蜂）+ 事件波（俯冲潮/精英阵）；
+          道具 7 种（火力/护盾/1UP/炸弹/时停/磁铁/激光）；
+          冲刺闪避（Shift，短暂无敌）+ 成就墙（V 开 / Esc 关）；
+          连击倍率计分；粒子/震动/顿帧反馈；
+          四档难度选择（无敌/简单/普通/困难，localStorage 持久化）
+     脚本：audio.js 公共音效库 / fullscreen.js 全屏控制 / bee.js 游戏逻辑
+     共享：ach-trigger.css / ach-trigger.js 相片墙成就墙触发器（点击等效按 V 开合成就墙）
+     ================================================================== -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小蜜蜂 - 像素街机厅</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        /* ---------- 主题变量：底色 / 面板 / 霓虹色 / 文字 ---------- */
+        :root {
+            --bg: #140a0f;
+            --panel: rgba(42, 18, 26, 0.96);
+            --neon-green: #39ff6a;
+            --neon-pink: #ff3ea5;
+            --neon-blue: #35e0ff;
+            --neon-yellow: #ffd23e;
+            --text: #ffe8f3;
+        }
+        /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
+        html { background: var(--bg); }
+
+        /* ---------- 基础布局：全屏垂直居中 ---------- */
+        * { box-sizing: border-box; }
+        body {
+            user-select: none; /* 全局禁止文本选取：鼠标拖动不再框选界面文字、不触发浏览器选中搜索 */
+            -webkit-user-select: none;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            background: radial-gradient(ellipse at 50% 0%, #401c2e 0%, var(--bg) 65%);
+            font-family: 'Microsoft YaHei', sans-serif;
+            color: var(--text);
+        }
+        /* CRT 扫描线氛围 */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 3px);
+        }
+        /* 视口边缘氛围灯带：弱于游戏区边框灯带，勾勒屏幕轮廓而不喧宾夺主 */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            transform: translateZ(0); /* 独立合成层：edgeFlow 的 box-shadow 每帧重绘隔离于本层，不再与 hover 重绘叠加波及整页引发闪屏 */
+            box-shadow: inset 0 0 64px rgba(255, 154, 62, 0.10);
+            animation: edgeFlow 8s ease-in-out infinite;
+        }
+        /* 边缘灯带流光：橙 → 粉 → 蓝循环（与画布灯带同节奏、低亮度） */
+        @keyframes edgeFlow {
+            0%, 100% { box-shadow: inset 0 0 64px rgba(255, 154, 62, 0.10); }
+            33% { box-shadow: inset 0 0 64px rgba(255, 62, 165, 0.11); }
+            66% { box-shadow: inset 0 0 64px rgba(53, 224, 255, 0.11); }
+        }
+        /* ---------- 视口四周环绕光带：主题色霓虹流光绕屏幕边缘匀速巡游 ---------- */
+        #edgeBeam {
+            position: fixed;
+            inset: 0;
+            z-index: 6; /* 置于暗角之上、返回链接与右上角按钮(10)之下：不挡操作 */
+            pointer-events: none;
+            padding: 4px; /* 光带厚度 */
+            /* 遮罩挖空内容区：仅保留 padding 形成的四周环形带 */
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            overflow: hidden;
+        }
+        /* 旋转光束：超大锥形渐变绕视口中心自转，两道主题色光带对置接力 */
+        #edgeBeam::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 142vmax; /* √2×视口较长边：内切圆恰好覆盖视口对角线，纹理面积较 200vmax 减半，降低全屏显存压力 */
+            height: 142vmax;
+            margin: -71vmax 0 0 -71vmax; /* 中心对齐视口中心 */
+            will-change: transform; /* 常驻合成层：避免超大纹理被反复驱逐/重建引发闪屏 */
+            background: conic-gradient(
+                transparent 0deg,
+                var(--neon-pink) 22deg, var(--neon-pink) 58deg, transparent 88deg,
+                transparent 180deg,
+                var(--neon-pink) 202deg, var(--neon-pink) 238deg, transparent 268deg);
+            opacity: 0.6; /* 亮度弱于机台边框灯带，氛围不喧宾夺主 */
+            animation: beamOrbit 10s linear infinite;
+        }
+        /* 光束匀速自转一周：形成光带沿四边连续巡游的观感 */
+        @keyframes beamOrbit {
+            to { transform: rotate(1turn); }
+        }
+        /* ---------- 返回链接：固定左上角，回到游戏大厅 ---------- */
+        .back-link {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 10;
+            padding: 8px 14px;
+            color: var(--neon-pink); /* 与右上音效/全屏开关同主题色 */
+            text-decoration: none;
+            font-size: 13px;
+            letter-spacing: 2px;
+            border: 1px solid rgba(255, 62, 165, 0.4);
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .back-link:hover {
+            background: rgba(255, 62, 165, 0.12);
+            box-shadow: 0 0 12px rgba(255, 62, 165, 0.5);
+        }
+        /* ---------- 音效开关按钮（固定右上角，粉色随蜜蜂页主题、对齐大厅卡片霓虹色，覆盖全局 button 主题底色） ---------- */
+        .sound-toggle {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 10;
+            margin-top: 0;
+            width: 150px;
+            padding: 8px 0;
+            text-align: center;
+            line-height: 1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--neon-pink);
+            background: rgba(42, 18, 26, 0.85);
+            border: 1px solid rgba(255, 62, 165, 0.4);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .sound-toggle:hover {
+            background: rgba(255, 62, 165, 0.12);
+            filter: none;
+            box-shadow: 0 0 12px rgba(255, 62, 165, 0.5);
+        }
+        /* ---------- 全屏切换按钮（固定右上，音效开关下方，粉色随蜜蜂页主题） ---------- */
+        .fs-toggle {
+            position: fixed;
+            top: 60px;
+            right: 16px;
+            z-index: 10;
+            margin-top: 0;
+            width: 150px;
+            padding: 8px 0;
+            text-align: center;
+            line-height: 1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--neon-pink);
+            background: rgba(42, 18, 26, 0.85);
+            border: 1px solid rgba(255, 62, 165, 0.4);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .fs-toggle:hover {
+            background: rgba(255, 62, 165, 0.12);
+            filter: none;
+            box-shadow: 0 0 12px rgba(255, 62, 165, 0.5);
+        }
+        /* ---------- 标题：BEE 粉色霓虹 ---------- */
+        h1.title {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 22px;
+            letter-spacing: 2px;
+            color: var(--neon-pink);
+            text-shadow: 0 0 16px rgba(255, 62, 165, 0.7);
+            margin: 0 0 18px;
+        }
+        /* ---------- 主布局：左侧游戏容器 + 右侧 STATS/KEYS 侧栏 ---------- */
+        .layout {
+            display: flex;
+            gap: 18px;
+            align-items: flex-start; /* 侧栏顶边与游戏区外框顶边对齐，底边按内容自然收尾 */
+        }
+        /* ---------- 游戏容器（遮罩层相对其定位） ---------- */
+        #gameContainer { position: relative; }
+        /* 记分文字颜色：分数绿 / 波次蓝 / 生命粉 / 最高分黄（文字由右侧 STATS 面板承载） */
+        #score { color: var(--neon-green); text-shadow: 0 0 8px rgba(57, 255, 106, 0.6); }
+        #wave { color: var(--neon-blue); text-shadow: 0 0 8px rgba(53, 224, 255, 0.6); }
+        #lives { color: var(--neon-pink); text-shadow: 0 0 8px rgba(255, 62, 165, 0.6); }
+        #highScore { color: var(--neon-yellow); text-shadow: 0 0 8px rgba(255, 210, 62, 0.6); }
+        /* 游戏主画布：480×560，粉色霓虹边框与内外光晕 */
+        #gameCanvas {
+            display: block;
+            /* 固定 CSS 逻辑尺寸：DPR 适配会放大画布物理分辨率（width/height 属性），
+               锁定显示尺寸保证布局恒为 480×560，clientWidth/Height 恒等于逻辑坐标 */
+            width: 480px;
+            height: 560px;
+            border: 3px solid var(--neon-pink);
+            border-radius: 4px;
+            background-color: #1a0f14;
+            box-shadow: 0 0 18px rgba(255, 62, 165, 0.35), inset 0 0 30px rgba(255, 62, 165, 0.06);
+            /* 边框灯带：与 1024 机台同款三色流光循环 */
+            animation: canvasFlow 8s ease-in-out infinite;
+        }
+        /* 边框流光灯带：主题粉 → 蜜橙 → 紫罗兰循环（贴合蜂群射击主题色调） */
+        @keyframes canvasFlow {
+            0%, 100% { border-color: #ff3ea5; box-shadow: 0 0 28px rgba(255, 62, 165, 0.4), inset 0 0 40px rgba(255, 62, 165, 0.08); }
+            33% { border-color: #ff9a3e; box-shadow: 0 0 32px rgba(255, 154, 62, 0.45), inset 0 0 40px rgba(255, 154, 62, 0.08); }
+            66% { border-color: #c17bff; box-shadow: 0 0 32px rgba(193, 123, 255, 0.45), inset 0 0 40px rgba(193, 123, 255, 0.08); }
+        }
+        /* 结算评级徽章：大字 + 分级配色（S 金 / A 绿 / B 蓝 / C 灰），动画风格参照华容道 rankPop；
+           结算面板弹出时徽章从小放大带回弹（gameOverScreen 由 display:none 切换显示，
+           CSS 动画随之自动从头重播，无需 JS 触发） */
+        @keyframes rankPop {
+            0% { transform: scale(0.2); opacity: 0; }
+            60% { transform: scale(1.15); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .rank-badge {
+            font-size: 40px;
+            line-height: 1;
+            margin: 8px 0 2px;
+            font-weight: bold;
+            animation: rankPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+        /* S 级徽章专属：金色光晕呼吸 + 轻微缩放脉动（蜂王级荣耀感，弹入动画结束后无缝接管） */
+        @keyframes rankShine {
+            0%, 100% { text-shadow: 0 0 14px rgba(255, 210, 62, 0.7), 0 0 30px rgba(255, 62, 165, 0.3); transform: scale(1); }
+            50% { text-shadow: 0 0 22px rgba(255, 230, 130, 1), 0 0 44px rgba(255, 62, 165, 0.55); transform: scale(1.06); }
+        }
+        .rank-s {
+            color: #ffd23e;
+            text-shadow: 0 0 18px rgba(255, 210, 62, 0.8);
+            /* 显式合并弹入 + 呼吸两段动画：否则此处 animation 声明会覆盖 .rank-badge 的 rankPop */
+            animation: rankPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both, rankShine 1.6s ease-in-out 0.5s infinite;
+        }
+        .rank-a { color: #39ff6a; text-shadow: 0 0 14px rgba(57, 255, 106, 0.7); }
+        .rank-b { color: #35e0ff; text-shadow: 0 0 14px rgba(53, 224, 255, 0.7); }
+        .rank-c { color: #b9a8b0; text-shadow: 0 0 10px rgba(185, 168, 176, 0.5); }
+        /* 减弱动态效果：系统开启"减弱动态效果"时评级徽章跳过弹入/呼吸动画，
+           直接静态展示（与 JS 侧 FX.prefersReduced 的粒子降级策略保持一致） */
+        @media (prefers-reduced-motion: reduce) {
+            .rank-badge, .rank-s { animation: none; }
+        }
+        /* ---------- 难度选择：开始画面按钮组（覆盖全局按钮粉色主题） ---------- */
+        .diff-label {
+            margin: 12px 0 0;
+            font-size: 11px;
+            letter-spacing: 2px;
+            color: #8a8ab0;
+        }
+        .difficulty-row {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin: 10px 0 2px;
+        }
+        .diff-btn {
+            margin-top: 0;
+            padding: 7px 12px;
+            font-size: 10px;
+            color: var(--text);
+            background: transparent;
+            border: 1px solid rgba(232, 232, 255, 0.35);
+            border-radius: 5px;
+            letter-spacing: 2px;
+            box-shadow: none;
+        }
+        .diff-btn:hover {
+            background: rgba(232, 232, 255, 0.1);
+            filter: none;
+            box-shadow: none;
+        }
+        /* 选中态：粉底黑字 + 霓虹描边光晕，与主按钮主题呼应 */
+        .diff-btn.selected {
+            color: #140a0f;
+            background: var(--neon-pink);
+            border-color: var(--neon-pink);
+            box-shadow: 0 0 12px rgba(255, 62, 165, 0.55);
+        }
+        /* ---------- 遮罩层：开始 / 结束 / 暂停三块面板，居中覆盖在画布上 ---------- */
+        #startScreen, #gameOverScreen, #pauseScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background-color: var(--panel);
+            padding: 22px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 62, 165, 0.4);
+            box-shadow: 0 0 24px rgba(255, 62, 165, 0.25);
+            animation: panelIn 0.3s ease-out; /* 面板入场：display 切换时自动重播 */
+        }
+        /* 面板入场动画：从略小略上位置淡入落定 */
+        @keyframes panelIn {
+            from { opacity: 0; transform: translate(-50%, -46%) scale(0.92); }
+            to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        }
+        /* 遮罩标题：主题粉色 + 霓虹光晕 */
+        h2 { margin: 0 0 10px; font-size: 20px; letter-spacing: 4px; color: var(--neon-pink); text-shadow: 0 0 12px rgba(255, 62, 165, 0.6); }
+        p { margin: 6px 0; font-size: 14px; color: #b8b8d8; }
+        /* ---------- 开始面板美化：英文副题 / 提示信息块（难度标签样式见上方 .diff-label） ---------- */
+        #startScreen h2 { margin-bottom: 6px; }
+        .start-sub {
+            margin: 0 0 10px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 9px;
+            letter-spacing: 4px;
+            color: var(--neon-pink);
+            opacity: 0.85;
+        }
+        .start-tips {
+            margin: 10px 0 0;
+            padding: 9px 12px;
+            background: rgba(255, 62, 165, 0.06);
+            border-top: 1px solid rgba(255, 62, 165, 0.35);
+            border-bottom: 1px solid rgba(255, 62, 165, 0.35);
+            border-radius: 6px;
+        }
+        /* 提示分区标题：主题色小标签 + 右侧延伸线 */
+        .start-tips .tips-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0 4px;
+            font-size: 11px;
+            letter-spacing: 3px;
+            color: var(--neon-pink);
+        }
+        .start-tips .tips-head:first-child { margin-top: 0; }
+        .start-tips .tips-head::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: rgba(255, 62, 165, 0.25);
+        }
+        /* 玩法条目：整行排版，主题色箭头前缀 */
+        .start-tips .tips-row {
+            margin: 4px 0;
+            font-size: 13px;
+            line-height: 1.6;
+            text-align: left;
+        }
+        .start-tips .tips-row.rule::before {
+            content: "▸";
+            margin-right: 6px;
+            color: var(--neon-pink);
+            font-size: 11px;
+        }
+        #newRecord {
+            color: var(--neon-pink);
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(255, 62, 165, 0.6);
+        }
+        /* 全局按钮：开始 / 重新开始等主操作按钮（粉色主题） */
+        button {
+            padding: 10px 22px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            color: #140a0f;
+            background-color: var(--neon-pink);
+            border: none;
+            border-radius: 5px;
+            margin-top: 12px;
+            letter-spacing: 2px;
+            box-shadow: 0 0 12px rgba(255, 62, 165, 0.45);
+            transition: all 0.15s;
+        }
+        button:hover {
+            filter: brightness(1.15);
+            box-shadow: 0 0 20px rgba(255, 62, 165, 0.7);
+        }
+        /* ---------- 右侧侧栏：STATS 记分框 + KEYS 键位框（KEYS 仿俄罗斯方块页，粉色主题） ---------- */
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 190px;
+        }
+        .panel-box {
+            background: rgba(42, 18, 26, 0.85);
+            border: 1px solid rgba(255, 62, 165, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .panel-box h3 {
+            margin: 0 0 8px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            color: var(--neon-pink);
+            letter-spacing: 2px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 12px;
+        }
+        .stat-row .label { color: #8a8ab0; }
+        .stat-row .value {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+        }
+        .keys p { margin: 4px 0; font-size: 12px; color: #b8b8d8; }
+        .keys b { color: var(--neon-pink); font-weight: normal; }
+        /* ===================== 成就墙（DOM 版，snake 同款交互） ===================== */
+        /* 遮罩：全屏半透明黑底 + 毛玻璃，flex 居中成就面板；z-20 压过全部游戏 UI（光带 6 / 固定按钮 10） */
+        #achWall {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 18px;
+            background: rgba(12, 7, 10, 0.78);
+            -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+        }
+        #achWall[hidden] { display: none; }
+        /* 成就面板：粉金主题渐变底 + 霓虹描边，纵向 flex（头部 / 总进度 / 卡片网格） */
+        .ach-panel {
+            display: flex;
+            flex-direction: column;
+            width: min(720px, 94vw);
+            max-height: 86vh;
+            overflow: hidden;
+            background: linear-gradient(160deg, rgba(40, 17, 28, 0.98), rgba(24, 10, 16, 0.98));
+            border: 1px solid rgba(255, 62, 165, 0.35);
+            border-radius: 14px;
+            box-shadow: 0 0 40px rgba(255, 62, 165, 0.25), inset 0 0 60px rgba(0, 0, 0, 0.5);
+            animation: achPanelIn 0.28s ease-out;
+        }
+        /* 面板入场：略小淡入落定 */
+        @keyframes achPanelIn {
+            from { opacity: 0; transform: scale(0.94); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        /* 面板头部：标题 + 已解锁计数 + 关闭按钮 */
+        .ach-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 18px 10px;
+            border-bottom: 1px solid rgba(255, 62, 165, 0.25);
+        }
+        .ach-title {
+            font-family: 'Press Start 2P', 'Microsoft YaHei', monospace;
+            font-size: 13px;
+            letter-spacing: 2px;
+            color: var(--neon-yellow);
+            text-shadow: 0 0 12px rgba(255, 210, 62, 0.6);
+        }
+        .ach-count {
+            font-size: 11px;
+            letter-spacing: 1px;
+            color: #d0a0bc;
+        }
+        /* 关闭按钮：暗底描边小按钮，悬停泛粉光 */
+        .ach-close {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            margin: 0;
+            font-size: 16px;
+            line-height: 1;
+            color: #d8b0c4;
+            background: rgba(255, 62, 165, 0.08);
+            border: 1px solid rgba(255, 62, 165, 0.35);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .ach-close:hover {
+            background: rgba(255, 62, 165, 0.2);
+            filter: none;
+            box-shadow: 0 0 10px rgba(255, 62, 165, 0.5);
+        }
+        /* 总进度条：解锁占比一览（金色→蜜橙渐变，与画布流光同色系） */
+        .ach-progress { padding: 10px 18px 0; }
+        .ach-bar {
+            height: 6px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 3px;
+        }
+        .ach-bar-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, #ffd23e, #ff9a3e);
+            box-shadow: 0 0 8px rgba(255, 210, 62, 0.6);
+            transition: width 0.35s ease-out;
+        }
+        /* 卡片网格：自适应多列，超出面板高度时滚动 */
+        .ach-grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            padding: 14px 18px 18px;
+            overflow-y: auto;
+        }
+        /* 成就卡片：图标 + 名称/稀有度/描述/分类 + 进度条 */
+        .ach-card {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 62, 165, 0.22);
+            border-radius: 10px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        /* 未解锁：图标置灰、名字减淡，暗示"待解锁" */
+        .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
+        .ach-card.locked .ach-name { color: rgba(255, 232, 243, 0.5); }
+        .ach-icon { font-size: 24px; line-height: 1.2; }
+        .ach-info { flex: 1; min-width: 0; }
+        .ach-name-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .ach-name {
+            font-size: 13px;
+            font-weight: bold;
+            color: var(--text);
+        }
+        /* 稀有度小徽章：四档配色（普通灰 / 稀有青 / 史诗粉 / 传说金） */
+        .ach-rarity {
+            padding: 1px 6px;
+            font-size: 9px;
+            letter-spacing: 1px;
+            border-radius: 999px;
+            border: 1px solid currentColor;
+        }
+        .r-common { color: #b9a8b0; }
+        .r-rare { color: #35e0ff; }
+        .r-epic { color: #ff62d8; }
+        .r-legendary { color: var(--neon-yellow); }
+        .ach-desc {
+            margin-top: 4px;
+            font-size: 11px;
+            line-height: 1.5;
+            color: rgba(255, 232, 243, 0.55);
+        }
+        .ach-cat {
+            margin-top: 3px;
+            font-size: 10px;
+            letter-spacing: 1px;
+            color: rgba(216, 160, 188, 0.5);
+        }
+        /* 卡片进度条：当前值/目标值（解锁后拉满） */
+        .ach-prog { margin-top: 6px; }
+        .ach-prog-bar {
+            height: 4px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 2px;
+        }
+        .ach-prog-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, #35e0ff, #ff3ea5);
+            transition: width 0.3s ease-out;
+        }
+        .ach-prog-text {
+            margin-top: 2px;
+            font-size: 9px;
+            text-align: right;
+            color: rgba(255, 232, 243, 0.45);
+        }
+        /* 已解锁卡片：边框/辉光按稀有度点亮 */
+        .ach-card.unlocked.r-common { border-color: rgba(185, 168, 176, 0.55); box-shadow: 0 0 8px rgba(185, 168, 176, 0.18); }
+        .ach-card.unlocked.r-rare { border-color: rgba(53, 224, 255, 0.55); box-shadow: 0 0 10px rgba(53, 224, 255, 0.22); }
+        .ach-card.unlocked.r-epic { border-color: rgba(255, 98, 216, 0.55); box-shadow: 0 0 12px rgba(255, 98, 216, 0.25); }
+        .ach-card.unlocked.r-legendary { border-color: rgba(255, 210, 62, 0.6); }
+        /* 传说卡片：金色光晕呼吸（全站最高荣誉感） */
+        @keyframes achLegendPulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(255, 210, 62, 0.25); }
+            50% { box-shadow: 0 0 20px rgba(255, 210, 62, 0.5); }
+        }
+        .ach-card.unlocked.r-legendary { animation: achLegendPulse 2.2s ease-in-out infinite; }
+        /* 成就 toast 容器：右上角悬浮队列，pointer-events 穿透避免挡操作 */
+        .ach-toast-stack {
+            position: fixed;
+            top: 106px;
+            right: 16px;
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        /* 单条 toast：解锁瞬间从右侧滑入，停留后滑出（动画由 CSS 延迟接力） */
+        .ach-toast {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            min-width: 220px;
+            max-width: 300px;
+            padding: 10px 14px;
+            background: linear-gradient(120deg, rgba(40, 17, 28, 0.95), rgba(24, 10, 16, 0.95));
+            border: 1px solid rgba(255, 210, 62, 0.5);
+            border-radius: 10px;
+            box-shadow: 0 0 18px rgba(255, 210, 62, 0.3);
+            animation: achToastIn 0.3s ease-out, achToastOut 0.3s ease-in 2.8s forwards;
+        }
+        .ach-toast.r-epic { border-color: rgba(255, 98, 216, 0.6); box-shadow: 0 0 18px rgba(255, 98, 216, 0.35); }
+        .ach-toast.r-legendary { border-color: rgba(255, 210, 62, 0.7); box-shadow: 0 0 22px rgba(255, 210, 62, 0.45); }
+        .ach-toast .t-icon { font-size: 22px; line-height: 1; }
+        .ach-toast .t-body {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .ach-toast .t-title {
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: var(--neon-yellow);
+            text-shadow: 0 0 8px rgba(255, 210, 62, 0.5);
+        }
+        .ach-toast .t-name { font-size: 13px; font-weight: bold; color: var(--text); }
+        @keyframes achToastIn {
+            from { opacity: 0; transform: translateX(120%); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes achToastOut {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(120%); }
+        }
+        /* 窄屏：面板铺满视口、网格降为窄列、toast 贴顶收窄 */
+        @media (max-width: 640px) {
+            #achWall { padding: 10px; }
+            .ach-panel { width: 96vw; max-height: 92vh; }
+            .ach-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); padding: 12px; }
+            .ach-head { padding: 12px 12px 8px; }
+            .ach-progress { padding: 8px 12px 0; }
+            .ach-toast-stack { top: 90px; right: 10px; left: 10px; }
+            .ach-toast { max-width: none; }
+        }
+        /* 减弱动态效果：系统开启时跳过入场/出场/呼吸动画，直接静态展示 */
+        @media (prefers-reduced-motion: reduce) {
+            .ach-panel, .ach-card.unlocked.r-legendary { animation: none; }
+            .ach-toast { opacity: 0; animation: none; }
+            /* 保留可读性：toast 改为无动画直接显示（3.4s 后由 JS 移除节点） */
+            .ach-toast.show-reduced { opacity: 1; }
+            .ach-bar-fill, .ach-prog-fill { transition: none; }
+        }
+        /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
+        button, a { touch-action: manipulation; }
+    </style>
+    <!-- 成就墙·相片墙触发器共享样式 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-1">
+</head>
+<body>
+    <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
+    <div id="edgeBeam" aria-hidden="true"></div>
+    <!-- 固定按钮区：返回链接（左上）+ 音效开关 / 全屏切换（右上） -->
+    <a class="back-link" href="index.html?v=20261105-1">&larr; 游戏厅</a>
+    <!-- 成就墙·相片墙触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
+    <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-pink)" title="成就墙（快捷键 V）">
+        <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
+        <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
+    </button>
+    <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
+    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <h1 class="title">BEE</h1>
+    <div class="layout">
+        <div id="gameContainer">
+            <!-- 游戏主画布：480×560，bee.js 在其上绘制蜂群、飞船、Boss 与子弹 -->
+            <canvas id="gameCanvas" width="480" height="560"></canvas>
+            <!-- 开始遮罩：默认显示，含操作说明与开始按钮 -->
+            <div id="startScreen">
+                <h2>小蜜蜂</h2>
+                <p class="start-sub">BEE</p>
+                <div class="start-tips">
+                    <div class="tips-head">玩法要点</div>
+                    <div class="tips-row rule">小心分裂蜂与自爆蜂，注意保持距离</div>
+                    <div class="tips-row rule">收集炸弹 / 时停 / 磁铁 / 激光四种道具</div>
+                    <div class="tips-row rule">警惕事件波（俯冲潮 / 精英阵）</div>
+                    <div class="tips-row rule">每 5 波遭遇 BOSS 战</div>
+                    <div class="tips-row rule">连续击杀可提升得分倍率</div>
+                </div>
+                <p class="diff-label">选择难度</p>
+                <div class="difficulty-row">
+                    <!-- 无敌档：受击与触底均不判负的娱乐难度 -->
+                    <button class="diff-btn" data-diff="invincible">无敌</button>
+                    <button class="diff-btn" data-diff="easy">简单</button>
+                    <button class="diff-btn selected" data-diff="normal">普通</button>
+                    <button class="diff-btn" data-diff="hard">困难</button>
+                </div>
+                <button onclick="startGame()">开始游戏</button>
+            </div>
+            <!-- 结束遮罩：显示最终分数/波次/评级与新纪录标记，提供重新开始按钮 -->
+            <div id="gameOverScreen" style="display: none;">
+                <h2>游戏结束</h2>
+                <p>最终分数: <span id="finalScore">0</span></p>
+                <p>到达波次: <span id="finalWave">1</span></p>
+                <!-- 结算评级徽章：大字评级 + 分级配色（S/A/B/C），弹出时播 rankPop 弹入动画 -->
+                <div id="finalRank" class="rank-badge" style="display: none;">C</div>
+                <p id="newRecord" style="display: none;">新纪录！</p>
+                <button onclick="startGame()">重新开始</button>
+            </div>
+            <!-- 暂停遮罩：P 键手动暂停或窗口失焦自动暂停时显示，形态与开始/结束面板一致；
+                 bee.js 以 syncPauseOverlay 同步显隐，并按暂停来源切换恢复提示文案 -->
+            <div id="pauseScreen" style="display: none;">
+                <h2>已暂停</h2>
+                <p id="pauseTip">按 P 键或点击继续</p>
+                <p id="pauseRestoreTip" style="display: none;">已恢复上次进度</p>
+            </div>
+        </div>
+        <!-- 侧边信息栏：STATS 记分面板（bee.js 按 id 实时刷新）+ KEYS 键位面板 -->
+        <div class="side-panel">
+            <div class="panel-box">
+                <h3>STATS</h3>
+                <div class="stat-row"><span class="label">得分</span><span class="value" id="score">SCORE 0</span></div>
+                <div class="stat-row"><span class="label">波次</span><span class="value" id="wave">WAVE 1</span></div>
+                <div class="stat-row"><span class="label">生命</span><span class="value" id="lives">LIVES 3</span></div>
+                <div class="stat-row"><span class="label">最高</span><span class="value" id="highScore">HI 0</span></div>
+            </div>
+            <div class="panel-box keys">
+                <h3>KEYS</h3>
+                <p><b data-code="ArrowLeft">←</b> / <b data-code="KeyA">A</b> 向左</p>
+                <p><b data-code="ArrowRight">→</b> / <b data-code="KeyD">D</b> 向右</p>
+                <p><b data-code="Space">空格</b> 射击</p>
+                <p><b data-code="ShiftLeft">Shift</b> 冲刺</p>
+                <p><b data-code="KeyV">V</b> 成就墙 / Esc 关</p>
+                <p><b data-code="KeyP">P</b> 暂停/继续</p>
+            </div>
+        </div>
+    </div>
+    <!-- 成就墙：全屏遮罩 + 面板（头部计数 / 总进度条 / 卡片网格），V 键开关、Esc 或点遮罩关闭；
+         卡片网格由 bee.js 按成就定义表动态填充 -->
+    <div id="achWall" hidden>
+        <div class="ach-panel">
+            <div class="ach-head">
+                <div class="ach-title">成就墙</div>
+                <div class="ach-head-right">
+                    <span id="achCount" class="ach-count">0/10</span>
+                    <button id="achClose" class="ach-close" type="button" aria-label="关闭成就墙">×</button>
+                </div>
+            </div>
+            <div class="ach-progress">
+                <div class="ach-bar"><div id="achBarFill" class="ach-bar-fill"></div></div>
+            </div>
+            <div id="achGrid" class="ach-grid"></div>
+        </div>
+    </div>
+    <!-- 成就解锁 toast 容器：右上角悬浮队列，解锁瞬间滑入展示后自动移除 -->
+    <div id="achToastStack" class="ach-toast-stack"></div>
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → bee.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <script src="audio.js?v=20261105-1"></script>
+    <script src="fx.js?v=20261104-5"></script>
+    <script src="fullscreen.js?v=20261104-3"></script>
+    <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
+    <script src="gamepad.js?v=20261105-1"></script>
+    <script src="ach-trigger.js?v=20261105-1"></script>
+    <script src="bee.js?v=20261105-3"></script>
+</body>
+</html>

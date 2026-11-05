@@ -1,0 +1,943 @@
+﻿<!DOCTYPE html>
+<!-- ==================================================================
+     俄罗斯方块游戏页
+     结构：左上角返回链接 → 右上角固定按钮（音效开关 / 全屏）→ TETRIS 彩色标题 →
+          主布局（左：280×560 棋盘 + 四块遮罩；右：侧边信息栏
+          HOLD 暂存预览 150×120 / NEXT 后续三块预览 150×240 / STATS / KEYS）
+     脚本：audio.js 公共音效库 / fx.js 画布与特效库 / fullscreen.js 全屏控制 /
+          tetris.js 游戏逻辑（含 7-bag / Hold / SRS / Lock Delay / DAS-ARR / 成就）
+     共享：ach-trigger.css / ach-trigger.js 相片墙成就墙触发器（点击等效按 V 开合成就墙）
+     ================================================================== -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>俄罗斯方块 - 像素街机厅</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        /* ---------- 主题变量：底色 / 面板 / 四色霓虹 / 文字 ---------- */
+        :root {
+            --bg: #0a1414;
+            --panel: rgba(18, 42, 42, 0.96);
+            --neon-green: #39ff6a;
+            --neon-pink: #ff3ea5;
+            --neon-blue: #35e0ff;
+            --neon-yellow: #ffd23e;
+            --text: #e8feff;
+        }
+        /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
+        html { background: var(--bg); }
+
+        /* ---------- 基础布局：全屏垂直居中 ---------- */
+        * { box-sizing: border-box; }
+        body {
+            user-select: none; /* 全局禁止文本选取：鼠标拖动不再框选界面文字、不触发浏览器选中搜索 */
+            -webkit-user-select: none;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            background: radial-gradient(ellipse at 50% 0%, #1c4040 0%, var(--bg) 65%);
+            font-family: 'Microsoft YaHei', sans-serif;
+            color: var(--text);
+        }
+        /* CRT 扫描线氛围 */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0 1px, transparent 1px 3px);
+        }
+        /* 视口边缘氛围灯带：弱于游戏区边框灯带，勾勒屏幕轮廓而不喧宾夺主 */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            transform: translateZ(0); /* 独立合成层：edgeFlow 的 box-shadow 每帧重绘隔离于本层，不再与 hover 重绘叠加波及整页引发闪屏 */
+            box-shadow: inset 0 0 64px rgba(255, 154, 62, 0.10);
+            animation: edgeFlow 8s ease-in-out infinite;
+        }
+        /* 边缘灯带流光：橙 → 粉 → 蓝循环（与画布灯带同节奏、低亮度） */
+        @keyframes edgeFlow {
+            0%, 100% { box-shadow: inset 0 0 64px rgba(255, 154, 62, 0.10); }
+            33% { box-shadow: inset 0 0 64px rgba(255, 62, 165, 0.11); }
+            66% { box-shadow: inset 0 0 64px rgba(53, 224, 255, 0.11); }
+        }
+        /* ---------- 视口四周环绕光带：主题色霓虹流光绕屏幕边缘匀速巡游 ---------- */
+        #edgeBeam {
+            position: fixed;
+            inset: 0;
+            z-index: 6; /* 置于暗角之上、返回链接与右上角按钮(10)之下：不挡操作 */
+            pointer-events: none;
+            padding: 4px; /* 光带厚度 */
+            /* 遮罩挖空内容区：仅保留 padding 形成的四周环形带 */
+            -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            -webkit-mask-composite: xor;
+            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask-composite: exclude;
+            overflow: hidden;
+        }
+        /* 旋转光束：超大锥形渐变绕视口中心自转，两道主题色光带对置接力 */
+        #edgeBeam::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 142vmax; /* √2×视口较长边：内切圆恰好覆盖视口对角线，纹理面积较 200vmax 减半，降低全屏显存压力 */
+            height: 142vmax;
+            margin: -71vmax 0 0 -71vmax; /* 中心对齐视口中心 */
+            will-change: transform; /* 常驻合成层：避免超大纹理被反复驱逐/重建引发闪屏 */
+            background: conic-gradient(
+                transparent 0deg,
+                var(--neon-blue) 22deg, var(--neon-blue) 58deg, transparent 88deg,
+                transparent 180deg,
+                var(--neon-blue) 202deg, var(--neon-blue) 238deg, transparent 268deg);
+            opacity: 0.6; /* 亮度弱于机台边框灯带，氛围不喧宾夺主 */
+            animation: beamOrbit 10s linear infinite;
+        }
+        /* 光束匀速自转一周：形成光带沿四边连续巡游的观感 */
+        @keyframes beamOrbit {
+            to { transform: rotate(1turn); }
+        }
+        /* ---------- 返回链接：固定左上角，回到游戏大厅 ---------- */
+        .back-link {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            z-index: 10;
+            padding: 8px 14px;
+            color: var(--neon-blue);
+            text-decoration: none;
+            font-size: 13px;
+            letter-spacing: 2px;
+            border: 1px solid rgba(53, 224, 255, 0.4);
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .back-link:hover {
+            background: rgba(53, 224, 255, 0.12);
+            box-shadow: 0 0 12px rgba(53, 224, 255, 0.5);
+        }
+        /* 音效开关按钮（固定右上角，覆盖全局 button 主题底色） */
+        .sound-toggle {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 10;
+            margin-top: 0;
+            width: 150px;
+            padding: 8px 0;
+            text-align: center;
+            line-height: 1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--neon-blue);
+            background: rgba(18, 42, 42, 0.85);
+            border: 1px solid rgba(53, 224, 255, 0.4);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .sound-toggle:hover {
+            background: rgba(53, 224, 255, 0.12);
+            filter: none;
+            box-shadow: 0 0 12px rgba(53, 224, 255, 0.5);
+        }
+        /* 全屏按钮（固定右上角音效开关下方，覆盖全局 button 主题底色） */
+        .fs-toggle {
+            position: fixed;
+            top: 60px;
+            right: 16px;
+            z-index: 10;
+            margin-top: 0;
+            width: 150px;
+            padding: 8px 0;
+            text-align: center;
+            line-height: 1;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--neon-blue);
+            background: rgba(18, 42, 42, 0.85);
+            border: 1px solid rgba(53, 224, 255, 0.4);
+            border-radius: 6px;
+            box-shadow: none;
+        }
+        .fs-toggle:hover {
+            background: rgba(53, 224, 255, 0.12);
+            filter: none;
+            box-shadow: 0 0 12px rgba(53, 224, 255, 0.5);
+        }
+        /* ---------- 标题：TETRIS 每字母彩色霓虹 ---------- */
+        h1.title {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 22px;
+            letter-spacing: 6px;
+            margin: 0 0 18px;
+        }
+        /* 每个字母带自身颜色的霓虹光晕 */
+        h1.title span { text-shadow: 0 0 16px currentColor; }
+        /* ---------- 主布局：左侧棋盘容器 + 右侧侧边信息栏 ---------- */
+        .layout {
+            display: flex;
+            gap: 18px;
+            align-items: flex-start; /* 侧栏顶边与游戏区外框顶边对齐，底边按内容自然收尾 */
+        }
+        /* 游戏容器（遮罩层相对其定位）与主画布：280×560，10×20 格、格 28px */
+        #gameContainer { position: relative; }
+        #gameCanvas {
+            display: block;
+            /* 固定 CSS 逻辑尺寸：FX.setupCanvas 据此放大物理分辨率，避免属性尺寸直接撑大布局 */
+            width: 280px;
+            height: 560px;
+            border: 3px solid var(--neon-blue);
+            border-radius: 4px;
+            background-color: #0f1a1a;
+            box-shadow: 0 0 18px rgba(53, 224, 255, 0.35), inset 0 0 30px rgba(53, 224, 255, 0.06);
+            /* 边框灯带：与 1024 机台同款三色流光循环 */
+            animation: canvasFlow 8s ease-in-out infinite;
+        }
+        /* 边框流光灯带：主题青 → 宝蓝 → 青绿同族循环（贴合俄罗斯方块主题色调） */
+        @keyframes canvasFlow {
+            0%, 100% { border-color: #35e0ff; box-shadow: 0 0 28px rgba(53, 224, 255, 0.4), inset 0 0 40px rgba(53, 224, 255, 0.08); }
+            33% { border-color: #3e8aff; box-shadow: 0 0 32px rgba(62, 138, 255, 0.45), inset 0 0 40px rgba(62, 138, 255, 0.08); }
+            66% { border-color: #2fffd8; box-shadow: 0 0 32px rgba(47, 255, 216, 0.45), inset 0 0 40px rgba(47, 255, 216, 0.08); }
+        }
+        /* ---------- 侧边信息栏：两列网格布局 ----------
+           左列 HOLD/STATS 纵向堆叠、右列 NEXT 竖条跨两行、底行 KEYS 通栏，
+           整体高度压缩至 ~430px（低于游戏画布 566px），使 .layout 高度由游戏区主导：
+           全屏缩放比不再被侧栏卡死（1080p 下 ~1.65，原 ~1.14），说明区占屏比同步下降 */
+        .side-panel {
+            display: grid;
+            grid-template-columns: 178px 178px;
+            gap: 12px;
+            grid-template-areas:
+                "hold next"
+                "stats next"
+                "keys keys";
+        }
+        .hold-box  { grid-area: hold; }
+        .next-box  { grid-area: next; }
+        .stats-box { grid-area: stats; }
+        .keys      { grid-area: keys; }
+        .panel-box {
+            background: rgba(18, 42, 42, 0.85);
+            border: 1px solid rgba(53, 224, 255, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .panel-box h3 {
+            margin: 0 0 8px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 10px;
+            color: var(--neon-blue);
+            letter-spacing: 2px;
+        }
+        /* HOLD 暂存预览画布：固定 CSS 逻辑尺寸，FX.setupCanvas 据此设置物理分辨率 */
+        #holdCanvas {
+            display: block;
+            margin: 0 auto;
+            width: 150px;
+            height: 120px;
+            background: #0f1a1a;
+            border-radius: 4px;
+        }
+        /* NEXT 后续三块预览画布：固定 CSS 逻辑尺寸 150×240（纵向均分为三条预览带） */
+        #nextCanvas {
+            display: block;
+            margin: 0 auto;
+            width: 150px;
+            height: 240px;
+            background: #0f1a1a;
+            border-radius: 4px;
+        }
+        /* ---------- 成就墙（2026-11-04 精致化改版，对齐 snake 机台模板）：DOM 覆盖层 · 四档稀有度卡片 · 历史最佳进度 ---------- */
+        #achWall {
+            position: fixed;
+            inset: 0;
+            z-index: 20; /* 高于右上角固定按钮(10)：遮罩期间全屏聚焦成就墙 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(4, 12, 14, 0.72); /* 青黑遮罩底：随俄罗斯方块机台主题色调 */
+            -webkit-backdrop-filter: blur(6px); /* Safari 旧版需 -webkit- 前缀，成对书写两侧通吃 */
+            backdrop-filter: blur(6px);
+            animation: wallFade 0.25s ease-out;
+        }
+        #achWall[hidden] { display: none; }
+        /* 遮罩淡入 */
+        @keyframes wallFade {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        /* 面板：深青渐变底 + 霓虹描边，弹性落定入场 */
+        .ach-panel {
+            width: min(720px, 94vw);
+            max-height: 86vh;
+            display: flex;
+            flex-direction: column;
+            background: linear-gradient(160deg, #0e2a2a 0%, #0a1d1d 55%, #0c1e22 100%);
+            border: 1px solid rgba(53, 224, 255, 0.45);
+            border-radius: 14px;
+            box-shadow: 0 0 42px rgba(53, 224, 255, 0.22), inset 0 0 60px rgba(53, 224, 255, 0.05);
+            animation: wallPanelIn 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+        }
+        @keyframes wallPanelIn {
+            from { opacity: 0; transform: translateY(18px) scale(0.94); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        /* 头部：标题 + 完成度 + 关闭按钮 */
+        .ach-head {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 16px 18px 12px;
+            border-bottom: 1px solid rgba(53, 224, 255, 0.25);
+        }
+        .ach-title-wrap { flex: 1; text-align: left; }
+        .ach-title {
+            margin: 0;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 15px;
+            letter-spacing: 3px;
+            color: var(--neon-yellow);
+            text-shadow: 0 0 14px rgba(255, 210, 62, 0.55);
+        }
+        .ach-sub {
+            margin: 5px 0 0;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 8px;
+            letter-spacing: 5px;
+            color: rgba(53, 224, 255, 0.6);
+        }
+        .ach-progress { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+        .ach-count {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+            color: var(--neon-blue);
+            text-shadow: 0 0 8px rgba(53, 224, 255, 0.6);
+        }
+        .ach-bar {
+            width: 150px;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.08);
+            overflow: hidden;
+        }
+        .ach-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #35e0ff, #ffd23e);
+            box-shadow: 0 0 8px rgba(53, 224, 255, 0.6);
+            transition: width 0.45s ease-out;
+        }
+        .ach-close {
+            width: 34px;
+            height: 34px;
+            margin: 0;
+            padding: 0;
+            font-size: 14px;
+            letter-spacing: 0;
+            color: var(--neon-blue);
+            background: rgba(53, 224, 255, 0.08);
+            border: 1px solid rgba(53, 224, 255, 0.4);
+            border-radius: 8px;
+            box-shadow: none;
+        }
+        .ach-close:hover {
+            background: rgba(53, 224, 255, 0.16);
+            box-shadow: 0 0 10px rgba(53, 224, 255, 0.4);
+        }
+        /* 卡片网格：2 列布局，滚动区（成就增多时面板不撑爆视口） */
+        .ach-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            padding: 14px 18px;
+            overflow-y: auto;
+        }
+        /* 卡片：瀑布入场（--i 序号延迟）+ hover 抬升 */
+        .ach-card {
+            position: relative;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            text-align: left;
+            overflow: hidden;
+            animation: achCardIn 0.45s ease-out backwards;
+            animation-delay: calc(var(--i) * 60ms); /* 瀑布入场：按卡片序号依次滑入 */
+            transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+        }
+        @keyframes achCardIn {
+            from { opacity: 0; transform: translateY(14px) scale(0.96); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .ach-card:hover { transform: translateY(-3px); }
+        /* 稀有度徽章：卡片右上角小标签 */
+        .ach-rarity-chip {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            padding: 2px 8px;
+            font-size: 10px;
+            letter-spacing: 2px;
+            border-radius: 999px;
+            border: 1px solid;
+        }
+        /* 图标徽座：磨砂圆底，稀有度由卡片描边与徽章承载 */
+        .ach-icon {
+            position: relative;
+            flex: none;
+            width: 52px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            font-size: 26px;
+            background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 65%);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        /* 锁定角标：未解锁卡片图标右下角小锁 */
+        .ach-lock {
+            position: absolute;
+            right: -3px;
+            bottom: -3px;
+            font-size: 12px;
+            filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+        }
+        .ach-info { flex: 1; min-width: 0; }
+        .ach-name {
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin-right: 52px; /* 让出右上角徽章位置，避免长名与其重叠 */
+        }
+        .ach-desc {
+            margin: 3px 0 7px;
+            font-size: 11px;
+            color: #7f959c;
+            line-height: 1.4;
+        }
+        /* 进度条：历史最佳 / 目标值，青→绿渐变填充 */
+        .ach-prog {
+            height: 5px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.07);
+            overflow: hidden;
+        }
+        .ach-prog-fill {
+            height: 100%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #35e0ff, #39ff6a);
+            transition: width 0.4s ease-out;
+        }
+        .ach-prog-meta {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+            font-size: 10px;
+            color: #647d82;
+        }
+        /* ----- 已解锁卡片：稀有度点亮 + 周期流光扫过 ----- */
+        .ach-card.unlocked .ach-name {
+            color: var(--neon-yellow);
+            text-shadow: 0 0 8px rgba(255, 210, 62, 0.35);
+        }
+        .ach-card.unlocked .ach-desc { color: #9fc3c9; }
+        .ach-card.unlocked .ach-prog-fill { background: linear-gradient(90deg, #35e0ff, #ffd23e); }
+        /* 流光扫过：斜向高光带每 3.2s 掠过一次（仅已解锁卡），序号错峰形成此起彼伏 */
+        .ach-card.unlocked::after {
+            content: '';
+            position: absolute;
+            top: -60%;
+            left: -80%;
+            width: 45%;
+            height: 220%;
+            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+            transform: rotate(8deg);
+            animation: achSheen 3.2s ease-in-out infinite;
+            animation-delay: calc(var(--i) * 0.35s + 0.8s);
+            pointer-events: none;
+        }
+        @keyframes achSheen {
+            0%, 55% { left: -80%; }
+            85%, 100% { left: 160%; }
+        }
+        /* 稀有度主题：普通绿灰 / 稀有青 / 史诗紫 / 传说金（四档配色与 snake 机台保持全站统一） */
+        .ach-card.unlocked.rarity-common {
+            border-color: rgba(159, 212, 159, 0.5);
+            box-shadow: 0 0 12px rgba(159, 212, 159, 0.14);
+        }
+        .ach-card.unlocked.rarity-common:hover { box-shadow: 0 0 20px rgba(159, 212, 159, 0.3); }
+        .ach-card.unlocked.rarity-rare {
+            border-color: rgba(53, 224, 255, 0.55);
+            box-shadow: 0 0 14px rgba(53, 224, 255, 0.18);
+        }
+        .ach-card.unlocked.rarity-rare:hover { box-shadow: 0 0 24px rgba(53, 224, 255, 0.35); }
+        .ach-card.unlocked.rarity-epic {
+            border-color: rgba(190, 92, 255, 0.6);
+            box-shadow: 0 0 16px rgba(190, 92, 255, 0.22);
+        }
+        .ach-card.unlocked.rarity-epic:hover { box-shadow: 0 0 26px rgba(190, 92, 255, 0.4); }
+        .ach-card.unlocked.rarity-legendary {
+            border-color: rgba(255, 210, 62, 0.65);
+            box-shadow: 0 0 18px rgba(255, 210, 62, 0.25);
+            animation: achCardIn 0.45s ease-out backwards, legendPulse 2.6s ease-in-out infinite;
+            animation-delay: calc(var(--i) * 60ms), calc(var(--i) * 60ms + 0.6s); /* 传说卡额外呼吸金辉，与瀑布入场错峰 */
+        }
+        .ach-card.unlocked.rarity-legendary:hover { box-shadow: 0 0 30px rgba(255, 210, 62, 0.45); }
+        @keyframes legendPulse {
+            0%, 100% { box-shadow: 0 0 18px rgba(255, 210, 62, 0.25); }
+            50% { box-shadow: 0 0 30px rgba(255, 210, 62, 0.5); }
+        }
+        /* 稀有度徽章配色（与卡片描边 / 光晕同族色） */
+        .ach-rarity-chip.rarity-common { color: #9fd49f; border-color: rgba(159, 212, 159, 0.5); background: rgba(159, 212, 159, 0.08); }
+        .ach-rarity-chip.rarity-rare { color: #7ce4ff; border-color: rgba(53, 224, 255, 0.5); background: rgba(53, 224, 255, 0.08); }
+        .ach-rarity-chip.rarity-epic { color: #d9a0ff; border-color: rgba(190, 92, 255, 0.5); background: rgba(190, 92, 255, 0.1); }
+        .ach-rarity-chip.rarity-legendary { color: #ffd23e; border-color: rgba(255, 210, 62, 0.55); background: rgba(255, 210, 62, 0.1); }
+        /* ----- 未解锁卡片：灰暗锁定态 ----- */
+        .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
+        .ach-card.locked .ach-name { color: #6d8792; }
+        .ach-card.locked:hover { border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05); }
+        /* 底部操作提示条 */
+        .ach-foot {
+            padding: 10px 18px 14px;
+            border-top: 1px solid rgba(53, 224, 255, 0.18);
+            font-size: 11px;
+            color: #647d82;
+            text-align: center;
+        }
+        .ach-foot b { color: var(--neon-blue); font-weight: normal; }
+        /* ---------- 成就解锁 toast：右上角堆叠 · 稀有度色条 · 滑入-停留-退场 ---------- */
+        #achToastStack {
+            position: fixed;
+            top: 106px; /* 位于右上角"声音/全屏"两枚按钮之下 */
+            right: 16px;
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        .ach-toast {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 14px 9px 10px;
+            border-radius: 10px;
+            background: linear-gradient(120deg, rgba(16, 40, 42, 0.95), rgba(9, 21, 23, 0.95));
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-left: 3px solid var(--neon-blue);
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+            animation: toastCycle 3.2s ease forwards;
+        }
+        @keyframes toastCycle {
+            0% { opacity: 0; transform: translateX(56px) scale(0.92); }
+            10%, 80% { opacity: 1; transform: translateX(0) scale(1); }
+            100% { opacity: 0; transform: translateX(40px) scale(0.95); }
+        }
+        .toast-icon {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 70%);
+            animation: toastIconPop 0.5s cubic-bezier(0.34, 1.6, 0.64, 1);
+        }
+        @keyframes toastIconPop {
+            from { transform: scale(0.3) rotate(-30deg); }
+            to { transform: scale(1) rotate(0deg); }
+        }
+        .toast-body { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+        .toast-cap { font-size: 10px; letter-spacing: 3px; color: #7f959c; }
+        .toast-name {
+            font-size: 13px;
+            font-weight: bold;
+            color: var(--neon-yellow);
+            text-shadow: 0 0 8px rgba(255, 210, 62, 0.4);
+        }
+        /* toast 稀有度左色条（史诗/传说图标座追加金色光晕） */
+        .ach-toast.rarity-common { border-left-color: #9fd49f; }
+        .ach-toast.rarity-rare { border-left-color: #35e0ff; }
+        .ach-toast.rarity-epic { border-left-color: #be5cff; }
+        .ach-toast.rarity-legendary { border-left-color: #ffd23e; }
+        .ach-toast.rarity-epic .toast-icon,
+        .ach-toast.rarity-legendary .toast-icon { box-shadow: 0 0 14px rgba(255, 210, 62, 0.35); }
+        /* 成就墙窄屏：单列卡片 + 头部换行 */
+        @media (max-width: 640px) {
+            .ach-grid { grid-template-columns: 1fr; }
+            .ach-head { flex-wrap: wrap; }
+        }
+        /* 成就墙减弱动效：停用瀑布入场 / 流光 / 传说呼吸 / toast 滑入
+           （置于本区块末尾：同特异性规则按书写顺序覆盖上文动画声明） */
+        @media (prefers-reduced-motion: reduce) {
+            #achWall, .ach-panel, .ach-card, .ach-card.unlocked::after,
+            .ach-toast, .toast-icon,
+            .ach-card.unlocked.rarity-legendary {
+                animation: none;
+            }
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 3px 0; /* 收紧行距，配合两列布局降低侧栏高度 */
+            font-size: 12px;
+        }
+        .stat-row .label { color: #8a8ab0; }
+        .stat-row .value {
+            font-family: 'Press Start 2P', monospace;
+            font-size: 11px;
+        }
+        #scoreVal { color: var(--neon-blue); text-shadow: 0 0 8px rgba(53, 224, 255, 0.6); }
+        #levelVal { color: var(--neon-pink); text-shadow: 0 0 8px rgba(255, 62, 165, 0.6); }
+        #linesVal { color: var(--neon-green); text-shadow: 0 0 8px rgba(57, 255, 106, 0.6); }
+        #highVal { color: var(--neon-yellow); text-shadow: 0 0 8px rgba(255, 210, 62, 0.6); }
+        /* 键位说明：通栏双列网格，8 条键位压缩为 4 行，显著降低说明区高度占比 */
+        .keys {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3px 14px;
+            align-content: start;
+        }
+        .keys h3 { grid-column: 1 / -1; } /* 标题占满通栏 */
+        .keys p { margin: 0; font-size: 11px; color: #b8b8d8; white-space: nowrap; }
+        .keys b { color: var(--neon-blue); font-weight: normal; }
+        /* ---------- 遮罩层 ---------- */
+        #startScreen, #gameOverScreen, #pauseScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 240px;
+            text-align: center;
+            background-color: var(--panel);
+            padding: 18px 16px;
+            border-radius: 10px;
+            border: 1px solid rgba(53, 224, 255, 0.4);
+            box-shadow: 0 0 24px rgba(53, 224, 255, 0.25);
+            animation: panelIn 0.3s ease-out; /* 面板入场：display 切换时自动重播 */
+        }
+        /* 面板入场动画：从略小略上位置淡入落定 */
+        @keyframes panelIn {
+            from { opacity: 0; transform: translate(-50%, -46%) scale(0.92); }
+            to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        }
+        /* 遮罩标题：主题蓝色 + 霓虹光晕 */
+        h2 { margin: 0 0 10px; font-size: 20px; letter-spacing: 4px; color: var(--neon-blue); text-shadow: 0 0 12px rgba(53, 224, 255, 0.6); }
+        p { margin: 6px 0; font-size: 13px; color: #b8b8d8; }
+        /* ---------- 开始面板美化：英文副题 / 提示信息块 / 难度标签 ---------- */
+        #startScreen h2 { margin-bottom: 6px; }
+        .start-sub {
+            margin: 0 0 10px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 9px;
+            letter-spacing: 4px;
+            color: var(--neon-blue);
+            opacity: 0.85;
+        }
+        .start-tips {
+            margin: 10px 0 0;
+            padding: 9px 12px;
+            background: rgba(53, 224, 255, 0.06);
+            border-top: 1px solid rgba(53, 224, 255, 0.35);
+            border-bottom: 1px solid rgba(53, 224, 255, 0.35);
+            border-radius: 6px;
+        }
+        /* 提示分区标题：主题色小标签 + 右侧延伸线 */
+        .start-tips .tips-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0 4px;
+            font-size: 11px;
+            letter-spacing: 3px;
+            color: var(--neon-blue);
+        }
+        .start-tips .tips-head:first-child { margin-top: 0; }
+        .start-tips .tips-head::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: rgba(53, 224, 255, 0.25);
+        }
+        /* 玩法条目：整行排版，主题色箭头前缀 */
+        .start-tips .tips-row {
+            margin: 4px 0;
+            font-size: 13px;
+            line-height: 1.6;
+            text-align: left;
+        }
+        .start-tips .tips-row.rule::before {
+            content: "▸";
+            margin-right: 6px;
+            color: var(--neon-blue);
+            font-size: 11px;
+        }
+        .diff-label {
+            margin: 12px 0 0;
+            font-size: 11px;
+            letter-spacing: 2px;
+            color: #8a8ab0;
+        }
+        #newRecord {
+            color: var(--neon-pink);
+            font-weight: bold;
+            text-shadow: 0 0 10px rgba(255, 62, 165, 0.6);
+        }
+        /* 全局按钮：开始 / 重新开始等主操作按钮（蓝色主题） */
+        button {
+            padding: 10px 22px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 12px;
+            cursor: pointer;
+            color: #0a1414;
+            background-color: var(--neon-blue);
+            border: none;
+            border-radius: 5px;
+            margin-top: 12px;
+            letter-spacing: 2px;
+            box-shadow: 0 0 12px rgba(53, 224, 255, 0.45);
+            transition: all 0.15s;
+        }
+        button:hover {
+            filter: brightness(1.15);
+            box-shadow: 0 0 20px rgba(53, 224, 255, 0.7);
+        }
+        /* ---------- 难度选择 ---------- */
+        #difficultySelect {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-top: 12px;
+        }
+        .difficulty-btn {
+            background-color: #2a2a4a;
+            color: #b8b8d8;
+            padding: 8px 14px;
+            font-size: 10px;
+            box-shadow: none;
+        }
+        .difficulty-btn:hover {
+            background-color: #3a3a5e;
+            filter: none;
+            box-shadow: none;
+        }
+        .difficulty-btn.active {
+            background-color: var(--neon-blue);
+            color: #0a1414;
+            box-shadow: 0 0 12px rgba(53, 224, 255, 0.5);
+        }
+        .difficulty-btn.active:hover {
+            box-shadow: 0 0 18px rgba(53, 224, 255, 0.7);
+        }
+        /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
+        button, a { touch-action: manipulation; }
+        /* ---------- 触屏按钮组：默认隐藏，仅粗指针（触屏）设备显示，桌面布局完全不变 ---------- */
+        #touchControls {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin-top: 14px;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        @media (pointer: coarse) {
+            #touchControls { display: flex; }
+        }
+        /* 触屏按钮行：上行动作（Hold / 双旋 / 硬降）· 下行方向（← ↓ →） */
+        .touch-row {
+            display: flex;
+            gap: 10px;
+        }
+        /* 触屏按钮：覆盖全局 button 蓝底主题 → 暗底霓虹描边半透明圆角，≥56px 拇指触达 */
+        .touch-btn {
+            min-width: 56px;
+            min-height: 56px;
+            margin-top: 0;
+            padding: 6px 10px;
+            font-family: 'Press Start 2P', monospace;
+            font-size: 14px;
+            line-height: 1;
+            letter-spacing: 0;
+            color: var(--neon-blue);
+            background: rgba(18, 42, 42, 0.72);
+            border: 1px solid rgba(53, 224, 255, 0.4);
+            border-radius: 10px;
+            box-shadow: none;
+            /* none：按住连发期间不允许页面滚动接管（滚动会触发 pointercancel 中断连发） */
+            touch-action: none;
+        }
+        /* 按压反馈：主题蓝半透明底 + 霓虹光晕 */
+        .touch-btn:active {
+            background: rgba(53, 224, 255, 0.18);
+            box-shadow: 0 0 12px rgba(53, 224, 255, 0.45);
+        }
+        /* ---------- 减弱动态效果：系统开启"减弱动态效果"时停用装饰性动画 ----------
+           （与大厅 / 蜜蜂机台同款降级策略）停用视口边缘灯带流光与环绕旋转光束、
+           棋盘边框霓虹流光、遮罩面板入场动画；成就 toast 取消滑入位移仅保留淡入淡出。
+           行消除闪烁等画布动效由 fx.js 的 prefersReduced 粒子降级同步处理，
+           CSS 与 JS 两侧策略保持一致 */
+        @media (prefers-reduced-motion: reduce) {
+            body::after { animation: none; } /* 视口边缘灯带流光 */
+            #edgeBeam { display: none; }     /* 环绕旋转光束：纯氛围装饰，整体停用 */
+            #gameCanvas { animation: none; } /* 棋盘边框霓虹流光 */
+            /* 遮罩面板入场动画：改为直接呈现（成就墙动效在其专属区块内已按需停用） */
+            #startScreen, #gameOverScreen, #pauseScreen { animation: none; }
+        }
+    </style>
+    <!-- 成就墙·相片墙触发器共享样式 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261105-1">
+</head>
+<body>
+    <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
+    <div id="edgeBeam" aria-hidden="true"></div>
+    <!-- 固定按钮区：返回链接（左上）+ 音效开关 / 全屏切换（右上） -->
+    <a class="back-link" href="index.html?v=20261105-1">&larr; 游戏厅</a>
+    <!-- 成就墙·相片墙触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
+    <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-blue)" title="成就墙（快捷键 V）">
+        <span class="awt-grid"><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i><i class="awt-tile"></i></span>
+        <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
+    </button>
+    <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
+    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <h1 class="title">
+        <span style="color:#ff3ea5">T</span><span style="color:#ff9a3e">E</span><span style="color:#ffd23e">T</span><span style="color:#39ff6a">R</span><span style="color:#35e0ff">I</span><span style="color:#c17bff">S</span>
+    </h1>
+    <div class="layout">
+        <div id="gameContainer">
+            <!-- 游戏主画布：280×560（10×20 格），tetris.js 在其上绘制棋盘、方块与幽灵投影 -->
+            <canvas id="gameCanvas" width="280" height="560"></canvas>
+            <!-- 开始遮罩：默认显示，含难度选择（data-drop=自然下落间隔ms、data-mult=计分倍率、data-invincible=无敌模式标记）与开始按钮 -->
+            <div id="startScreen">
+                <h2>俄罗斯方块</h2>
+                <p class="start-sub">TETRIS</p>
+                <div class="start-tips">
+                    <div class="tips-head">玩法要点</div>
+                    <div class="tips-row rule">消满整行得分，多消奖励更高</div>
+                    <div class="tips-row rule">T 块旋入凹槽触发 T-SPIN，奖励更高</div>
+                    <div class="tips-row rule">连续 Tetris / T-SPIN 触发 B2B 1.5 倍加分</div>
+                    <div class="tips-row rule">一次消行清空棋盘触发 ALL CLEAR 大奖</div>
+                    <div class="tips-row rule">方块堆到顶部即结束</div>
+                </div>
+                <p class="diff-label">选择难度</p>
+                <div id="difficultySelect">
+                    <!-- 无敌档：下落间隔与倍率取简单档最宽松值，堆到顶时清空整个棋盘继续而非结束游戏 -->
+                    <button class="difficulty-btn" data-drop="700" data-mult="1" data-invincible="1" onclick="selectDifficulty(this)">无敌</button>
+                    <button class="difficulty-btn" data-drop="700" data-mult="1" onclick="selectDifficulty(this)">简单</button>
+                    <button class="difficulty-btn active" data-drop="600" data-mult="2" onclick="selectDifficulty(this)">中等</button>
+                    <button class="difficulty-btn" data-drop="450" data-mult="3" onclick="selectDifficulty(this)">困难</button>
+                </div>
+                <button onclick="startGame()">开始游戏</button>
+            </div>
+            <!-- 暂停遮罩：P 键暂停时由 tetris.js 显示；恢复快照进入时追加「已恢复上次进度」提示 -->
+            <div id="pauseScreen" style="display: none;">
+                <h2>已暂停</h2>
+                <p>按 P 键继续</p>
+                <p id="pauseRestored" style="display: none;">已恢复上次进度</p>
+            </div>
+            <!-- 结束遮罩：显示最终分数与新纪录标记，提供重新开始按钮 -->
+            <div id="gameOverScreen" style="display: none;">
+                <h2>游戏结束</h2>
+                <p>最终分数: <span id="finalScore">0</span></p>
+                <p id="newRecord" style="display: none;">新纪录！</p>
+                <button onclick="startGame()">重新开始</button>
+            </div>
+            <!-- 成就墙已升级为全屏 DOM 覆盖层：见 body 末尾 #achWall（V/Esc 开合，解锁 toast 走 #achToastStack） -->
+        </div>
+        <!-- 侧边信息栏：HOLD 暂存预览 / NEXT 后续三块预览 / STATS 实时统计 / KEYS 键位说明 -->
+        <div class="side-panel">
+            <div class="panel-box hold-box">
+                <h3>HOLD</h3>
+                <!-- 暂存预览画布：150×120，由 tetris.js 绘制（C/Shift 暂存当前方块） -->
+                <canvas id="holdCanvas" width="150" height="120"></canvas>
+            </div>
+            <div class="panel-box next-box">
+                <h3>NEXT</h3>
+                <!-- 后续三块预览画布：150×240，由 tetris.js 纵向依次绘制三块 -->
+                <canvas id="nextCanvas" width="150" height="240"></canvas>
+            </div>
+            <div class="panel-box stats-box">
+                <h3>STATS</h3>
+                <div class="stat-row"><span class="label">分数</span><span class="value" id="scoreVal">0</span></div>
+                <div class="stat-row"><span class="label">等级</span><span class="value" id="levelVal">1</span></div>
+                <div class="stat-row"><span class="label">行数</span><span class="value" id="linesVal">0</span></div>
+                <div class="stat-row"><span class="label">最高分</span><span class="value" id="highVal">0</span></div>
+            </div>
+            <div class="panel-box keys">
+                <h3>KEYS</h3>
+                <p><b data-code="ArrowUp">↑</b> / <b data-code="KeyW">W</b> / <b data-code="KeyX">X</b> 顺时针旋转</p>
+                <p><b data-code="KeyZ">Z</b> 逆时针旋转</p>
+                <p><b data-code="ArrowDown">↓</b> / <b data-code="KeyS">S</b> 软降</p>
+                <p><b data-code="ArrowLeft">←</b> / <b data-code="KeyA">A</b> 向左</p>
+                <p><b data-code="ArrowRight">→</b> / <b data-code="KeyD">D</b> 向右</p>
+                <p><b data-code="Space">空格</b> 硬降</p>
+                <p><b data-code="KeyC">C</b> / <b data-code="ShiftLeft">Shift</b> 暂存</p>
+                <p><b data-code="KeyV">V</b> 成就墙</p>
+                <p><b data-code="KeyP">P</b> 暂停</p>
+                <p><b>触屏</b> 底部按钮组可触控</p>
+            </div>
+        </div>
+    </div>
+    <!-- 触屏按钮组：仅粗指针（触屏）设备显示；动作与键盘 keydown 同源，
+         上行 = Hold / 逆时针 / 顺时针 / 硬降（单发），下行 = ← / ↓ / →（按住连发模拟 DAS/ARR） -->
+    <div id="touchControls">
+        <div class="touch-row">
+            <button id="touchBtnHold" class="touch-btn" type="button" aria-label="暂存方块">Hold</button>
+            <button id="touchBtnCCW" class="touch-btn" type="button" aria-label="逆时针旋转">&#8634;</button>
+            <button id="touchBtnCW" class="touch-btn" type="button" aria-label="顺时针旋转">&#8635;</button>
+            <button id="touchBtnDrop" class="touch-btn" type="button" aria-label="硬降">&#8675;</button>
+        </div>
+        <div class="touch-row">
+            <button id="touchBtnLeft" class="touch-btn" type="button" aria-label="向左移动">&larr;</button>
+            <button id="touchBtnDown" class="touch-btn" type="button" aria-label="软降">&darr;</button>
+            <button id="touchBtnRight" class="touch-btn" type="button" aria-label="向右移动">&rarr;</button>
+        </div>
+    </div>
+    <!-- ===================== 成就墙：DOM 全屏覆盖层（V/Esc 开合，打开时游戏逻辑冻结） ===================== -->
+    <div id="achWall" hidden>
+        <div class="ach-panel">
+            <div class="ach-head">
+                <div class="ach-title-wrap">
+                    <div class="ach-title">成就墙</div>
+                    <div class="ach-sub">ACHIEVEMENT WALL</div>
+                </div>
+                <div class="ach-progress">
+                    <div class="ach-count"><span id="achCount">0</span> / <span id="achTotal">0</span></div>
+                    <div class="ach-bar"><div class="ach-bar-fill" id="achBarFill"></div></div>
+                </div>
+                <button class="ach-close" onclick="toggleAchPanel()" aria-label="关闭成就墙">✕</button>
+            </div>
+            <div class="ach-grid" id="achGrid"></div>
+            <div class="ach-foot">继续挑战解锁全部成就 · 史诗 / 传说级成就达成时附赠金色烟花庆典</div>
+        </div>
+    </div>
+    <!-- 成就解锁 toast 堆叠区：不拦截点击（pointer-events 由 CSS 控制），aria-live 播报新解锁 -->
+    <div id="achToastStack" aria-live="polite"></div>
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → tetris.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <script src="audio.js?v=20261105-1"></script>
+    <script src="fx.js?v=20261104-5"></script>
+    <script src="fullscreen.js?v=20261104-3"></script>
+    <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
+    <script src="gamepad.js?v=20261105-1"></script>
+    <script src="ach-trigger.js?v=20261105-1"></script>
+    <script src="tetris.js?v=20261104-1"></script>
+</body>
+</html>
