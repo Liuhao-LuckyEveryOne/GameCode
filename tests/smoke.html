@@ -7,7 +7,7 @@
      里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
      行为级验证——零依赖（无 node / playwright），与项目工具链一致。
 
-     覆盖场景（14 项）：
+     覆盖场景（15 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
        S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
@@ -16,14 +16,17 @@
        S6 成就聚合        —— 仅凭存档 + DOM：三代存档解析/钳位/损坏 JSON 容错 + 面板 20/58 + 各行计数
        S7 嵌入协议握手    —— snake.html?embed=1 加载后父页收到 arcade:hello
                               与 {type:'arcade:audio',act:'hello'} 两条报到
-       S8 成就写入幂等    —— unlockAchievement 重复调用同 id → 存档不产生重复条目
+       S8 成就解锁链路    —— 种子快照 + 空格续玩 + 合成 rAF 帧泵：真实移动 tick 经 trackRunStat
+                              解锁 score100；二次跨阈值重扫不覆盖时间戳（全程零白盒函数调用）
        S9 俄罗斯方块核心  —— 旋转矩阵顺/逆/往返自洽 + collide 底越界/末行/左右越界四例
        S10 吃豆人核心     —— 格心像素换算 + 迷宫通行判定（全墙行/豆子通道/墙格）三例
        S11 1024 核心      —— dateSeed FNV 基值与确定性 + mulberry32 同种子序列 + isValidBoard 四例
        S12 弹球台核心     —— 透视投影远/近端点（含深度缩放系数）+ 挡板尖端三角解算
        S13 华容道核心     —— 纪录/评级键拼装 + 空存档 readBest + 摆盘像素定位 + 滑动范围四例
        S14 蜜蜂核心       —— isHit AABB 重叠/分离/贴边严格边界三例
-     注：S9~S14 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
+       S15 贪吃蛇核心     —— startGame 已知开局布局：isCollision 四壁越界与蛇身命中三例 +
+                              segRenderPos 插值恒等 / comboScore 无连击基线 / easeOutBack 过冲
+     注：S9~S15 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
          改 audio.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归。
 
      运行方式：先起服（python server.py），浏览器访问
@@ -199,6 +202,27 @@ function waitHandshake(mark) {
     });
 }
 
+/**
+ * 通用轮询等待：判定函数返回真值即 resolve（返回该真值供后续断言），超时 reject；
+ * 与 waitHandshake 同款 60ms 轮询节奏，默认 4s 上限（覆盖若干游戏逻辑 tick）
+ * @param {Function} fn 每次轮询执行的判定函数（返回真值 = 条件达成，真值透传给 await 方）
+ * @param {string} label 超时错误信息（用于 FAIL 明细定位）
+ * @param {number} [timeout=4000] 超时毫秒数
+ * @returns {Promise<*>} 判定函数首次返回的真值
+ */
+function waitUntil(fn, label, timeout = 4000) {
+    return new Promise((resolve, reject) => {
+        const t0 = performance.now();
+        (function poll() {
+            let hit = null;
+            try { hit = fn(); } catch (e) { hit = null; } // 判定函数抛错（如存档损坏）视为未达成
+            if (hit) return resolve(hit);
+            if (performance.now() - t0 > timeout) return reject(new Error(label + '（' + Math.round(timeout / 1000) + 's 等待超时）'));
+            setTimeout(poll, 60);
+        })();
+    });
+}
+
 // ==================================================================
 // 十四个场景（每个 async 函数内部自包含：加载 → 操作 → 断言，抛错即败）
 // ==================================================================
@@ -287,28 +311,103 @@ async function s6_achAggregate() {
     return '仅凭存档 + DOM：殿堂 20/58、七行齐全、计数 2/8·8/8·0/8·10/10 全对、问号遮罩 6/0/0';
 }
 
-/** S7+S8 共用 snake 嵌入页：S7 断言两条协议报到，S8 断言成就写入幂等 */
-async function s7s8_embedAndAch() {
-    lsSet('arcade_ach_snake', '[]'); // 成就空档（v1 数组形态）：顺带走 snake.js 的 v1→v2 迁移路径，S8 断言基线确定为 0
-    const frame = await loadPage('../snake.html?embed=1'); // 查询串已带 embed，loadPage 会以 & 续接绕缓存参数
-    // S7 协议握手：等待两条报到（复用 waitHandshake；main() 开头已清空 msgLog，基线 0 即全量）
-    await waitHandshake(0);
-    record('S7 嵌入协议握手（arcade:hello + audio hello）', true, '两条报到报文均按 v2.3.1 修正指纹到达父页');
-    // S8 成就写入幂等：直接调用 snake.js 顶层全局 unlockAchievement（存档为 v2 对象格式 { unlocked: { id: 解锁时间戳 }, best }）
-    const win = frame.contentWindow;
-    win.unlockAchievement('__smoke_a');
-    win.unlockAchievement('__smoke_a'); // 重复调用应幂等短路（不覆盖时间戳、不产生第二条目）
-    win.unlockAchievement('__smoke_b');
-    let store = null;
-    try { store = JSON.parse(localStorage.getItem('arcade_ach_snake') || 'null'); } catch (e) { /* 损坏按空 */ }
-    ok(store && typeof store === 'object' && !Array.isArray(store), '成就存档不是 v2 对象格式（{ unlocked, best }）');
-    ok(store.unlocked && typeof store.unlocked['__smoke_a'] === 'number', '__smoke_a 未写入解锁时间戳');
-    ok(typeof store.unlocked['__smoke_b'] === 'number', '__smoke_b 未写入');
-    ok(Object.keys(store.unlocked).length === 2, '解锁映射键数不为 2（出现重复或冗余条目，幂等失效）');
-    record('S8 成就写入幂等', true, '重复解锁不产生重复条目，v2 存档恰含 2 枚测试章（均带解锁时间戳）');
+/**
+ * S8 专用引导装载器：在 about:blank iframe（继承父源，localStorage 与本页共库）里以
+ * document.write 写入 snake.html 原文完成加载，并在写入前预装 requestAnimationFrame 手动泵。
+ * 为什么需要泵：无头 --dump-dom 模式合成器完全不出帧（探针实测 50s 真实运行仅出 2~3 帧），
+ * 而 snake.js 每帧逻辑时间钳位 50ms，被动等待永远凑不齐 200ms 移动 tick——只能主动泵帧。
+ * 泵以 16.6ms 步进的合成时间戳确定性驱动真实游戏循环（renderLoop 每帧前置排程注册进队列，
+ * 下一次泵接续执行）。黑盒性质：仅替换「浏览器帧调度」这一处环境控制（与种子快照/合成
+ * 键盘同族），页面零改动、零内部函数触碰。
+ * @param {string} snapJson 进度快照 JSON（写入 arcade_save_snake，供页面恢复续玩流程消费）
+ * @param {boolean} resetAch true 时重置成就档为 v1 空数组（首段用，顺带走 v1→v2 迁移路径）；
+ *                           false 延续现有成就档（二次段用）
+ * @returns {Promise<HTMLIFrameElement>} 就绪的 iframe，挂有 __pump(n)（手动推进 n 个合成帧）
+ */
+async function bootSnake(snapJson, resetAch) {
+    if (resetAch) lsSet('arcade_ach_snake', '[]'); // v1 空档：页面 loadAchStore 识别并迁移到 v2
+    lsSet('arcade_save_snake', snapJson);
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'width:480px;height:340px;border:1px solid #33335c;background:#000';
+    stage.appendChild(frame);
+    await new Promise(resolve => { frame.addEventListener('load', resolve); frame.src = 'about:blank'; });
+    const w = frame.contentWindow, d = frame.contentDocument;
+    const q = [];
+    let t = 2000; // 合成帧时钟：起点 2000 避开 iframe 真实时钟原点附近，防首帧 dt 计算异常
+    // stub 必须先于页面脚本安装（document.write 之前）：页面执行期发出的全部 rAF 注册落队等待泵
+    w.requestAnimationFrame = cb => { q.push(cb); return q.length; };
+    w.cancelAnimationFrame = () => {};
+    // 手动泵：先 splice 清队再逐个调用——renderLoop 帧内前置排程的下一帧注册落回 q，
+    // 由下一次泵接续；合成时间戳递增驱动 moveAcc 累加（游戏侧 dt 单帧钳 50ms）
+    frame.__pump = n => { while (n-- > 0) { t += 16.6; for (const cb of q.splice(0)) cb(t); } };
+    const html = await (await fetch('../snake.html', { cache: 'no-store' })).text();
+    d.open(); d.write('<!DOCTYPE html><base href="../">' + html); d.close(); // base 指根目录：脚本/样式相对路径可解析
+    return frame;
 }
 
-// ---------- S9~S14 六游戏核心逻辑：纯函数级断言 + 公共库握手探针 ----------
+/** S7+S8 共用入口：S7 断言两条协议报到；S8 以纯黑盒方式回归成就真实解锁链路
+ *  （同 S6 原则：不调用任何页面内部函数——白盒直调 unlockAchievement 依赖顶层声明恰好
+ *  暴露为 window 全局，页面一改名/一封装就误红）。S8 路径：bootSnake 引导装载（种子一局
+ *  进度快照 score=105，已过 score100 阈值、未过下一档 score250，蛇头朝右前方空旷、食物
+ *  远离行进线）→ 空格续玩 → __pump 推帧 → 首个移动 tick 经「checkRunAchievements →
+ *  trackRunStat → unlockAchievement → saveAchStore」生产链路真实解锁 → 两段式断言：
+ *  第一段验真实解锁与 v2 落盘；第二段换 score=115 快照重引导续玩（成就档延续），跨阈值
+ *  重扫使 unlockAchievement('score100') 被再次调用，断言幂等守卫短路（时间戳不被覆盖、
+ *  映射不生冗余条目） */
+async function s7s8_embedAndAch() {
+    // 进度快照种子（食物在别行远处：窗口内必然不进食，保证断言确定性）；成就档种子由 bootSnake 接管
+    const seedSnap = (score) => JSON.stringify({
+        v: 2, diff: 0, cols: 20, rows: 20,
+        snake: [{ x: 2, y: 10 }, { x: 1, y: 10 }, { x: 0, y: 10 }], // snake[0] 为蛇头，向右排开
+        dir: 'right', dirQueue: [],
+        food: { x: 17, y: 4 }, score, eaten: 0, maxCombo: 0, gold: 0
+    });
+    // S7 协议握手：embed 页加载后等待两条报到（main() 开头已清空 msgLog，基线 0 即全量）
+    await loadPage('../snake.html?embed=1'); // 查询串已带 embed，loadPage 会以 & 续接绕缓存参数
+    await waitHandshake(0);
+    record('S7 嵌入协议握手（arcade:hello + audio hello）', true, '两条报到报文均按 v2.3.1 修正指纹到达父页');
+    // S8 第一段（真实解锁）：引导装载 → 恢复提示可见 → 空格续玩 → 泵帧至移动 tick 落盘。
+    // 该落盘由首个移动 tick 的 trackRunStat 写入，同 tick 连带解锁 score100——两次 saveAchStore
+    // 之间有中间态（best 已写、章未写），判定同时要求两者即天然只认最终态。
+    // 60s 显式超时仅作安全垫：泵帧后解锁应即时达成
+    const frameA = await bootSnake(seedSnap(105), true);
+    await waitUntil(() => frameA.contentDocument.getElementById('pauseRestored').style.display === 'block',
+        '快照未被接受（「已恢复上次进度」提示未显示，种子快照可能未过合法性校验）');
+    fire(frameA, 'keydown', KeyboardEvent, { code: 'Space' }); // 续玩（snake 按键以 code 识别空格）
+    frameA.__pump(60); // 60×16.6ms ≈ 1s 逻辑时间 → ≥4 个 200ms 移动 tick，首个 tick 即触发解锁链路
+    const store1 = await waitUntil(() => {
+        try {
+            const s = JSON.parse(localStorage.getItem('arcade_ach_snake') || 'null');
+            return s && s.best && s.best.score === 105 && typeof s.unlocked.score100 === 'number' ? s : null;
+        } catch (e) { return null; }
+    }, '续玩后未在成就存档观察到 score100 真实解锁（移动 tick 成就链路未生效）', 60000);
+    ok(store1 && !Array.isArray(store1), '成就存档不是 v2 对象格式（{ unlocked, best }）');
+    ok(Object.keys(store1.unlocked).length === 1, '真实解锁产生冗余条目（解锁映射应恰含 score100 一键）');
+    fire(frameA, 'keydown', KeyboardEvent, { code: 'Space' }); // 暂停收尾：冻结旧页局面
+    // S8 第二段（幂等守卫）：移除旧帧（其 pagehide 会回写进度快照，随即被 bootSnake 重播种覆盖）
+    // 后换 score=115 快照重引导续玩——首个移动 tick 使 best.score 105→115 增长并重扫定义表，
+    // unlockAchievement('score100') 被生产链路再次调用，守卫必须短路。两段相差秒级，Date.now()
+    // 毫秒精度下被覆盖的时间戳必不同，故「时间戳相等」即守卫生效的确定性证明
+    const t1 = store1.unlocked.score100;
+    frameA.remove();
+    const frameB = await bootSnake(seedSnap(115), false);
+    await waitUntil(() => frameB.contentDocument.getElementById('pauseRestored').style.display === 'block',
+        '第二段快照未被接受（成就档延续场景下的恢复流程异常）');
+    fire(frameB, 'keydown', KeyboardEvent, { code: 'Space' }); // 续玩
+    frameB.__pump(60);
+    const store2 = await waitUntil(() => {
+        try {
+            const s = JSON.parse(localStorage.getItem('arcade_ach_snake') || 'null');
+            return s && s.best && s.best.score === 115 ? s : null;
+        } catch (e) { return null; }
+    }, '第二段续玩未观察到 best.score 增长至 115（跨阈值重扫未发生）', 60000);
+    ok(Object.keys(store2.unlocked).length === 1, '重复解锁产生冗余条目（幂等失效）');
+    ok(store2.unlocked.score100 === t1, 'unlockAchievement 重复调用覆盖了解锁时间戳（幂等守卫失效）');
+    fire(frameB, 'keydown', KeyboardEvent, { code: 'Space' }); // 暂停收尾
+    record('S8 成就解锁链路（黑盒）', true, `种子快照 + 合成 rAF 帧泵驱动真实移动 tick，经 trackRunStat 解锁 score100（ts=${t1}）；二次跨阈值重扫未覆盖时间戳，解锁映射恰 1 键`);
+}
+
+// ---------- S9~S15 七游戏核心逻辑：纯函数级断言 + 公共库握手探针 ----------
 // 设计取舍：游戏核心状态多为闭包内变量（棋盘 / 幽灵相位 / 网格），外部不可注入，
 // 故选取挂在 window 上的纯函数断言其数学与几何正确性；顶层 const 常量（SRS 踢墙表、
 // 幽灵相位表、难度表等）不挂 window 无法直接断言，均以依赖它们的函数间接覆盖。
@@ -421,6 +520,40 @@ async function s14_beeCore() {
 }
 
 /**
+ * S15 贪吃蛇核心：碰撞边界/蛇身命中 + 逐节插值恒等 + 连击计分基线 + 缓动过冲特征
+ * 与 S9~S14 的唯一差异：主动调用 startGame() 摆出确定性开局布局（蛇 3 节固定于
+ * (5,5)(4,5)(3,5) 朝右、连击 0、prev=cur），使依赖游戏状态的纯函数可断言——
+ * startGame 同步返回后立即断言，无 rAF 帧插入，布局与断言严格同帧。
+ */
+async function s15_snakeCore() {
+    const mark = msgLog.length;
+    const frame = await loadPage('../snake.html?embed=1');
+    await waitHandshake(mark);
+    const win = frame.contentWindow;
+    ok(typeof win.startGame === 'function' && typeof win.togglePause === 'function', '主初始化 startGame/togglePause 缺失');
+    win.startGame(); // 已知开局：蛇 3 节 (5,5)(4,5)(3,5) 朝右，comboCount=0
+    // 碰撞边界四例：四壁越界一律 true（远端坐标取 999，不依赖 iframe 布局缩放后的棋盘格数）
+    ok(win.isCollision({ x: -1, y: 5 }) === true, 'x=-1 左越界未判碰撞');
+    ok(win.isCollision({ x: 5, y: -1 }) === true, 'y=-1 顶越界未判碰撞');
+    ok(win.isCollision({ x: 999, y: 5 }) === true, 'x=999 越出右壁未判碰撞');
+    ok(win.isCollision({ x: 5, y: 999 }) === true, 'y=999 越出底壁未判碰撞');
+    // 蛇身命中三例：开局蛇头 (5,5) 与尾节 (3,5) 自撞 true，空闲格 (9,9) 为 false
+    ok(win.isCollision({ x: 5, y: 5 }) === true, '蛇头自身格未判碰撞');
+    ok(win.isCollision({ x: 3, y: 5 }) === true, '尾节格未判碰撞');
+    ok(win.isCollision({ x: 9, y: 9 }) === false, '空闲格误判碰撞');
+    // 逐节插值：开局 prev=cur，任意插值进度恒等于当前格（首帧不做滑动的基准）
+    const seg = win.segRenderPos(1, 0.5);
+    ok(seg && seg.x === 4 && seg.y === 5, '中节 t=0.5 插值偏离本格（prev=cur 基准失守）');
+    // 连击计分基线：连击 0 时原样返回不加成
+    ok(win.comboScore(10) === 10 && win.comboScore(50) === 50, '无连击时 comboScore 加成了基分');
+    // easeOutBack 缓动：两端归位 + 中段过冲（t=0.7 约 1.08 的回弹特征）；端点用容差避免浮点误差
+    ok(Math.abs(win.easeOutBack(0)) < 1e-9, 'easeOutBack(0) 不为 0（缩放弹入起点失准）');
+    ok(Math.abs(win.easeOutBack(1) - 1) < 1e-9, 'easeOutBack(1) 不为 1（终点未归位）');
+    ok(win.easeOutBack(0.7) > 1, 'easeOutBack 中段无过冲（回弹特征丢失）');
+    return '碰撞四壁 + 蛇身命中三例 + 插值恒等 + 连击基线 + 缓动过冲全对';
+}
+
+/**
  * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
  * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
  */
@@ -436,7 +569,7 @@ async function runScenarios(list) {
     }
 }
 
-// ---------- 主流程：快照 → 串行执行十四场景 → 恢复 ----------
+// ---------- 主流程：快照 → 串行执行十五场景 → 恢复 ----------
 async function main() {
     if (running) return;
     running = true;
@@ -457,7 +590,7 @@ async function main() {
         ['S5 400ms 窗口过期恢复投币', s5_windowExpires],
         ['S6 成就聚合（钳位/容错/总数）', s6_achAggregate],
     ];
-    // 六游戏核心逻辑场景：注册于 S7/S8 之后，先回归大厅协议再逐游戏过核心
+    // 七游戏核心逻辑场景：注册于 S7/S8 之后，先回归大厅协议再逐游戏过核心
     const coreScenarios = [
         ['S9 俄罗斯方块核心（旋转/碰撞边界）', s9_tetrisCore],
         ['S10 吃豆人核心（格心换算/通行判定）', s10_pacCore],
@@ -465,13 +598,14 @@ async function main() {
         ['S12 弹球台核心（透视投影/挡板尖端）', s12_pinballCore],
         ['S13 华容道核心（键拼装/摆盘/滑动）', s13_klotskiCore],
         ['S14 蜜蜂核心（AABB 命中边界）', s14_beeCore],
+        ['S15 贪吃蛇核心（碰撞/插值/连击/缓动）', s15_snakeCore],
     ];
     try {
         await runScenarios(scenarios);
         try {
             await s7s8_embedAndAch(); // S7/S8 在函数内部自行 record（两场景共用一次加载）
         } catch (err) {
-            record('S7/S8 嵌入协议 + 成就写入', false, err && err.message ? err.message : String(err));
+            record('S7/S8 嵌入协议 + 成就解锁链路', false, err && err.message ? err.message : String(err));
         }
         await runScenarios(coreScenarios);
     } finally {

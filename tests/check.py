@@ -9,7 +9,7 @@
   2. 缓存指纹     —— 本地 .js/.css/.html 引用必须携带 ?v= 版本参数（手动破缓存策略）
   3. 公共库加载序 —— 每页必须按 audio.js → fx.js → fullscreen.js → 业务 js 顺序加载三件套
   4. 危险模式扫描 —— 全站禁止 eval( / new Function( / document.write(
-  5. 存储兜底     —— 直接调用 localStorage 读写的文件必须含 try-catch 兜底（文件级粗检）
+  5. 存储兜底     —— 直接调用 localStorage 读写的每一处必须位于 try 块内（行级检测：注释/字符串去噪 + 大括号深度追踪 try 状态机）
   6. 游戏入口完整 —— 大厅七张卡片入口与各游戏 html/js 文件一一对应齐全
   7. 兼容性前缀   —— CSS 前缀敏感属性必须 -webkit- 成对（Safari 兼容），AudioContext 必须带
                      webkitAudioContext 回退（文件级粗检；Firefox/Safari 手测清单见技术文档 §9.4）
@@ -33,8 +33,11 @@ DANGEROUS_PATTERNS = [
     ("document.write(", "文档流写入 document.write"),
 ]
 
-# localStorage 直接读写 API（出现即要求该文件含 } catch 兜底）
+# localStorage 直接读写 API（行级存储兜底检测的目标调用）
 LS_API_RE = re.compile(r"localStorage\.(?:getItem|setItem|removeItem|clear)\s*\(")
+
+# try 块开括号（try 与 { 间允许任意空白；在去噪文本上匹配，注释里「提及」的 try 不误判）
+TRY_OPEN_RE = re.compile(r"\btry\s*\{")
 
 # HTML 属性抽取：src="..." 或 href="..."（含单双引号两种写法）
 ATTR_RE = re.compile(r"""\b(?:src|href)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
@@ -208,26 +211,126 @@ def check_dangerous_problems():
     return problems
 
 
-def check_storage_problems():
-    """检查项 5：直接调用 localStorage 读写的文件必须含 } catch 兜底（文件级粗检）。
+def strip_js_noise(line, state):
+    """剥离一行 JS 中的注释与字符串/模板串内容，仅保留代码骨架。
 
-    说明：本站约定为「直接调用 + try-catch 全量包裹」（技术文档 §5），
-    故以文件为单位校验：出现 localStorage API 调用 → 同文件须存在 catch 块。
+    行级 try 追踪的前置去噪：注释里「提及」的 localStorage / try、字符串字面量里的
+    花括号等噪声不得干扰大括号深度与 try 状态机。块注释（/* */）与模板串（`）允许
+    跨行，扫描状态经 state 字典跨行传递。
+
+    参数:
+        line: 原始行文本
+        state: 跨行扫描状态字典 {"block": 是否处于块注释内, "tmpl": 是否处于模板串内}
+    返回:
+        (清理后的代码文本, state)——state 原地更新并原样返回
+    """
+    out = []
+    i, n = 0, len(line)
+    while i < n:
+        if state["block"]:
+            # 块注释内：找到 */ 结束；找不到则整行吞掉，状态延续下一行
+            j = line.find("*/", i)
+            if j < 0:
+                i = n
+            else:
+                state["block"] = False
+                i = j + 2
+            continue
+        if state["tmpl"]:
+            # 模板串内：找到未转义的 ` 结束（\` 转义跳过）；找不到则延续下一行
+            j = i
+            while j < n:
+                if line[j] == "\\":
+                    j += 2
+                elif line[j] == "`":
+                    break
+                else:
+                    j += 1
+            if j < n:
+                state["tmpl"] = False
+            i = j + 1
+            continue
+        ch = line[i]
+        if ch == "/" and line[i + 1:i + 2] == "/":
+            break                                   # 行注释：余下整段忽略
+        if ch == "/" and line[i + 1:i + 2] == "*":
+            state["block"] = True                   # 块注释开始
+            i += 2
+            continue
+        if ch in "'\"":
+            # 单双引号字符串（JS 语法不允许跨行）：行内找闭合引号，\ 转义跳过；
+            # 未闭合按行尾宽松收束，避免状态错乱
+            j = i + 1
+            while j < n and line[j] != ch:
+                j += 2 if line[j] == "\\" else 1
+            i = j + 1
+            continue
+        if ch == "`":
+            state["tmpl"] = True                    # 模板串开始（允许跨行）
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), state
+
+
+def storage_line_problems(name, text):
+    """行级存储兜底检测：每一处 localStorage 直接读写都必须位于 try 块内。
+
+    以「去噪 + 大括号深度 + try 体深度栈」逐字符扫描：try 的 { 使其体深度入栈，
+    配对的 } 出栈；某调用点只要存在任一栈内体深度 ≤ 当前深度即视为处于该 try
+    体内（含体内嵌套 if/for 等更深块）。同文件其它位置有无 catch 不再影响判定——
+    修复文件级粗检「文件里有任意 catch 即整文件放行」放过单处裸调用的漏洞。
+
+    参数:
+        name: 文件名（报告用，形如 bee.js 或 index.html（内联脚本））
+        text: JS 全文，或 HTML 内联脚本块拼接文本
+    返回:
+        问题明细列表（空列表 = 通过），每条带行号
+    """
+    problems = []
+    depth = 0                 # 跨行累计的大括号深度
+    try_depths = []           # 未闭合 try 块的体深度栈（同深度可重复，list 多重集语义）
+    state = {"block": False, "tmpl": False}
+    for lineno, raw in enumerate(text.split("\n"), 1):
+        code, state = strip_js_noise(raw, state)
+        # 本行内属于 try 开括号那个 { 的字符下标集合 + 本行内 API 调用点下标集合
+        try_braces = {m.end() - 1 for m in TRY_OPEN_RE.finditer(code)}
+        api_pos = {m.start() for m in LS_API_RE.finditer(code)}
+        if not try_braces and not api_pos and "{" not in code and "}" not in code:
+            continue                            # 无括号纯文本行：快速跳过
+        local = depth
+        for idx, ch in enumerate(code):
+            if ch == "{":
+                local += 1
+                if idx in try_braces:
+                    try_depths.append(local)    # try 体深度 = { 之后的新深度
+            elif ch == "}":
+                if local in try_depths:
+                    try_depths.remove(local)    # 该深度 try 块在此闭合出栈
+                local -= 1
+            elif idx in api_pos and not any(t <= local for t in try_depths):
+                problems.append(f"{name}:L{lineno} 直接调用 localStorage 但不在 try 块内（缺行级兜底）")
+        depth = local
+    return problems
+
+
+def check_storage_problems():
+    """检查项 5：直接调用 localStorage 读写的每一处必须逐处位于 try 块内（行级检测）。
+
+    本站约定为「直接调用 + try-catch 逐处包裹」（技术文档 §5）。原文件级粗检
+    （同文件存在任意 catch 即放行）曾放过单处裸调用（bee.js 顶层读取，2026-11-05
+    审查修复），故升级为行级：仅当调用点本身处于未闭合 try 块体内才视为有兜底。
 
     返回:
         失败明细列表（空列表 = 通过）
     """
     problems = []
-
-    def audit(name, text):
-        if LS_API_RE.search(text) and "} catch" not in text:
-            problems.append(f"{name} 直接读写 localStorage 但未见 try-catch 兜底")
-
     for js in js_files():
-        audit(js.name, js.read_text(encoding="utf-8"))
+        problems.extend(storage_line_problems(js.name, js.read_text(encoding="utf-8")))
     for page in html_files():
         chunk = script_chunks(page.read_text(encoding="utf-8"))
-        audit(f"{page.name}（内联脚本）", chunk)
+        problems.extend(storage_line_problems(f"{page.name}（内联脚本）", chunk))
     return problems
 
 

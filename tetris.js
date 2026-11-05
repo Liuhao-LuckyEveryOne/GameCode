@@ -1790,7 +1790,9 @@ function restoreSnapshot() {
         draw();
         return true;
     } catch (e) {
-        localStorage.removeItem(SAVE_KEY); // 任何异常：清除可疑存档，按新开局处理
+        // 任何异常：清除可疑存档，按新开局处理。catch 内再触存储须自包裹——
+        // 隐私模式/禁 Cookie 下 removeItem 同样会抛错，不得让异常处理路径二次中断
+        try { localStorage.removeItem(SAVE_KEY); } catch (e2) { /* 存储不可用时无视：本就按新开局处理 */ }
         return false;
     }
 }
