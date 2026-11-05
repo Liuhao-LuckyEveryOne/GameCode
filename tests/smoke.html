@@ -25,7 +25,8 @@
        S13 华容道核心     —— 纪录/评级键拼装 + 空存档 readBest + 摆盘像素定位 + 滑动范围四例
        S14 蜜蜂核心       —— isHit AABB 重叠/分离/贴边严格边界三例
        S15 贪吃蛇核心     —— startGame 已知开局布局：isCollision 四壁越界与蛇身命中三例 +
-                              segRenderPos 插值恒等 / comboScore 无连击基线 / easeOutBack 过冲
+                              segRenderPos 插值恒等 / comboScore 无连击基线 / easeOutBack 过冲 +
+                              帧泵真实移动 tick（rAF 后置接管：ArrowUp 转向生效 + 180° 掉头防护）
      注：S9~S15 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
          改 audio.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归。
 
@@ -521,9 +522,17 @@ async function s14_beeCore() {
 
 /**
  * S15 贪吃蛇核心：碰撞边界/蛇身命中 + 逐节插值恒等 + 连击计分基线 + 缓动过冲特征
+ * + 帧泵动态行为（ArrowUp 转向经 dirQueue 真实生效 / 180° 掉头防护拦截）
  * 与 S9~S14 的唯一差异：主动调用 startGame() 摆出确定性开局布局（蛇 3 节固定于
  * (5,5)(4,5)(3,5) 朝右、连击 0、prev=cur），使依赖游戏状态的纯函数可断言——
  * startGame 同步返回后立即断言，无 rAF 帧插入，布局与断言严格同帧。
+ * 用例排序约束：泵帧会推进 prev→cur 使开局 prev=cur 基准失效，动态用例必须
+ * 追加在全部静态断言之后（S8 泵技术的后置接管变体，详见函数内注释）。
+ * 环境注意：startGame 前先向 iframe 派发合成 pointerdown 预热手势，令 SFX.warm()
+ * 解锁 AudioContext（audio.js 在 window 上监听 pointerdown/keydown 且无 isTrusted
+ * 检查），尾部 SFX.start()/bgm.start('snake') 遂走常规出声路径而非静默降级；
+ * 所依赖的游戏状态（initGame 蛇布局等）本就先于 SFX 调用就绪，即便未来 audio.js
+ * 变更降级策略，异常仍会被 runner FAIL 并携带文案，不误伤贪吃蛇逻辑判读。
  */
 async function s15_snakeCore() {
     const mark = msgLog.length;
@@ -531,12 +540,23 @@ async function s15_snakeCore() {
     await waitHandshake(mark);
     const win = frame.contentWindow;
     ok(typeof win.startGame === 'function' && typeof win.togglePause === 'function', '主初始化 startGame/togglePause 缺失');
-    win.startGame(); // 已知开局：蛇 3 节 (5,5)(4,5)(3,5) 朝右，comboCount=0
-    // 碰撞边界四例：四壁越界一律 true（远端坐标取 999，不依赖 iframe 布局缩放后的棋盘格数）
-    ok(win.isCollision({ x: -1, y: 5 }) === true, 'x=-1 左越界未判碰撞');
-    ok(win.isCollision({ x: 5, y: -1 }) === true, 'y=-1 顶越界未判碰撞');
-    ok(win.isCollision({ x: 999, y: 5 }) === true, 'x=999 越出右壁未判碰撞');
-    ok(win.isCollision({ x: 5, y: 999 }) === true, 'y=999 越出底壁未判碰撞');
+    // 手势预热：startGame 前向 iframe 的 window 派发合成 pointerdown，命中 SFX.warm()
+    // （window 监听、无 isTrusted 检查；snake.js 触控监听全在 canvas/pauseScreen 元素上，
+    // 不会误命中）——解锁 AudioContext，使 startGame 尾部的 SFX 调用走常规路径而非静默降级
+    win.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    // 难度钉扎：S8 的种子快照携带 diff:0（无敌档），恢复链路经 selectDifficulty 把
+    // snakeDifficulty=0 持久化到 localStorage（冒烟页各场景共享同一份存储），S15 载入时
+    // 按存档恢复为无敌档 → gameSpeed=200，下方「3 帧 = 1 tick」的 150ms 节奏假设失配
+    // （相位二只攒 150ms 蛇头永不迈步）。此处以 DOM .click() 走用户真实路径点选中等档，
+    // 开局节奏与场景执行顺序彻底解耦
+    const diffBtns = frame.contentDocument.querySelectorAll('.difficulty-btn');
+    ok(diffBtns.length === 4 && diffBtns[2].dataset.speed === '150', '难度按钮组异常，无法钉扎中等档 150ms 节奏');
+    diffBtns[2].click();
+    win.startGame(); // 已知开局：蛇 3 节 (5,5)(4,5)(3,5) 朝右，gameSpeed=150，comboCount=0
+    // 碰撞边界四例：数据驱动，四壁越界一律 true（远端坐标取 999，不依赖 iframe 布局缩放后的棋盘格数）
+    for (const [x, y, dir] of [[-1, 5, '左'], [5, -1, '顶'], [999, 5, '右'], [5, 999, '底']]) {
+        ok(win.isCollision({ x, y }) === true, dir + '越界未判碰撞');
+    }
     // 蛇身命中三例：开局蛇头 (5,5) 与尾节 (3,5) 自撞 true，空闲格 (9,9) 为 false
     ok(win.isCollision({ x: 5, y: 5 }) === true, '蛇头自身格未判碰撞');
     ok(win.isCollision({ x: 3, y: 5 }) === true, '尾节格未判碰撞');
@@ -550,7 +570,68 @@ async function s15_snakeCore() {
     ok(Math.abs(win.easeOutBack(0)) < 1e-9, 'easeOutBack(0) 不为 0（缩放弹入起点失准）');
     ok(Math.abs(win.easeOutBack(1) - 1) < 1e-9, 'easeOutBack(1) 不为 1（终点未归位）');
     ok(win.easeOutBack(0.7) > 1, 'easeOutBack 中段无过冲（回弹特征丢失）');
-    return '碰撞四壁 + 蛇身命中三例 + 插值恒等 + 连击基线 + 缓动过冲全对';
+
+    // ---------- 动态行为：合成 rAF 帧泵驱动真实移动 tick（S8 泵技术的后置接管变体） ----------
+    // S8 需在页面脚本执行前预装 stub（about:blank 引导装载），本页已按真实 src 加载完成，改为
+    // 后置接管：替换全局 requestAnimationFrame（snake.js 每帧直接调用全局 rAF、不缓存引用）。
+    // 帧步长 50ms 恰好触达 renderLoop 的 0.05s 封顶：每相位泵 3 帧攒 150ms（gameSpeed）→
+    // 恰好 1 个移动 tick；烧帧后 moveAcc ≤ 50，相位合计 ≤ 200 < 2×gameSpeed，跨相位恒不双 tick。
+    const q = [];
+    let queued = false; // renderLoop 后继是否已入队：true = 接管前挂起的原生帧已烧掉（让渡安全）
+    // 合成时钟原点锚定真实时钟（同域 performance.now）：真实帧的 now 恒 ≥ 锚点，配合
+    // 「先烧帧、后泵进」时序，杂散帧 dt 只可能 ∈ [0, +50ms 上钳]——此前让渡放在泵进之后
+    // （合成 ft 已领先真实时钟约 200ms），让渡期杂散真实帧（浏览器绕过 stub 直呼接管前挂起的
+    // 旧回调）dt 为负值直接倒扣 moveAcc，相位二永不攒满；无头合成器让渡期是否产帧决定成败，
+    // 呈间歇性失败
+    let ft = Math.round(frame.contentWindow.performance.now());
+    // 单槽折叠 + 身份过滤：页面并存多个 rAF 循环（snake 渲染循环 + FX.playtime 时长统计），
+    // 异己回调若照单全收会把 renderLoop 的后继从泵队列中挤出（游戏循环饿死）；故 stub 仅接纳
+    // renderLoop 自身的排程（其余 rAF 用户测试期静默停摆，不影响断言），并折叠为单槽：
+    // 游戏循环每帧恰排程一枚后继，任何渠道涌入的多余排程都被钳回 1
+    win.requestAnimationFrame = cb => { if (cb === win.renderLoop) { q.length = 0; q.push(cb); queued = true; } return 1; };
+    win.cancelAnimationFrame = () => {}; // 游戏循环从不取消帧，stub 仅防潜在调用穿透到真实 rAF
+    // 烧帧让渡（必须先于任何泵进）：接管前挂起的「原生启动帧」（脚本加载时排程，stub 拦不住
+    // 它的执行）在让渡期被合成器直呼——此刻合成 ft 尚未泵进、又与真实时钟同源锚定，其 dt 恒
+    // 被钳为 +50ms → moveAcc ≤ 50 < 150 不会误触 tick；其后继排程经 stub 入队，原生挂起队列
+    // 自此清空，此后所有让渡彻底免疫杂散帧
+    await new Promise(r => frame.contentWindow.setTimeout(r, 300));
+    const burned = queued; // 烧帧结果先行定格：手动点火同样会置 queued，不能事后用它判断
+    if (!burned) {
+        // 无头合成器让渡期未产帧（原生挂起回调仍在潜伏）：手动以合成时钟点火（renderLoop 为
+        // 顶层 function 挂 window），dt 同样被钳为 +50ms；此路径下本场景余下零 await——
+        // 杂散帧无触发窗口，行为确定性不变
+        ft = Math.max(ft, Math.round(frame.contentWindow.performance.now()));
+        win.renderLoop(ft);
+    }
+    // 时钟重锚定：杂散/点火帧已把 lastRender 刷成真实时刻，max 确保 ft ≥ lastRender——
+    // 此后每帧 dt 恒被钳为 +50ms，「3 帧 = 1 tick」在真实浏览器与无头环境均严格成立
+    ft = Math.max(ft, Math.round(frame.contentWindow.performance.now()));
+    frame.__pump = n => { while (n-- > 0) { ft += 50; for (const cb of q.splice(0)) cb(ft); } };
+
+    // 用例一：ArrowUp 转向经 dirQueue 暂存、下一 tick 真实生效——蛇头 (5,5)→(5,4) 向上一格
+    fire(frame, 'keydown', KeyboardEvent, { key: 'ArrowUp' });
+    frame.__pump(3);
+    const head = win.segRenderPos(0, 1); // t=1 恒等当前逻辑格：借插值函数读闭包蛇头（黑盒状态通道）
+    ok(head && head.x === 5 && head.y === 4, '转向后蛇头未按 ArrowUp 从 (5,5) 前进到 (5,4)');
+
+    // 相位间让渡 60ms 真实时钟（仅烧帧成功路径）：吃食触发的 FX.hitstop 以 performance.now()
+    // 计时、不随合成帧推进，同步泵帧期间永不过期（蛇头必经格被随机食物命中即触发吃食卡帧），
+    // 定时器让渡令其到期；烧帧已清空原生挂起队列，让渡期无杂散帧可污染 moveAcc。
+    // 烧帧失败路径跳过让渡（原生挂起回调潜伏中，绝不让渡）：代价是食物恰落蛇头必经格
+    // （约 1/397）时 hitstop 冻结相位二 tick——双重小概率叠加，可接受
+    if (burned) await new Promise(r => frame.contentWindow.setTimeout(r, 60));
+    // 重锚定（防御性）：烧帧成功路径让渡期无任何帧执行，max 恒取 ft；保留以对抗未来时钟模型
+    // 的意外漂移，确保下一相位每帧 dt 仍被钳为恒定 +50ms
+    ft = Math.max(ft, Math.round(frame.contentWindow.performance.now()));
+
+    // 用例二：180° 掉头防护——down 是当前方向 up 的反向，queueDirection 应拒绝入队，
+    // 下一 tick 蛇头继续向上 (5,4)→(5,3)；若防护失效蛇头将掉头回退（y 回增到 5）
+    fire(frame, 'keydown', KeyboardEvent, { key: 'ArrowDown' });
+    frame.__pump(3);
+    const head2 = win.segRenderPos(0, 1);
+    ok(head2 && head2.x === 5 && head2.y === 3, '180° 掉头未被防护拦截（蛇头未从 (5,4) 继续向上到 (5,3)）');
+
+    return '碰撞四壁 + 蛇身命中三例 + 插值恒等 + 连击基线 + 缓动过冲 + 帧泵转向生效/掉头防护全对';
 }
 
 /**
