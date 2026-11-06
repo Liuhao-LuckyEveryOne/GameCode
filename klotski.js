@@ -1846,8 +1846,11 @@ function stepDemo(dt) {
  * 撒下通关金纸屑：从棋盘顶部一排随机位置生成 CONFETTI_COUNT 片彩色纸屑
  */
 function spawnConfetti() {
+    // 演出强度门控（confetti 为自绘数组，绕过 FX.Pool，须手动接档）：
+    // 精简档不发纸屑（与全局"关闭全部演出"语义对齐）；标准档数量减半
+    if (FX.getFxLevel() === 0) return;
     // prefers-reduced-motion：纸屑为纯装饰演出，数量减半降低动态密度
-    const count = FX.prefersReduced ? Math.ceil(CONFETTI_COUNT / 2) : CONFETTI_COUNT;
+    const count = (FX.prefersReduced || FX.getFxLevel() === 1) ? Math.ceil(CONFETTI_COUNT / 2) : CONFETTI_COUNT;
     for (let i = 0; i < count; i++) {
         confetti.push({
             x: PAD + Math.random() * BOARD_W,

@@ -10,9 +10,11 @@
  *   6) 数字滚动补间（tweenNumber）：HUD 分数从当前显示值平滑滚到目标值，替代生硬跳变
  *   7) 键帽实时高亮（KeyLight.init）：带 data-code 属性的键帽按下时点亮，window 级捕获委托零侵入
  *   8) 游玩时长统计（playtime.init）：累计页面可见时长，嵌入模式 postMessage 上报父页、独立运行直写 localStorage
- *   9) 演出强度档位（getFxLevel/setFxLevel）：精简/标准/完整三档全局调节（默认完整），
- *      门控粒子池产出、卡帧与震动幅度、烟花规模；持久化键 arcadeFxLevel，嵌入模式经
- *      arcade:fxlevel 协议由大厅统一持有并向游戏 iframe 实时广播（音控协议同款）
+ *   9) 演出强度档位（getFxLevel/setFxLevel/getFxMode，引擎单帧入口 _autoFrame 供冒烟帧泵直驱）：精简/标准/完整/自动四模式全局调节（默认完整，
+ *      自动档由内置引擎按滚动帧率 2 秒窗口自适应在精简↔完整间降/升档），门控粒子池产出、
+ *      卡帧与震动幅度、烟花规模；切档带 200ms 粒子宽限期，余粒自然衰减消除密度跳变；
+ *      持久化键 arcadeFxLevel（存模式值 0-3），嵌入模式经 arcade:fxlevel 协议由大厅统一
+ *      持有并向游戏 iframe 实时广播（音控协议同款）
  * 另含 prefersReduced 动效降级开关（respect 系统级"减弱动态效果"设置）
  * 全局暴露 FX 对象；所有页面引入 <script src="fx.js?v=..."> 后即可使用，无任何外部依赖
  */
@@ -65,50 +67,127 @@ const FX = (() => {
         return { w: canvas.width / dpr, h: canvas.height / dpr, dpr };
     }
 
-    /* ==================== 演出强度档位（全局三档调节） ==================== */
-    /** 演出强度持久化键（数值 0/1/2：精简/标准/完整） */
+    /* ==================== 演出强度档位（全局调节：精简/标准/完整/自动） ==================== */
+    /** 演出强度持久化键（数值 0/1/2/3：精简/标准/完整/自动，3 为按滚动帧率自适应降级） */
     const FX_LEVEL_KEY = 'arcadeFxLevel';
-    /** 演出强度档位名（0=精简 / 1=标准 / 2=完整默认），面板展示与文档口径共用 */
-    const FX_LEVEL_NAMES = ['精简', '标准', '完整'];
+    /** 演出强度档位名（0=精简 / 1=标准 / 2=完整默认 / 3=自动），面板展示与文档口径共用 */
+    const FX_LEVEL_NAMES = ['精简', '标准', '完整', '自动'];
     /** 跨文档 postMessage 目标 origin：file:// 直开时各帧为独立 opaque origin，回退 '*' 维持跨帧通信；http(s) 同源部署收紧为 '/'（与 audio.js/fullscreen.js 同款公式） */
     const POST_MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
-    /** 当前演出强度档位：启动时读持久化，非法值回退完整档 */
-    let fxLevel = (() => {
+    /** 切档宽限截止时间戳（performance.now 毫秒）：每次切档推至 200ms 后，期间粒子池跳过档位
+     *  门控全量发放，与新档存量粒子沿自身 life 自然衰减并轨，消除粒子密集场景切精简档时
+     *  "密度断崖"的可感知跳变 */
+    let graceUntil = 0;
+    /** 当前演出模式（持久化口径 0-3，权威归父页；子页仅镜像广播），3=自动档（引擎按帧率裁决实际档位） */
+    let fxMode = (() => {
         try {
             const v = parseInt(localStorage.getItem(FX_LEVEL_KEY), 10);
-            if (v === 0 || v === 1 || v === 2) return v;
+            if (v === 0 || v === 1 || v === 2 || v === 3) return v;
         } catch (e) { /* 存储不可用：回退默认完整档 */ }
         return 2;
     })();
+    /** 实际生效档位（0-2，门控四件套与粒子池均读此值）：固定档下与 fxMode 相同；自动档下由引擎动态裁决 */
+    let fxLevel = (fxMode === 3) ? 2 : fxMode; // 自动档开局按完整档试跑，引擎量出滚动帧率后再降级
 
     /**
-     * 查询当前演出强度档位
+     * 查询当前演出强度档位（实际生效值；自动档下为引擎裁决后的实际档）
      * @returns {number} 0=精简 / 1=标准 / 2=完整
      */
     function getFxLevel() { return fxLevel; }
 
     /**
-     * 设置演出强度档位（唯一入口，按钮/协议共用）：
-     * 精简档跳过卡帧/震动/烟花、粒子池只发哑粒子；标准档各演出减量（卡帧减半、震动/烟花约减半）。
+     * 查询当前演出模式（面板高亮与持久化口径）
+     * @returns {number} 0=精简 / 1=标准 / 2=完整 / 3=自动
+     */
+    function getFxMode() { return fxMode; }
+
+    /**
+     * 设置演出强度档位/模式（唯一入口，按钮/协议共用）：
+     * 精简档跳过卡帧/震动/烟花、粒子池只发哑粒子；标准档各演出减量（卡帧减半、震动/烟花约减半）；
+     * 自动档（idx=3）由内置引擎按滚动帧率自适应降/升档（详见 startAutoEngine）。
+     * 每次切档开启 200ms 粒子宽限期，存量粒子自然衰减，密度平滑无跳变。
      * 持久化与广播按角色分流——独立运行（或父页）本地持久化并向 iframe 广播；
-     * 子页（嵌入模式）不持久化，仅转发请求给父页，由父页广播回执统一生效（大厅是唯一持久化方，音控协议同款）
-     * @param {number} idx 目标档位（越界/非法自动钳位为完整档）
+     * 子页（嵌入模式）不持久化，仅转发原始请求给父页，由父页广播回执统一生效（大厅是唯一持久化方，音控协议同款）
+     * @param {number} idx 目标档位或模式（0/1/2 固定档，3=自动；越界/非法自动钳位为完整档）
      * @param {boolean} [fromRemote] 是否来自父页广播（true 时静默应用不转发，子页不写存储）
      */
     function setFxLevel(idx, fromRemote) {
-        fxLevel = (idx === 0 || idx === 1) ? idx : 2;
-        // 子页角色：状态权威在大厅，不持久化、不本地广播；非广播来源时把请求转给父页处理
+        graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
+        // 子页角色：状态权威在大厅，不持久化、不本地广播
         if (window.parent !== window) {
             if (!fromRemote) {
-                try { window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx: fxLevel }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
+                // 用户在子页面板点击：转发原始请求（含自动档 3），由父页裁决后广播实际档位
+                try { window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
+                return;
             }
+            // 广播静默应用：新版报文带 mode 字段可表达自动档（fxMode=3 + 实际档位 idx）；
+            // 旧版仅 idx 无 mode 字段，按固定档应用，两版兼容
+            if (idx === 3) { fxMode = 3; fxLevel = 2; }
+            else { fxMode = fxLevel = (idx === 0 || idx === 1) ? idx : 2; }
             return;
         }
         // 父页/独立运行角色：本地持久化 + 向页面内全部游戏 iframe 广播最新档位
-        try { localStorage.setItem(FX_LEVEL_KEY, String(fxLevel)); } catch (e) { /* 忽略持久化失败 */ }
+        if (idx === 3) {
+            fxMode = 3;
+            fxLevel = 2; // 自动档开局按完整档试跑，引擎量出滚动帧率后再降级
+            startAutoEngine();
+        } else {
+            fxMode = fxLevel = (idx === 0 || idx === 1) ? idx : 2; // 模式切离自动档后引擎自行停转
+        }
+        try { localStorage.setItem(FX_LEVEL_KEY, String(fxMode)); } catch (e) { /* 忽略持久化失败 */ }
+        broadcastLevel();
+    }
+
+    /** 向页面内全部游戏 iframe 广播当前实际档位与模式（固定切档与自动引擎裁决共用） */
+    function broadcastLevel() {
         document.querySelectorAll('iframe').forEach(f => {
-            try { f.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: fxLevel }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
+            try { f.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: fxLevel, mode: fxMode }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
         });
+    }
+
+    /* ---------- 自动档引擎（按滚动帧率自适应降级） ---------- */
+    let autoRaf = 0;       // 引擎 rAF 句柄（0=未运转）
+    let autoWinStart = 0;  // 当前统计窗口起始时间戳（毫秒）
+    let autoWinFrames = 0; // 窗口内累计帧数
+
+    /**
+     * 自动档引擎单帧推进（帧泵思路：真实运行与冒烟合成帧泵共用同一账目入口）。
+     * 逐帧累计计数，每满 2 秒窗口裁决一次滚动帧率——fps<30 降精简档、fps≥45 回完整档
+     * （30~45 为滞回带，防临界帧率反复切档抖动）；降/升档即时广播给游戏 iframe 并开启
+     * 200ms 粒子宽限期。真实运行由 startAutoEngine 的 rAF 循环携带真实时间戳调用；
+     * 冒烟测试（tests/smoke.html S17）以合成时间戳同步直驱本函数，零等待断言动态降级/回弹。
+     * @param {number} now 帧时间戳（performance.now 口径，毫秒）
+     * @returns {void}
+     */
+    function autoFrame(now) {
+        if (fxMode !== 3) return; // 已切离自动档：不记账（引擎停转判断与账目入口合一）
+        autoWinFrames++;
+        if (now - autoWinStart >= 2000) { // 窗口期满：结算滚动帧率并裁决
+            const fps = autoWinFrames * 1000 / (now - autoWinStart);
+            if (fps < 30 && fxLevel !== 0) { fxLevel = 0; graceUntil = now + 200; broadcastLevel(); } // 低帧率：降精简档
+            else if (fps >= 45 && fxLevel !== 2) { fxLevel = 2; graceUntil = now + 200; broadcastLevel(); } // 帧率充裕：回完整档
+            autoWinStart = now;
+            autoWinFrames = 0;
+        }
+    }
+
+    /**
+     * 自动档引擎：仅父页/独立运行且模式为自动档时运转（rAF 循环逐帧调用 autoFrame）。
+     * 标准档不在调节路径内（"减量保留演出"难以按帧率量化，两极降级已覆盖性能诉求）。
+     * 嵌入模式子页不跑引擎（状态权威在父页，子页只跟随广播的实际档位）；
+     * 启动即重锚统计窗口——模式 3→固定→3 往返后账目从零起算，不残留旧窗口时间戳
+     */
+    function startAutoEngine() {
+        if (autoRaf || window.parent !== window) return;
+        autoWinStart = performance.now();
+        autoWinFrames = 0;
+        const tick = (now) => {
+            autoRaf = 0;
+            autoFrame(now);
+            if (fxMode !== 3) return; // 已切离自动档：引擎停转（不再排程下一帧）
+            autoRaf = requestAnimationFrame(tick);
+        };
+        autoRaf = requestAnimationFrame(tick);
     }
 
     // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页收父页广播静默应用；父页收子页设档请求后经 setFxLevel 持久化并广播
@@ -127,6 +206,8 @@ const FX = (() => {
             if (d && d.type === 'arcade:fxlevel' && d.act === 'set') setFxLevel(d.idx); // 内部自动广播
         });
     }
+    // 自动档开机自启：持久化恢复为自动模式时（父页/独立运行）立即启动帧率引擎
+    if (fxMode === 3) startAutoEngine();
 
     /* ==================== hitstop 卡帧 ==================== */
     let stopUntil = 0; // 卡帧截止时间戳（performance.now 毫秒）
@@ -174,12 +255,16 @@ const FX = (() => {
         /**
          * 取出一个粒子：活跃区未满则取尾部空位；满员时征用游标处最旧粒子（保证演出永不断流）。
          * 演出强度门控（纯装饰粒子不入活跃区即永不渲染，游戏逻辑零感知）：
-         * 精简档一律返回一次性哑粒子；标准档隔次返回哑粒子（产出减半）；完整档原逻辑全量产出
+         * 精简档一律返回一次性哑粒子；标准档隔次返回哑粒子（产出减半）；完整档原逻辑全量产出；
+         * 切档后 200ms 宽限期内跳过门控全量发放（余粒自然衰减，密度平滑过渡）
          * @returns {object} 待填充属性的粒子对象
          */
         obtain() {
-            if (fxLevel === 0) return { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1 }; // 精简档：哑粒子（游戏照常填充，不入池即不渲染）
-            if (fxLevel === 1 && (this._calls++ & 1) === 1) return { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1 }; // 标准档：隔发节流
+            // 切档宽限期（200ms）：跳过档位门控全量发放，与新档存量粒子的自然衰减并轨，密度平滑过渡
+            if (performance.now() >= graceUntil) {
+                if (fxLevel === 0) return { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1 }; // 精简档：哑粒子（游戏照常填充，不入池即不渲染）
+                if (fxLevel === 1 && (this._calls++ & 1) === 1) return { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1 }; // 标准档：隔发节流
+            }
             if (this.n < this.items.length) return this.items[this.n++];
             const p = this.items[this.cursor];
             this.cursor = (this.cursor + 1) % this.n;
@@ -494,7 +579,7 @@ const FX = (() => {
         return { init };
     })();
 
-    return { prefersReduced, setupCanvas, dims, hitstop, frozen, Pool, recordBurst, shake, tweenNumber, KeyLight, playtime, getFxLevel, setFxLevel, FX_LEVEL_NAMES };
+    return { prefersReduced, setupCanvas, dims, hitstop, frozen, Pool, recordBurst, shake, tweenNumber, KeyLight, playtime, getFxLevel, getFxMode, setFxLevel, FX_LEVEL_NAMES, _autoFrame: autoFrame };
 })();
 
 // 顶层 const 是词法绑定不自动挂 window：显式挂载以满足跨框架访问（audio.js 面板 window.FX 引用、
