@@ -7,7 +7,7 @@
      里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
      行为级验证——零依赖（无 node / playwright），与项目工具链一致。
 
-     覆盖场景（15 项）：
+     覆盖场景（16 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
        S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
@@ -27,8 +27,10 @@
        S15 贪吃蛇核心     —— startGame 已知开局布局：isCollision 四壁越界与蛇身命中三例 +
                               segRenderPos 插值恒等 / comboScore 无连击基线 / easeOutBack 过冲 +
                               帧泵真实移动 tick（rAF 后置接管：ArrowUp 转向生效 + 180° 掉头防护）
-     注：S9~S15 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
-         改 audio.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归。
+       S16 演出强度档位   —— fx.js 全局三档：精简档哑粒子/卡帧跳过、标准档隔发节流/时长减半、
+                              完整档全量恢复 + arcadeFxLevel 持久化 + embed 子页广播静默跟随
+     注：S9~S16 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
+         改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归。
 
      运行方式：先起服（python server.py），浏览器访问
        http://localhost:8765/tests/smoke.html
@@ -70,6 +72,7 @@
 <ol id="results"></ol>
 <button id="rerun" type="button">重新运行</button>
 <div id="stage"></div>
+<script src="../fx.js?v=20261106-1"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------
@@ -225,7 +228,7 @@ function waitUntil(fn, label, timeout = 4000) {
 }
 
 // ==================================================================
-// 十五个场景（每个 async 函数内部自包含：加载 → 操作 → 断言，抛错即败）
+// 十六个场景（每个 async 函数内部自包含：加载 → 操作 → 断言，抛错即败）
 // ==================================================================
 
 /** S1 投币基线：未开面板时点击任意处 → 正常投币（pre-coin 摘除） */
@@ -634,6 +637,56 @@ async function s15_snakeCore() {
     return '碰撞四壁 + 蛇身命中三例 + 插值恒等 + 连击基线 + 缓动过冲 + 帧泵转向生效/掉头防护全对';
 }
 
+/** S16 演出强度档位：fx.js 全局三档门控 + arcadeFxLevel 持久化 + embed 子页广播静默跟随（顶层父页角色直调） */
+async function s16_fxLevel() {
+    // API 齐备性：档位读写与档位名导出（FX_LEVEL_NAMES 供 audio.js 面板复用，口径必须一致）
+    ok(typeof FX.setFxLevel === 'function' && typeof FX.getFxLevel === 'function', 'FX 档位 API 未导出');
+    ok(Array.isArray(FX.FX_LEVEL_NAMES) && FX.FX_LEVEL_NAMES.join(',') === '精简,标准,完整', 'FX_LEVEL_NAMES 档位名与口径不符');
+
+    // 精简档：粒子池一律发一次性哑粒子（不入活跃区即永不渲染）、卡帧整体跳过、档位持久化落盘
+    FX.setFxLevel(0);
+    ok(FX.getFxLevel() === 0, '精简档设置未生效');
+    const p0 = new FX.Pool(4);
+    const d1 = p0.obtain(), d2 = p0.obtain();
+    ok(p0.n === 0 && d1 !== p0.items[0] && d2 !== d1, '精简档 obtain 未返回互相独立的一次性哑粒子');
+    FX.hitstop(80);
+    ok(!FX.frozen(), '精简档 hitstop 未被整体跳过');
+    ok(localStorage.getItem('arcadeFxLevel') === '0', '精简档未持久化到 arcadeFxLevel');
+
+    // 标准档：卡帧时长减半——A/B 定时对照（不用同步忙等：虚拟时钟下 performance.now 冻结，忙等会挂死无头冒烟页）
+    FX.setFxLevel(2);
+    FX.hitstop(80);
+    await new Promise(r => setTimeout(r, 60));
+    ok(FX.frozen(), '对照：完整档 60ms 时应仍处卡帧（截止 80ms）');
+    FX.setFxLevel(1);
+    ok(FX.getFxLevel() === 1, '标准档设置未生效');
+    FX.hitstop(80);
+    await new Promise(r => setTimeout(r, 60));
+    ok(!FX.frozen(), '标准档卡帧未减半（60ms 已解冻，说明时长未 ×0.5）');
+    const p1 = new FX.Pool(4);
+    const r1 = p1.obtain(), d3 = p1.obtain(), r2 = p1.obtain();
+    ok(p1.n === 2 && r1 === p1.items[0] && r2 === p1.items[1] && d3 !== r1 && d3 !== r2, '标准档 obtain 未按真/哑交替节流（第 1/3 次入池、第 2 次哑）');
+
+    // 完整档：全量入池 + 持久化回写（随后以 2 档加载子页，保证广播断言非平凡）
+    FX.setFxLevel(2);
+    ok(FX.getFxLevel() === 2, '完整档设置未生效');
+    const p2 = new FX.Pool(4);
+    const q1 = p2.obtain(), q2 = p2.obtain();
+    ok(p2.n === 2 && q1 === p2.items[0] && q2 === p2.items[1], '完整档 obtain 未恢复全量入池');
+    ok(localStorage.getItem('arcadeFxLevel') === '2', '完整档未持久化回写');
+
+    // 跨文档广播：embed 子页按存储值 2 起步，父页切 0 后子页必须经 arcade:fxlevel 广播静默跟随
+    const mark = msgLog.length;
+    const frame = await loadPage('../snake.html?embed=1');
+    await waitHandshake(mark); // 先等公共库握手，确保子页 fx.js 监听已挂载
+    ok(frame.contentWindow.FX && frame.contentWindow.FX.getFxLevel() === 2, '子页未按存储值以完整档起步（实际=' + (frame.contentWindow.FX ? frame.contentWindow.FX.getFxLevel() : '无FX') + '）');
+    FX.setFxLevel(0);
+    await waitUntil(() => frame.contentWindow.FX.getFxLevel() === 0, '子页未跟随父页 arcade:fxlevel 广播切换精简档');
+    FX.setFxLevel(2); // 收尾归位完整档，避免影响后续手动调试
+    await waitUntil(() => frame.contentWindow.FX.getFxLevel() === 2, '收尾归位广播未到达子页');
+    return '三档门控（哑粒子/卡帧跳过·减半/真哑交替/全量恢复）+ 持久化 + 子页广播双向跟随全对';
+}
+
 /**
  * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
  * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
@@ -650,7 +703,7 @@ async function runScenarios(list) {
     }
 }
 
-// ---------- 主流程：快照 → 串行执行十五场景 → 恢复 ----------
+// ---------- 主流程：快照 → 串行执行十六场景 → 恢复 ----------
 async function main() {
     if (running) return;
     running = true;
@@ -689,6 +742,7 @@ async function main() {
             record('S7/S8 嵌入协议 + 成就解锁链路', false, err && err.message ? err.message : String(err));
         }
         await runScenarios(coreScenarios);
+        await runScenarios([['S16 演出强度档位（门控/持久化/广播）', s16_fxLevel]]);
     } finally {
         clearStage();
         restoreLS(); // 无论成败归还真实存档

@@ -1,7 +1,7 @@
 'use strict';
 /**
  * 像素街机厅公共特效库 v1
- * 提供八类横切能力，供全部游戏页复用：
+ * 提供九类横切能力，供全部游戏页复用：
  *   1) DPR 高清适配（setupCanvas/dims）：物理分辨率放大 + CSS 逻辑坐标系，游戏绘制代码零改动获得锐利渲染
  *   2) hitstop 卡帧（hitstop/frozen）：合并、消行、吃食等大事件的"顿挫感"
  *   3) 粒子对象池（Pool）：预分配定长对象，高频粒子演出零 GC 抖动
@@ -10,6 +10,9 @@
  *   6) 数字滚动补间（tweenNumber）：HUD 分数从当前显示值平滑滚到目标值，替代生硬跳变
  *   7) 键帽实时高亮（KeyLight.init）：带 data-code 属性的键帽按下时点亮，window 级捕获委托零侵入
  *   8) 游玩时长统计（playtime.init）：累计页面可见时长，嵌入模式 postMessage 上报父页、独立运行直写 localStorage
+ *   9) 演出强度档位（getFxLevel/setFxLevel）：精简/标准/完整三档全局调节（默认完整），
+ *      门控粒子池产出、卡帧与震动幅度、烟花规模；持久化键 arcadeFxLevel，嵌入模式经
+ *      arcade:fxlevel 协议由大厅统一持有并向游戏 iframe 实时广播（音控协议同款）
  * 另含 prefersReduced 动效降级开关（respect 系统级"减弱动态效果"设置）
  * 全局暴露 FX 对象；所有页面引入 <script src="fx.js?v=..."> 后即可使用，无任何外部依赖
  */
@@ -62,16 +65,81 @@ const FX = (() => {
         return { w: canvas.width / dpr, h: canvas.height / dpr, dpr };
     }
 
+    /* ==================== 演出强度档位（全局三档调节） ==================== */
+    /** 演出强度持久化键（数值 0/1/2：精简/标准/完整） */
+    const FX_LEVEL_KEY = 'arcadeFxLevel';
+    /** 演出强度档位名（0=精简 / 1=标准 / 2=完整默认），面板展示与文档口径共用 */
+    const FX_LEVEL_NAMES = ['精简', '标准', '完整'];
+    /** 跨文档 postMessage 目标 origin：file:// 直开时各帧为独立 opaque origin，回退 '*' 维持跨帧通信；http(s) 同源部署收紧为 '/'（与 audio.js/fullscreen.js 同款公式） */
+    const POST_MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
+    /** 当前演出强度档位：启动时读持久化，非法值回退完整档 */
+    let fxLevel = (() => {
+        try {
+            const v = parseInt(localStorage.getItem(FX_LEVEL_KEY), 10);
+            if (v === 0 || v === 1 || v === 2) return v;
+        } catch (e) { /* 存储不可用：回退默认完整档 */ }
+        return 2;
+    })();
+
+    /**
+     * 查询当前演出强度档位
+     * @returns {number} 0=精简 / 1=标准 / 2=完整
+     */
+    function getFxLevel() { return fxLevel; }
+
+    /**
+     * 设置演出强度档位（唯一入口，按钮/协议共用）：
+     * 精简档跳过卡帧/震动/烟花、粒子池只发哑粒子；标准档各演出减量（卡帧减半、震动/烟花约减半）。
+     * 持久化与广播按角色分流——独立运行（或父页）本地持久化并向 iframe 广播；
+     * 子页（嵌入模式）不持久化，仅转发请求给父页，由父页广播回执统一生效（大厅是唯一持久化方，音控协议同款）
+     * @param {number} idx 目标档位（越界/非法自动钳位为完整档）
+     * @param {boolean} [fromRemote] 是否来自父页广播（true 时静默应用不转发，子页不写存储）
+     */
+    function setFxLevel(idx, fromRemote) {
+        fxLevel = (idx === 0 || idx === 1) ? idx : 2;
+        // 子页角色：状态权威在大厅，不持久化、不本地广播；非广播来源时把请求转给父页处理
+        if (window.parent !== window) {
+            if (!fromRemote) {
+                try { window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx: fxLevel }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
+            }
+            return;
+        }
+        // 父页/独立运行角色：本地持久化 + 向页面内全部游戏 iframe 广播最新档位
+        try { localStorage.setItem(FX_LEVEL_KEY, String(fxLevel)); } catch (e) { /* 忽略持久化失败 */ }
+        document.querySelectorAll('iframe').forEach(f => {
+            try { f.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: fxLevel }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
+        });
+    }
+
+    // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页收父页广播静默应用；父页收子页设档请求后经 setFxLevel 持久化并广播
+    if (window.parent !== window) {
+        // 子页角色：仅信任直接父页；广播报文无 act 字段，收到即静默应用（不持久化、不回传）
+        window.addEventListener('message', (e) => {
+            if (e.source !== window.parent) return;
+            const d = e.data;
+            if (d && d.type === 'arcade:fxlevel' && d.act === undefined) setFxLevel(d.idx, true);
+        });
+    } else {
+        // 父页（大厅）角色：来源守卫与音控协议一致（同源，或 file:// 直开时豁免 origin 'null'）
+        window.addEventListener('message', (e) => {
+            if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+            const d = e.data;
+            if (d && d.type === 'arcade:fxlevel' && d.act === 'set') setFxLevel(d.idx); // 内部自动广播
+        });
+    }
+
     /* ==================== hitstop 卡帧 ==================== */
     let stopUntil = 0; // 卡帧截止时间戳（performance.now 毫秒）
 
     /**
      * 触发一次卡帧：截止时刻之前游戏循环应跳过 update 仅渲染（大事件的顿挫定格感）。
-     * 连续触发取更晚截止时间，不会互相覆盖缩短；减弱动效时整体跳过
+     * 连续触发取更晚截止时间，不会互相覆盖缩短；减弱动效时整体跳过，
+     * 演出强度标准档时长减半、精简档整体跳过（纯装饰演出随档位收敛）
      * @param {number} [ms=50] 卡帧时长（毫秒）
      */
     function hitstop(ms = 50) {
-        if (prefersReduced) return;
+        if (prefersReduced || fxLevel === 0) return;
+        if (fxLevel === 1) ms *= 0.5; // 标准档：顿挫感保留一半时长
         stopUntil = Math.max(stopUntil, performance.now() + ms);
     }
 
@@ -100,13 +168,18 @@ const FX = (() => {
             for (let i = 0; i < capacity; i++) this.items[i] = factory();
             this.n = 0;      // 活跃粒子数（items 前 n 个为活跃区）
             this.cursor = 0; // 满员征用游标（轮转淘汰最旧）
+            this._calls = 0; // obtain 累计调用数（标准档隔发节流计数：奇数次调用发哑粒子）
         }
 
         /**
-         * 取出一个粒子：活跃区未满则取尾部空位；满员时征用游标处最旧粒子（保证演出永不断流）
+         * 取出一个粒子：活跃区未满则取尾部空位；满员时征用游标处最旧粒子（保证演出永不断流）。
+         * 演出强度门控（纯装饰粒子不入活跃区即永不渲染，游戏逻辑零感知）：
+         * 精简档一律返回一次性哑粒子；标准档隔次返回哑粒子（产出减半）；完整档原逻辑全量产出
          * @returns {object} 待填充属性的粒子对象
          */
         obtain() {
+            if (fxLevel === 0) return { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1 }; // 精简档：哑粒子（游戏照常填充，不入池即不渲染）
+            if (fxLevel === 1 && (this._calls++ & 1) === 1) return { x: 0, y: 0, vx: 0, vy: 0, life: 0, max: 1 }; // 标准档：隔发节流
             if (this.n < this.items.length) return this.items[this.n++];
             const p = this.items[this.cursor];
             this.cursor = (this.cursor + 1) % this.n;
@@ -139,12 +212,13 @@ const FX = (() => {
     /* ==================== 破纪录金色烟花（自包含覆盖层） ==================== */
     /**
      * 破纪录庆祝：自建全屏覆盖 canvas（fixed + pointer-events:none + z-index:99998，
-     * 不触碰游戏画布与渲染循环），金色粒子三波喷发约 2.2s 后自毁。
-     * 各游戏在刷新纪录处一行调用 FX.recordBurst() 即可；减弱动效时整体跳过
+     * 不触碰游戏画布与渲染循环），金色粒子喷发约 2.2s 后自毁。
+     * 各游戏在刷新纪录处一行调用 FX.recordBurst() 即可；减弱动效与演出强度精简档时整体跳过，
+     * 标准档波次 3→2、每波粒子数减半（庆祝感保留、演出量约减半）
      * @param {{x?: number, y?: number, count?: number}} [opts] 发射点（CSS 像素，缺省屏幕中上）与每波粒子数
      */
     function recordBurst(opts = {}) {
-        if (prefersReduced) return;
+        if (prefersReduced || fxLevel === 0) return;
         const cv = document.createElement('canvas');
         // DPR 适配与 setupCanvas 同款方式：物理分辨率按 dpr 放大 + ctx.scale 锁定 CSS 逻辑坐标系，
         // HiDPI 屏上粒子按设备像素渲染不再发糊；上限 2 与 setupCanvas 一致（兼顾性能）
@@ -158,7 +232,8 @@ const FX = (() => {
         ctx.scale(dpr, dpr); // 物理像素 → CSS 逻辑坐标，后续绘制代码零改动
         const ox = opts.x !== undefined ? opts.x : W / 2;
         const oy = opts.y !== undefined ? opts.y : H * 0.38;
-        const count = opts.count || 40;
+        const count = fxLevel === 1 ? Math.max(1, Math.round((opts.count || 40) / 2)) : (opts.count || 40); // 标准档每波粒子数减半
+        const waves = fxLevel === 1 ? 2 : 3; // 标准档三波 → 两波
         const parts = []; // 本地粒子数组（短生命周期一次性演出，无需对象池）
         let raf = 0;
         const timers = []; // 已排期的喷发/兜底定时器 id，finish 时统一取消，避免烟花结束后定时器仍被触发
@@ -199,8 +274,8 @@ const FX = (() => {
             raf = requestAnimationFrame(frame);
         };
 
-        // 三波喷发（间隔 260ms），每波 count 粒向四周四散并整体上抛（定时器 id 入列，finish 时统一取消）
-        for (let wave = 0; wave < 3; wave++) {
+        // 波次喷发（间隔 260ms；完整档三波/标准档两波），每波 count 粒向四周四散并整体上抛（定时器 id 入列，finish 时统一取消）
+        for (let wave = 0; wave < waves; wave++) {
             timers.push(setTimeout(() => {
                 if (!cv.isConnected) return;
                 for (let i = 0; i < count; i++) {
@@ -222,13 +297,17 @@ const FX = (() => {
      * 屏幕震动：以 CSS transform 平移抖动目标元素（通常为游戏画布），幅度随剩余时长线性衰减归零。
      * fx 自驱动独立 rAF 循环，游戏渲染循环零改动；同一元素连续触发按"最新一次"重启震动窗口
      * （幅度取新值、时长重新计时），切换目标元素时旧元素 transform 立即复位；
-     * 减弱动效偏好时整体跳过
+     * 减弱动效偏好与演出强度精简档时整体跳过，标准档幅度 ×0.5、时长 ×0.6（震感保留、收敛过半）
      * @param {HTMLElement} el 要抖动的元素（通常传入游戏主画布）
      * @param {number} [intensity=4] 最大抖动幅度（CSS 像素，向两侧随机偏移的上限）
      * @param {number} [duration=240] 震动总时长（毫秒），幅度从 intensity 线性衰减到 0
      */
     function shake(el, intensity = 4, duration = 240) {
-        if (!el || prefersReduced) return;
+        if (!el || prefersReduced || fxLevel === 0) return;
+        if (fxLevel === 1) { // 标准档：幅度减半、时长六折
+            intensity *= 0.5;
+            duration = Math.round(duration * 0.6);
+        }
         const until = performance.now() + duration;
         // 换目标：复位旧元素 transform 并把状态切到新元素（驱动循环每帧读 shakeState.el，
         // 未同步赋值时新元素永远抖不起来、旧元素被后续帧继续抖动）
@@ -372,9 +451,7 @@ const FX = (() => {
             if (secs <= 0) return;
             // 嵌入模式：上报父页统一落盘（大厅是持久化唯一方，与音控协议同思路）
             if (window.parent !== window && new URLSearchParams(location.search).has('embed')) {
-                // 目标 origin 与全库一致：file:// 直开回退 '*'，http(s) 同源收紧为 '/'
-                const target = (location.protocol === 'file:') ? '*' : '/';
-                try { window.parent.postMessage({ type: 'arcade:playtime', id: id, seconds: secs }, target); } catch (e) { /* 父页不可达时忽略 */ }
+                try { window.parent.postMessage({ type: 'arcade:playtime', id: id, seconds: secs }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
             } else {
                 // 独立运行：直接累加写入 localStorage（隐私模式等不可用时静默放弃）
                 try {
@@ -417,5 +494,9 @@ const FX = (() => {
         return { init };
     })();
 
-    return { prefersReduced, setupCanvas, dims, hitstop, frozen, Pool, recordBurst, shake, tweenNumber, KeyLight, playtime };
+    return { prefersReduced, setupCanvas, dims, hitstop, frozen, Pool, recordBurst, shake, tweenNumber, KeyLight, playtime, getFxLevel, setFxLevel, FX_LEVEL_NAMES };
 })();
+
+// 顶层 const 是词法绑定不自动挂 window：显式挂载以满足跨框架访问（audio.js 面板 window.FX 引用、
+// smoke 断言 frame.contentWindow.FX）与控制台调试取用；本文件经 <script> 引入，恒在全局顶层执行
+window.FX = FX;

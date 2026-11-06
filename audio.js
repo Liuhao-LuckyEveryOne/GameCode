@@ -35,6 +35,9 @@
  * v3.1（20261105）：双通道解耦修复——BGM 改为与 SFX 并联（music 独立增益直入静音闸 gate，不再经 master），
  *                音效档调「关」不会再连 BGM 一起哑掉；muted 统一由 gate 归零（频谱同步归零）；
  *                旧键迁移整段包 try（存储被禁时降级默认而非中断引擎）、档位钳位防 NaN
+ * v3.2（20261106）：音量面板升级为「声音 · 演出设置」——新增演出强度三档行（✧ 精简/标准/完整），
+ *                点击经 arcade:fxlevel 协议由 fx.js 持久化并向全部游戏 iframe 广播
+ *                （面板仅作统一入口，档位状态权威在 fx.js，本库不持久化不缓存）
  * 音控状态通过 localStorage（键 arcadeAudio）在所有页面间共享；
  * 嵌入模式（?embed 于 iframe 内运行）下状态由大厅（父页）统一持有，经 postMessage 实时同步大厅与游戏
  */
@@ -521,11 +524,16 @@ const SFX = (() => {
             panel.querySelectorAll('.sfx-step').forEach(st => {
                 st.classList.toggle('on', Number(st.dataset.vol) === vol[st.dataset.ch]);
             });
+            // 刷新演出强度行的高亮（data-fx 与当前档位一致者点亮；FX 库未加载时按完整档兜底显示）
+            const fxLv = window.FX ? window.FX.getFxLevel() : 2;
+            panel.querySelectorAll('.sfx-fx').forEach(st => {
+                st.classList.toggle('on', Number(st.dataset.fx) === fxLv);
+            });
         }
     }
 
     /**
-     * 懒创建音量设置面板（role=dialog 挂到 body）：全部声音开关 + 音乐/音效各 4 档点选条
+     * 懒创建音量设置面板（role=dialog 挂到 body）：全部声音开关 + 音乐/音效各 4 档点选条 + 演出强度 3 档点选条
      * 点击事件统一在面板上代理分发；主题色运行时从主按钮取色注入 --vol-accent（页面零主题编辑）
      */
     function buildPanel() {
@@ -533,15 +541,18 @@ const SFX = (() => {
         panel = document.createElement('div');
         panel.id = 'sfxPanel';
         panel.setAttribute('role', 'dialog');
-        panel.setAttribute('aria-label', '声音设置');
-        // 结构：标题（含 ✕ 关闭钮）+ 总开关 + 音乐 4 档 + 音效 4 档
-        let html = '<div class="sfx-head"><span>声音设置</span><button type="button" class="sfx-close" aria-label="关闭面板">✕</button></div>'
+        panel.setAttribute('aria-label', '声音 · 演出设置');
+        // 结构：标题（含 ✕ 关闭钮）+ 总开关 + 音乐 4 档 + 音效 4 档 + 演出强度 3 档（档位名取 FX_LEVEL_NAMES，FX 未加载时按同名字面量兜底）
+        let html = '<div class="sfx-head"><span>声音 · 演出设置</span><button type="button" class="sfx-close" aria-label="关闭面板">✕</button></div>'
             + '<button type="button" class="sfx-mute">♪ 全部声音 · 关</button>'
             + '<div class="sfx-label">♪ 音乐</div><div class="sfx-row" data-ch="b">'
             + VOL_NAMES.map((n, i) => `<button type="button" class="sfx-step" data-ch="b" data-vol="${i}">${n}</button>`).join('')
             + '</div>'
             + '<div class="sfx-label">✦ 音效</div><div class="sfx-row" data-ch="s">'
             + VOL_NAMES.map((n, i) => `<button type="button" class="sfx-step" data-ch="s" data-vol="${i}">${n}</button>`).join('')
+            + '</div>'
+            + '<div class="sfx-label">✧ 演出</div><div class="sfx-row">'
+            + (window.FX ? window.FX.FX_LEVEL_NAMES : ['精简', '标准', '完整']).map((n, i) => `<button type="button" class="sfx-step sfx-fx" data-fx="${i}">${n}</button>`).join('')
             + '</div>';
         panel.innerHTML = html;
         document.body.appendChild(panel);
@@ -558,6 +569,13 @@ const SFX = (() => {
             if (t.classList.contains('sfx-mute')) {
                 if (EMBED) window.parent.postMessage({ type: 'arcade:audio', act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
                 else muteCore();
+                return;
+            }
+            if (t.classList.contains('sfx-fx')) {
+                // 演出强度档位：面板仅作入口，状态权威在 fx.js（须先于 .sfx-step 分支——本行按钮同挂 sfx-step 类）
+                const idx = Number(t.dataset.fx);
+                if (EMBED) window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx }, POST_MSG_TARGET); // 嵌入模式转发父页，由 fx.js 持久化并广播
+                else if (window.FX) window.FX.setFxLevel(idx); // 本地运行直接调 FX（fx.js 先于本文件加载，恒存在）
                 return;
             }
             if (t.classList.contains('sfx-step')) {
