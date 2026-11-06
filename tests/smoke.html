@@ -34,7 +34,9 @@
                               帧泵动态裁决（低帧泵降精简 / 高帧泵回完整）+
                               滞回带边界精确泵帧（30 开区间不降 / 45 闭区间即回 / 带内双向维持）
        S18 门控跨页全量   —— 其余六页（tetris/pac/pinball/1024/klotski/bee）参数化 A/B 冒烟：
-                              确定性驱动源下精简档 obtain 全哑粒子 + 完整档同种子真粒子对照
+                              确定性驱动源下精简档 obtain 全哑粒子 + 完整档同种子真粒子对照；
+                              驱动步骤带名标签（失败定位到「页·段·步」），klotski 卒坐标
+                              自棋盘格几何常量派生（替代魔数比例，几何重构自动跟随）
      注：S9~S16 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
          改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归；
          S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径
@@ -185,6 +187,19 @@ function fire(frame, type, Ctor, init) {
 }
 /** 断言辅助：条件不成立即抛错（由场景捕获后整体记 FAIL） */
 function ok(cond, msg) { if (!cond) throw new Error(msg); }
+
+/**
+ * 带名执行一个 S18 驱动步骤：fn 抛错时把错误信息前缀「[步骤名] 」后重抛。
+ * 驱动深度耦合游戏内部细节（像素坐标 / 键位 / 泵帧数），游戏良性重构会击穿驱动
+ * 产生「假红」——步骤标签把定位成本从「逐行通读 drive」降为「看标签」，
+ * 配合 s18_fxGateAllPages 调用侧的页名前缀，FAIL 明细精确到「哪页哪步」
+ * @param {string} label 步骤名（如「Space 硬降」「切横刀立马」，同时承载动作语义）
+ * @param {Function} fn 步骤体（同步执行，抛错即定位到本步骤）
+ */
+function step(label, fn) {
+    try { fn(); }
+    catch (e) { throw new Error('[' + label + '] ' + (e && e.message ? e.message : String(e))); }
+}
 
 // ---------- 跨 iframe 消息收集：S7 协议握手断言的数据源（注册一次，全程收集） ----------
 const msgLog = [];
@@ -841,24 +856,25 @@ const S18_PAGES = [
     { name: '俄罗斯方块', page: '../tetris.html',
       seeds: { arcade_save_tetris: '' },
       drive: f => {
-          f.contentWindow.startGame();
-          fire(f, 'keydown', KeyboardEvent, { code: 'Space' }); // 硬降：lockPiece→spawnDust 同步于 keydown
-          f.__pump(2);
+          step('开局 startGame', () => f.contentWindow.startGame());
+          step('Space 硬降（lockPiece→spawnDust 同步于 keydown）', () =>
+              fire(f, 'keydown', KeyboardEvent, { code: 'Space' }));
+          step('泵帧 2 帧（硬降尘埃产出窗口）', () => f.__pump(2));
       } },
     { name: '吃豆人', page: '../pac.html',
       seeds: {},
       drive: f => {
-          f.contentWindow.startGame();
-          f.__pump(500); // READY 1.5s（≈90 帧）后出生朝向自动左移吃 5 豆（row15 通道，col3 撞墙停），每豆 spawnParticles
+          step('开局 startGame', () => f.contentWindow.startGame());
+          step('泵帧 500 帧（READY≈90 帧后自动左移吃 5 豆，每豆 spawnParticles）', () => f.__pump(500));
       } },
     { name: '弹球', page: '../pinball.html',
       seeds: { arcade_save_pinball: '' },
       drive: f => {
-          f.contentWindow.startGame();
-          fire(f, 'keydown', KeyboardEvent, { code: 'Space' }); // 蓄力 20 帧（charge≈0.37）
-          f.__pump(20);
-          fire(f, 'keyup', KeyboardEvent, { code: 'Space' }); // 松开发射
-          f.__pump(900); // ≈15s 物理：弹柱火花 + drain→newBall 出生火花双保险
+          step('开局 startGame', () => f.contentWindow.startGame());
+          step('Space 按住蓄力', () => fire(f, 'keydown', KeyboardEvent, { code: 'Space' }));
+          step('泵帧 20 帧（charge≈0.37）', () => f.__pump(20));
+          step('Space 松开发射', () => fire(f, 'keyup', KeyboardEvent, { code: 'Space' }));
+          step('泵帧 900 帧（≈15s 物理：弹柱火花 + drain→newBall 出生火花双保险）', () => f.__pump(900));
       } },
     { name: '1024', page: '../1024.html',
       seeds: {
@@ -871,41 +887,54 @@ const S18_PAGES = [
           })
       },
       drive: f => {
-          ok(f.contentDocument.getElementById('startScreen').style.display === 'none',
-              '1024 快照未被接受（开局屏未收起，未自动续玩进入对局）');
-          fire(f, 'keydown', KeyboardEvent, { code: 'ArrowDown' }); // 纵向相邻双 128 合并 → spawnBurst + ≥128 拖尾
-          f.__pump(30);
+          step('快照续玩断言（开局屏应已收起）', () =>
+              ok(f.contentDocument.getElementById('startScreen').style.display === 'none',
+                  '1024 快照未被接受（开局屏未收起，未自动续玩进入对局）'));
+          step('ArrowDown 纵向相邻双 128 合并（spawnBurst + ≥128 拖尾）', () =>
+              fire(f, 'keydown', KeyboardEvent, { code: 'ArrowDown' }));
+          step('泵帧 30 帧（合并特效产出窗口）', () => f.__pump(30));
       } },
     { name: '华容道', page: '../klotski.html',
       seeds: { arcade_save_klotski: '' },
       drive: f => {
-          f.contentWindow.startGame();
+          step('开局 startGame', () => f.contentWindow.startGame());
           // 数字键 1 固定切到横刀立马布局：每日一题（日期哈希选布局）会让空存档开局
           // 漂移到近在咫尺/兵临城下等 (0,4) 为空的布局，底行卒坐标命中会静默失效
           // （pieceAt 返回 null 直接 return）；当日恰为横刀立马时 idx===layoutIndex
           // 不重复切换，殊途同归。loadLayout 对 playing 态保持 state='playing'，无需再点开始
-          fire(f, 'keydown', KeyboardEvent, { key: '1' });
-          const canvas = f.contentDocument.getElementById('game'); // 456×605 画布（画布指针监听不经 body 冒泡，须直接派发）
-          const r = canvas.getBoundingClientRect();
-          const cx = r.left + r.width * 66 / 456, cy = r.top + r.height * 498 / 605; // 底行卒逻辑坐标（S13 同款）
-          canvas.dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',
-              { clientX: cx, clientY: cy, pointerId: 7, bubbles: true, cancelable: true }));
-          canvas.dispatchEvent(new f.contentWindow.PointerEvent('pointerup',
-              { clientX: cx, clientY: cy, pointerId: 7, bubbles: true, cancelable: true })); // 点击选中（合成 pointerId 的 setPointerCapture 异常不外传，选择已生效）
+          step('数字键 1 切横刀立马（规避每日一题布局漂移）', () =>
+              fire(f, 'keydown', KeyboardEvent, { key: '1' }));
+          step('画布点击选中底行卒（格几何派生坐标）', () => {
+              const canvas = f.contentDocument.getElementById('game'); // 画布指针监听不经 body 冒泡，须直接派发
+              const r = canvas.getBoundingClientRect();
+              // 卒(0,4) 格心像素自棋盘几何常量派生（与 klotski.js 同源：CELL=108 / PAD=12 /
+              // EXIT_H=41 / COLS=4 / ROWS=5，画布 456×605 = 棋盘 + 双侧内边距 + 底部出口区），
+              // 替代旧魔数比例 66/456、498/605——几何重构时坐标自动跟随
+              const KCELL = 108, KPAD = 12, KEXIT = 41, KCOLS = 4, KROWS = 5;
+              const KW = KCOLS * KCELL + KPAD * 2, KH = KROWS * KCELL + KPAD * 2 + KEXIT;
+              const cx = r.left + r.width * (KPAD + KCELL * 0.5) / KW;
+              const cy = r.top + r.height * (KPAD + KCELL * 4.5) / KH;
+              canvas.dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',
+                  { clientX: cx, clientY: cy, pointerId: 7, bubbles: true, cancelable: true }));
+              canvas.dispatchEvent(new f.contentWindow.PointerEvent('pointerup',
+                  { clientX: cx, clientY: cy, pointerId: 7, bubbles: true, cancelable: true })); // 点击选中（合成 pointerId 的 setPointerCapture 异常不外传，选择已生效）
+          });
           // dirMap 匹配 e.key（合成 KeyboardEvent 只传 code 时 key 为空串，永不匹配），
           // 故 key/code 成对传入；横刀立马卒(0,4) 右侧 (1,4)(2,4) 均为空位，可连滑两次
-          fire(f, 'keydown', KeyboardEvent, { key: 'ArrowRight', code: 'ArrowRight' }); // 方向键推卒右滑
-          f.__pump(20); // SLIDE_DUR=0.11s≈7 帧补间结算 → spawnDust
-          fire(f, 'keydown', KeyboardEvent, { key: 'ArrowRight', code: 'ArrowRight' });
-          f.__pump(20);
+          step('ArrowRight 右滑推卒（key/code 成对：dirMap 匹配 e.key）', () =>
+              fire(f, 'keydown', KeyboardEvent, { key: 'ArrowRight', code: 'ArrowRight' }));
+          step('泵帧 20 帧（SLIDE_DUR=0.11s≈7 帧补间结算 → spawnDust）', () => f.__pump(20));
+          step('ArrowRight 二次右滑', () =>
+              fire(f, 'keydown', KeyboardEvent, { key: 'ArrowRight', code: 'ArrowRight' }));
+          step('泵帧 20 帧（二次滑动结算）', () => f.__pump(20));
       } },
     { name: '蜜蜂', page: '../bee.html',
       seeds: { arcade_save_bee: '' },
       drive: f => {
-          f.contentWindow.startGame();
-          fire(f, 'keydown', KeyboardEvent, { code: 'Space' }); // 按住连射
-          f.__pump(160); // 冷却 0.32s≈19 帧 → ≈8 发；子弹撞敌或撞顶墙均 spawnBurst
-          fire(f, 'keyup', KeyboardEvent, { code: 'Space' });
+          step('开局 startGame', () => f.contentWindow.startGame());
+          step('Space 按住连射', () => fire(f, 'keydown', KeyboardEvent, { code: 'Space' }));
+          step('泵帧 160 帧（冷却 0.32s≈19 帧 → ≈8 发，子弹撞敌/撞顶墙均 spawnBurst）', () => f.__pump(160));
+          step('Space 松开收尾', () => fire(f, 'keyup', KeyboardEvent, { code: 'Space' }));
       } }
 ];
 
@@ -917,6 +946,12 @@ const S18_PAGES = [
 async function s18_fxGateAllPages() {
     let totalDummy = 0, totalReal = 0;
     const names = [];
+    /** 带页名与段位执行驱动：驱动内 step 标签已定位到步，此处补「页名·段」前缀，
+     *  FAIL 明细最终形态如「华容道 B 段：[画布点击选中底行卒] …」——零考古定位 */
+    const runDrive = (pg, f, seg) => {
+        try { pg.drive(f); }
+        catch (e) { throw new Error(pg.name + seg + '：' + (e && e.message ? e.message : String(e))); }
+    };
     for (const pg of S18_PAGES) {
         // A 段（精简档）：清库后仅写档位与种子，子页以存储值 0 起步
         lsClear();
@@ -928,7 +963,7 @@ async function s18_fxGateAllPages() {
             '，getFxLevel=' + (fa.contentWindow.FX ? fa.contentWindow.FX.getFxLevel() : '-') +
             '，存储=' + localStorage.getItem('arcadeFxLevel') + '）');
         const ca = spyObtain(fa);
-        pg.drive(fa);
+        runDrive(pg, fa, ' A 段驱动');
         ok(ca.dummy + ca.real > 0, pg.name + ' 精简档未观察到任何粒子产出（驱动源失效或探针未挂上）');
         ok(ca.real === 0, pg.name + ' 精简档下仍有活跃粒子泄漏（real=' + ca.real + '，违背全局调节语义）');
         fa.remove(); // 先移除再写 B 段种子：子页 pagehide 会回写进度快照存档键，必须在其后重播种子
@@ -942,7 +977,7 @@ async function s18_fxGateAllPages() {
             '，getFxLevel=' + (fb.contentWindow.FX ? fb.contentWindow.FX.getFxLevel() : '-') +
             '，存储=' + localStorage.getItem('arcadeFxLevel') + '）');
         const cb = spyObtain(fb);
-        pg.drive(fb);
+        runDrive(pg, fb, ' B 段驱动');
         ok(cb.real > 0 && cb.dummy === 0, pg.name + ' 完整档未全量真粒子入池（real=' + cb.real + ' dummy=' + cb.dummy + '）');
         fb.remove();
         totalDummy += ca.dummy + ca.real;
