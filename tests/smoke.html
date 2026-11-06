@@ -7,7 +7,7 @@
      里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
      行为级验证——零依赖（无 node / playwright），与项目工具链一致。
 
-     覆盖场景（17 项）：
+     覆盖场景（18 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
        S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
@@ -31,10 +31,13 @@
                               完整档全量恢复 + arcadeFxLevel 持久化 + embed 子页广播静默跟随
        S17 门控跨页黑盒   —— 真实游戏页（snake）精简档泵帧 obtain 全哑粒子（活跃归零）+
                               完整档 A/B 对照真粒子入池 + 自动档 mode=3 持久化/试跑契约 +
-                              帧泵动态裁决（FX._autoFrame 合成时间戳直驱：低帧泵降精简 / 高帧泵回完整）
+                              帧泵动态裁决（低帧泵降精简 / 高帧泵回完整）+
+                              滞回带边界精确泵帧（30 开区间不降 / 45 闭区间即回 / 带内双向维持）
+       S18 门控跨页全量   —— 其余六页（tetris/pac/pinball/1024/klotski/bee）参数化 A/B 冒烟：
+                              确定性驱动源下精简档 obtain 全哑粒子 + 完整档同种子真粒子对照
      注：S9~S16 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
          改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归；
-         S17 经 bootSnake 同源装载真实 snake 页，黑盒断言演出门控的跨页覆盖半径
+         S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径
 
      运行方式：先起服（python server.py），浏览器访问
        http://localhost:8765/tests/smoke.html
@@ -232,7 +235,7 @@ function waitUntil(fn, label, timeout = 4000) {
 }
 
 // ==================================================================
-// 十六个场景（每个 async 函数内部自包含：加载 → 操作 → 断言，抛错即败）
+// 十八个场景（每个 async 函数内部自包含：加载 → 操作 → 断言，抛错即败）
 // ==================================================================
 
 /** S1 投币基线：未开面板时点击任意处 → 正常投币（pre-coin 摘除） */
@@ -320,21 +323,18 @@ async function s6_achAggregate() {
 }
 
 /**
- * S8 专用引导装载器：在 about:blank iframe（继承父源，localStorage 与本页共库）里以
- * document.write 写入 snake.html 原文完成加载，并在写入前预装 requestAnimationFrame 手动泵。
+ * 通用游戏页引导装载器（S17 bootSnake 提取共享，S18 六页复用）：在 about:blank iframe
+ * （继承父源，localStorage 与本页共库）里以 document.write 写入目标游戏页原文完成加载，
+ * 并在写入前预装 requestAnimationFrame 手动泵。
  * 为什么需要泵：无头 --dump-dom 模式合成器完全不出帧（探针实测 50s 真实运行仅出 2~3 帧），
- * 而 snake.js 每帧逻辑时间钳位 50ms，被动等待永远凑不齐 200ms 移动 tick——只能主动泵帧。
+ * 而各游戏页每帧逻辑时间钳位 50ms，被动等待永远凑不齐移动 tick/补间结算——只能主动泵帧。
  * 泵以 16.6ms 步进的合成时间戳确定性驱动真实游戏循环（renderLoop 每帧前置排程注册进队列，
  * 下一次泵接续执行）。黑盒性质：仅替换「浏览器帧调度」这一处环境控制（与种子快照/合成
  * 键盘同族），页面零改动、零内部函数触碰。
- * @param {string} snapJson 进度快照 JSON（写入 arcade_save_snake，供页面恢复续玩流程消费）
- * @param {boolean} resetAch true 时重置成就档为 v1 空数组（首段用，顺带走 v1→v2 迁移路径）；
- *                           false 延续现有成就档（二次段用）
+ * @param {string} htmlPath 相对 tests/ 的游戏页路径（如 '../snake.html'）
  * @returns {Promise<HTMLIFrameElement>} 就绪的 iframe，挂有 __pump(n)（手动推进 n 个合成帧）
  */
-async function bootSnake(snapJson, resetAch) {
-    if (resetAch) lsSet('arcade_ach_snake', '[]'); // v1 空档：页面 loadAchStore 识别并迁移到 v2
-    lsSet('arcade_save_snake', snapJson);
+async function bootGamePage(htmlPath) {
     const frame = document.createElement('iframe');
     frame.style.cssText = 'width:480px;height:340px;border:1px solid #33335c;background:#000';
     stage.appendChild(frame);
@@ -346,11 +346,48 @@ async function bootSnake(snapJson, resetAch) {
     w.requestAnimationFrame = cb => { q.push(cb); return q.length; };
     w.cancelAnimationFrame = () => {};
     // 手动泵：先 splice 清队再逐个调用——renderLoop 帧内前置排程的下一帧注册落回 q，
-    // 由下一次泵接续；合成时间戳递增驱动 moveAcc 累加（游戏侧 dt 单帧钳 50ms）
+    // 由下一次泵接续；合成时间戳递增驱动各游戏帧累加器（游戏侧 dt 单帧钳 50ms）
     frame.__pump = n => { while (n-- > 0) { t += 16.6; for (const cb of q.splice(0)) cb(t); } };
-    const html = await (await fetch('../snake.html', { cache: 'no-store' })).text();
+    const html = await (await fetch(htmlPath, { cache: 'no-store' })).text();
     d.open(); d.write('<!DOCTYPE html><base href="../">' + html); d.close(); // base 指根目录：脚本/样式相对路径可解析
+    // 等待页面脚本同步执行完毕：close 返回时解析器可能仍在等待各外部经典脚本的网络响应
+    // （document.write 注入的 script 为异步 fetch，rs=loading、FX 尚 undefined）。
+    // 就绪判据取「末位游戏脚本的 startGame 主入口」：其挂载即 audio/fx/游戏逻辑已全部执行——
+    // 每个游戏页都经经典函数声明暴露 window.startGame，六页通用（S17 bootSnake / S18 全页共用）
+    await waitUntil(() => frame.contentWindow.FX && typeof frame.contentWindow.startGame === 'function',
+        htmlPath + ' 子页脚本未就绪（FX/startGame 未挂载）', 8000);
     return frame;
+}
+
+/**
+ * S8/S17 专用 snake 引导装载器：种好存档/成就键后委托 bootGamePage 装载 snake.html
+ * @param {string} snapJson 进度快照 JSON（写入 arcade_save_snake，供页面恢复续玩流程消费）
+ * @param {boolean} resetAch true 时重置成就档为 v1 空数组（首段用，顺带走 v1→v2 迁移路径）；
+ *                           false 延续现有成就档（二次段用）
+ * @returns {Promise<HTMLIFrameElement>} 就绪的 iframe，挂有 __pump(n)（手动推进 n 个合成帧）
+ */
+async function bootSnake(snapJson, resetAch) {
+    if (resetAch) lsSet('arcade_ach_snake', '[]'); // v1 空档：页面 loadAchStore 识别并迁移到 v2
+    lsSet('arcade_save_snake', snapJson);
+    return bootGamePage('../snake.html');
+}
+
+/**
+ * obtain 统计探针（S17/S18 共用）：包裹子页 FX.Pool.prototype.obtain，按「返回对象是否
+ * 属池内 items」分拣真/哑粒子——精简档门控把 obtain 重定向到独立哑对象（不入池），
+ * 完整档则返回池内复用对象。探针只读不干预，页面零感知。
+ * @param {HTMLIFrameElement} frame 目标游戏 iframe
+ * @returns {{real: number, dummy: number}} 真/哑粒子 obtain 调用计数器
+ */
+function spyObtain(frame) {
+    const orig = frame.contentWindow.FX.Pool.prototype.obtain;
+    const cnt = { real: 0, dummy: 0 };
+    frame.contentWindow.FX.Pool.prototype.obtain = function () {
+        const p = orig.call(this);
+        if (this.items.includes(p)) cnt.real++; else cnt.dummy++;
+        return p;
+    };
+    return cnt;
 }
 
 /** S7+S8 共用入口：S7 断言两条协议报到；S8 以纯黑盒方式回归成就真实解锁链路
@@ -727,6 +764,33 @@ async function s17_fxGateCrossPage() {
     ok(FX.getFxLevel() === 0, '自动档低帧泵未降精简（fps<30 裁决未生效，getFxLevel=' + FX.getFxLevel() + '）');
     pumpWindow(12);
     ok(FX.getFxLevel() === 2, '自动档高帧泵未回完整（fps≥45 裁决未生效，getFxLevel=' + FX.getFxLevel() + '）');
+
+    // 滞回带边界/带内维持泵帧断言（pumpExact 链式精确 fps = n/2）：
+    // 降档阈值 30 为开区间（30 不降）、回档阈值 45 为闭区间（45 即回），带内 [30,45) 双向维持
+    let exactTs = pumpTs; // 精确泵窗口锚点：接续 pumpWindow 合成时钟，pumpAnchor 后精确重锚
+    /** 锚定消化帧：大跳变时间戳强制结算 pumpWindow 遗留的未满窗口（fps≈0 → 裁决降精简），
+     *  统计窗口锚点精确落在此帧时间戳上，为后续链式精确泵提供已知起点 */
+    const pumpAnchor = () => { exactTs += 5000; FX._autoFrame(exactTs); };
+    /** 精确 fps 链式帧泵：自当前锚点以 k×2000/n（k=1..n）均匀铺 n 帧恰好填满 2000ms 窗口——
+     *  裁决帧 fps = n×1000/2000 = n/2 数学精确（k=n 帧时间戳 n×2000/n 整除无舍入误差）；
+     *  结算后引擎把锚点重锚于裁决帧（恰为 +2000 处），故可连续链式调用无需中间消化
+     * @param {number} n 铺入统计窗口的帧数（fps = n/2）
+     */
+    const pumpExact = (n) => {
+        for (let k = 1; k <= n; k++) FX._autoFrame(exactTs + k * 2000 / n);
+        exactTs += 2000;
+    };
+    pumpAnchor();
+    pumpExact(89);
+    ok(FX.getFxLevel() === 0, 'fps=44.5 带内却被降档（带内应维持精简档，getFxLevel=' + FX.getFxLevel() + '）');
+    pumpExact(90);
+    ok(FX.getFxLevel() === 2, 'fps=45 回档阈值未被触发（45 应为闭区间含边界，getFxLevel=' + FX.getFxLevel() + '）');
+    pumpExact(60);
+    ok(FX.getFxLevel() === 2, 'fps=30 恰在降档阈值却被降档（30 应为开区间不含，getFxLevel=' + FX.getFxLevel() + '）');
+    pumpExact(59);
+    ok(FX.getFxLevel() === 0, 'fps=29.5 未降精简（fps<30 裁决未生效，getFxLevel=' + FX.getFxLevel() + '）');
+    pumpExact(60);
+    ok(FX.getFxLevel() === 0, 'fps=30 带内未维持精简档（带内不应回档，getFxLevel=' + FX.getFxLevel() + '）');
     FX.setFxLevel(2); // 归位：后续子页以存储值起步，保证 A/B 对照非平凡
 
     // 种子快照（同 S8 口径）：食物远处窗口内不进食，移动 tick 仅发蛇头尾迹粒子——确定性发射源
@@ -736,20 +800,6 @@ async function s17_fxGateCrossPage() {
         dir: 'right', dirQueue: [],
         food: { x: 17, y: 4 }, score: 105, eaten: 0, maxCombo: 0, gold: 0
     });
-    /** obtain 统计探针：包裹子页 FX.Pool.prototype.obtain，按「是否池内存」分拣真/哑粒子
-     * @param {HTMLIFrameElement} frame 目标游戏 iframe
-     * @returns {{real: number, dummy: number}} 真粒子/哑粒子计数器
-     */
-    const spyObtain = (frame) => {
-        const orig = frame.contentWindow.FX.Pool.prototype.obtain;
-        const cnt = { real: 0, dummy: 0 };
-        frame.contentWindow.FX.Pool.prototype.obtain = function () {
-            const p = orig.call(this);
-            if (this.items.includes(p)) cnt.real++; else cnt.dummy++;
-            return p;
-        };
-        return cnt;
-    };
 
     // A 段（精简档）：存储值 0 起步 + 广播运行时跟随，泵 60 帧后活跃粒子必须归零
     lsSet('arcadeFxLevel', '0');
@@ -784,6 +834,125 @@ async function s17_fxGateCrossPage() {
         '帧泵动态裁决成立（低帧泵降精简、高帧泵回完整）';
 }
 
+/** S18 六页确定性驱动源配置：每页 startGame + 合成输入 + 帧泵，泵帧期间必产生粒子 obtain——
+ *  发射源均经源码核实（硬降 dust / 吃豆迸溅 / 弹柱与出生火花 / 合并爆裂与拖尾 / 滑动尘土 / 连射爆裂）。
+ *  seeds 为该页依赖的存档键种子（A/B 两段装载前重播，保证同种子可复现；空串 = 存档解析失败按无档起局） */
+const S18_PAGES = [
+    { name: '俄罗斯方块', page: '../tetris.html',
+      seeds: { arcade_save_tetris: '' },
+      drive: f => {
+          f.contentWindow.startGame();
+          fire(f, 'keydown', KeyboardEvent, { code: 'Space' }); // 硬降：lockPiece→spawnDust 同步于 keydown
+          f.__pump(2);
+      } },
+    { name: '吃豆人', page: '../pac.html',
+      seeds: {},
+      drive: f => {
+          f.contentWindow.startGame();
+          f.__pump(500); // READY 1.5s（≈90 帧）后出生朝向自动左移吃 5 豆（row15 通道，col3 撞墙停），每豆 spawnParticles
+      } },
+    { name: '弹球', page: '../pinball.html',
+      seeds: { arcade_save_pinball: '' },
+      drive: f => {
+          f.contentWindow.startGame();
+          fire(f, 'keydown', KeyboardEvent, { code: 'Space' }); // 蓄力 20 帧（charge≈0.37）
+          f.__pump(20);
+          fire(f, 'keyup', KeyboardEvent, { code: 'Space' }); // 松开发射
+          f.__pump(900); // ≈15s 物理：弹柱火花 + drain→newBall 出生火花双保险
+      } },
+    { name: '1024', page: '../1024.html',
+      seeds: {
+          '1024Difficulty': 'normal', // 与快照 diff 匹配（restoreSnapshot 校验难度一致才接受）
+          arcade_save_1024: JSON.stringify({
+              v: 1, diff: 'normal',
+              board: [[128, 0, 0, 0], [128, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+              score: 0, combo: 0, undosLeft: 3, hasWon: false, isNewRecord: false,
+              history: [], milestones: []
+          })
+      },
+      drive: f => {
+          ok(f.contentDocument.getElementById('startScreen').style.display === 'none',
+              '1024 快照未被接受（开局屏未收起，未自动续玩进入对局）');
+          fire(f, 'keydown', KeyboardEvent, { code: 'ArrowDown' }); // 纵向相邻双 128 合并 → spawnBurst + ≥128 拖尾
+          f.__pump(30);
+      } },
+    { name: '华容道', page: '../klotski.html',
+      seeds: { arcade_save_klotski: '' },
+      drive: f => {
+          f.contentWindow.startGame();
+          // 数字键 1 固定切到横刀立马布局：每日一题（日期哈希选布局）会让空存档开局
+          // 漂移到近在咫尺/兵临城下等 (0,4) 为空的布局，底行卒坐标命中会静默失效
+          // （pieceAt 返回 null 直接 return）；当日恰为横刀立马时 idx===layoutIndex
+          // 不重复切换，殊途同归。loadLayout 对 playing 态保持 state='playing'，无需再点开始
+          fire(f, 'keydown', KeyboardEvent, { key: '1' });
+          const canvas = f.contentDocument.getElementById('game'); // 456×605 画布（画布指针监听不经 body 冒泡，须直接派发）
+          const r = canvas.getBoundingClientRect();
+          const cx = r.left + r.width * 66 / 456, cy = r.top + r.height * 498 / 605; // 底行卒逻辑坐标（S13 同款）
+          canvas.dispatchEvent(new f.contentWindow.PointerEvent('pointerdown',
+              { clientX: cx, clientY: cy, pointerId: 7, bubbles: true, cancelable: true }));
+          canvas.dispatchEvent(new f.contentWindow.PointerEvent('pointerup',
+              { clientX: cx, clientY: cy, pointerId: 7, bubbles: true, cancelable: true })); // 点击选中（合成 pointerId 的 setPointerCapture 异常不外传，选择已生效）
+          // dirMap 匹配 e.key（合成 KeyboardEvent 只传 code 时 key 为空串，永不匹配），
+          // 故 key/code 成对传入；横刀立马卒(0,4) 右侧 (1,4)(2,4) 均为空位，可连滑两次
+          fire(f, 'keydown', KeyboardEvent, { key: 'ArrowRight', code: 'ArrowRight' }); // 方向键推卒右滑
+          f.__pump(20); // SLIDE_DUR=0.11s≈7 帧补间结算 → spawnDust
+          fire(f, 'keydown', KeyboardEvent, { key: 'ArrowRight', code: 'ArrowRight' });
+          f.__pump(20);
+      } },
+    { name: '蜜蜂', page: '../bee.html',
+      seeds: { arcade_save_bee: '' },
+      drive: f => {
+          f.contentWindow.startGame();
+          fire(f, 'keydown', KeyboardEvent, { code: 'Space' }); // 按住连射
+          f.__pump(160); // 冷却 0.32s≈19 帧 → ≈8 发；子弹撞敌或撞顶墙均 spawnBurst
+          fire(f, 'keyup', KeyboardEvent, { code: 'Space' });
+      } }
+];
+
+/** S18 门控跨页全量：其余六页参数化 A/B 冒烟——补齐「全局调节」对全部游戏页的覆盖半径。
+ *  A 段子页以存储值 0 起步（fx.js 初始化直读 arcadeFxLevel，无运行时切档即无 200ms 宽限期，
+ *  无需广播链路——S17 已单独回归广播），驱动源泵帧后探针统计必须全为哑粒子；
+ *  B 段同种子重引导以存储值 2 起步，同泵帧必然真粒子入池——A/B 唯一差异即演出档位。
+ *  注意：A 段 iframe 必须先 remove 再写 B 段种子（子页 pagehide 会回写进度快照存档键） */
+async function s18_fxGateAllPages() {
+    let totalDummy = 0, totalReal = 0;
+    const names = [];
+    for (const pg of S18_PAGES) {
+        // A 段（精简档）：清库后仅写档位与种子，子页以存储值 0 起步
+        lsClear();
+        lsSet('arcadeFxLevel', '0');
+        for (const k in pg.seeds) lsSet(k, pg.seeds[k]);
+        const fa = await bootGamePage(pg.page);
+        ok(fa.contentWindow.FX && fa.contentWindow.FX.getFxLevel() === 0,
+            pg.name + ' 子页未以精简档起步（FX=' + typeof fa.contentWindow.FX +
+            '，getFxLevel=' + (fa.contentWindow.FX ? fa.contentWindow.FX.getFxLevel() : '-') +
+            '，存储=' + localStorage.getItem('arcadeFxLevel') + '）');
+        const ca = spyObtain(fa);
+        pg.drive(fa);
+        ok(ca.dummy + ca.real > 0, pg.name + ' 精简档未观察到任何粒子产出（驱动源失效或探针未挂上）');
+        ok(ca.real === 0, pg.name + ' 精简档下仍有活跃粒子泄漏（real=' + ca.real + '，违背全局调节语义）');
+        fa.remove(); // 先移除再写 B 段种子：子页 pagehide 会回写进度快照存档键，必须在其后重播种子
+        // B 段（完整档对照）：同种子重引导，全量入池——真粒子必然出现
+        lsClear();
+        lsSet('arcadeFxLevel', '2');
+        for (const k in pg.seeds) lsSet(k, pg.seeds[k]);
+        const fb = await bootGamePage(pg.page);
+        ok(fb.contentWindow.FX && fb.contentWindow.FX.getFxLevel() === 2,
+            pg.name + ' 子页未以完整档起步（FX=' + typeof fb.contentWindow.FX +
+            '，getFxLevel=' + (fb.contentWindow.FX ? fb.contentWindow.FX.getFxLevel() : '-') +
+            '，存储=' + localStorage.getItem('arcadeFxLevel') + '）');
+        const cb = spyObtain(fb);
+        pg.drive(fb);
+        ok(cb.real > 0 && cb.dummy === 0, pg.name + ' 完整档未全量真粒子入池（real=' + cb.real + ' dummy=' + cb.dummy + '）');
+        fb.remove();
+        totalDummy += ca.dummy + ca.real;
+        totalReal += cb.real;
+        names.push(pg.name);
+    }
+    return '六页参数化 A/B 全对：精简档 ' + totalDummy + ' 次 obtain 全为哑粒子（活跃归零），' +
+        '完整档对照 ' + totalReal + ' 次全真入池（' + names.join('/') + '）';
+}
+
 /**
  * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
  * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
@@ -800,7 +969,7 @@ async function runScenarios(list) {
     }
 }
 
-// ---------- 主流程：快照 → 串行执行十七场景 → 恢复 ----------
+// ---------- 主流程：快照 → 串行执行十八场景 → 恢复 ----------
 async function main() {
     if (running) return;
     running = true;
@@ -842,6 +1011,7 @@ async function main() {
         await runScenarios([
             ['S16 演出强度档位（门控/持久化/广播）', s16_fxLevel],
             ['S17 门控跨页黑盒（精简档活跃粒子归零 + 自动档帧泵契约）', s17_fxGateCrossPage],
+            ['S18 门控跨页全量（其余六页 A/B 参数化冒烟）', s18_fxGateAllPages],
         ]);
     } finally {
         clearStage();
