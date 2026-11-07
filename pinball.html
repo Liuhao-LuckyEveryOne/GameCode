@@ -4,7 +4,7 @@
      结构：左上角成就墙入口 → 右上角固定按钮（音效开关 / 全屏）→ PINBALL 彩色标题 →
           主布局（左：500×660 透视弹球台画布 + 三块遮罩；右：侧边信息栏
           BALLS 剩余弹球 150×36 / STATS 分数·倍率·最高分 / KEYS 键位与得分说明）
-     脚本：audio.js 公共音效库 / fullscreen.js 全屏控制 / pinball.js 游戏逻辑
+     脚本：audio.js 公共音效库 / fx.js 公共特效库 / fullscreen.js 全屏控制 / gamepad.js 手柄支持 / pinball.js 游戏逻辑
      触发器：ach-trigger.css + ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
@@ -890,7 +890,7 @@
     </div>
     <!-- 成就解锁 toast 堆叠区：不拦截点击（pointer-events 由 CSS 控制），aria-live 播报新解锁 -->
     <div id="achToastStack" aria-live="polite"></div>
-    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → pinball.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js(手柄) → ach-trigger.js(成就墙触发器) → pinball.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="audio.js?v=20261107-1"></script>
     <script src="fx.js?v=20261107-1"></script>
     <script src="fullscreen.js?v=20261105-1"></script>

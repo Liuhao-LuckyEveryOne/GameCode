@@ -2,10 +2,10 @@
 <!-- ==================================================================
      俄罗斯方块游戏页
      结构：左上角成就墙入口 → 右上角固定按钮（音效开关 / 全屏）→ TETRIS 彩色标题 →
-          主布局（左：280×560 棋盘 + 四块遮罩；右：侧边信息栏
+          主布局（左：280×560 棋盘 + 三块遮罩；右：侧边信息栏
           HOLD 暂存预览 150×120 / NEXT 后续三块预览 150×240 / STATS / KEYS）
      脚本：audio.js 公共音效库 / fx.js 画布与特效库 / fullscreen.js 全屏控制 /
-          tetris.js 游戏逻辑（含 7-bag / Hold / SRS / Lock Delay / DAS-ARR / 成就）
+          gamepad.js 手柄支持 / tetris.js 游戏逻辑（含 7-bag / Hold / SRS / Lock Delay / DAS-ARR / 成就）
      共享：ach-trigger.css / ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
@@ -594,7 +594,7 @@
         #levelVal { color: var(--neon-pink); text-shadow: 0 0 8px rgba(255, 62, 165, 0.6); }
         #linesVal { color: var(--neon-green); text-shadow: 0 0 8px rgba(57, 255, 106, 0.6); }
         #highVal { color: var(--neon-yellow); text-shadow: 0 0 8px rgba(255, 210, 62, 0.6); }
-        /* 键位说明：通栏双列网格，8 条键位压缩为 4 行，显著降低说明区高度占比 */
+        /* 键位说明：通栏双列网格，10 条键位压缩为 5 行，显著降低说明区高度占比 */
         .keys {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -968,7 +968,7 @@
     </div>
     <!-- 成就解锁 toast 堆叠区：不拦截点击（pointer-events 由 CSS 控制），aria-live 播报新解锁 -->
     <div id="achToastStack" aria-live="polite"></div>
-    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → tetris.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js / ach-trigger.js → tetris.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="audio.js?v=20261107-1"></script>
     <script src="fx.js?v=20261107-1"></script>
     <script src="fullscreen.js?v=20261105-1"></script>

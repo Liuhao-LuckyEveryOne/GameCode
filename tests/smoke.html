@@ -1038,7 +1038,7 @@ async function main() {
     try {
         await runScenarios(scenarios);
         try {
-            await s7s8_embedAndAch(); // S7/S8 在函数内部自行 record（两场景共用一次加载）
+            await s7s8_embedAndAch(); // S7/S8 在函数内部自行 record（两场景合用同一函数、各自独立装载）
         } catch (err) {
             record('S7/S8 嵌入协议 + 成就解锁链路', false, err && err.message ? err.message : String(err));
         }

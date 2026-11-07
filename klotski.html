@@ -4,7 +4,7 @@
      结构：左上角成就墙入口 → 右上角固定按钮（音效开关 / 全屏）→ 舞台容器 #stage
           （"华容道"彩色标题 + 主布局整体包裹，非全屏时由页尾 fitStage 脚本
           等比缩放至完整落入视口，消除滚动条）→
-          主布局（左：456×605 棋盘画布 + 开始/通关两块遮罩，高度与右侧说明栏上下对齐；右：侧边信息栏
+          主布局（左：456×605 棋盘画布 + 开始/通关/暂停三块遮罩，高度与右侧说明栏上下对齐；右：侧边信息栏
           STATS 步数·用时·最少步纪录·提示次数·最佳评级（侧栏末尾另有 KEYS 键位说明） /
           LAYOUT 六种经典布局切换 /
           DIFFICULTY 三档难度切换（新手·进阶·大师，无"无敌"档；
@@ -13,7 +13,8 @@
           步数比率定级 + 提示次数封顶；P 键演示系统：自动复现当前布局 BFS 最佳解
           （格步口径，各布局均可完整通关），通关走庆祝演出但不写纪录与评级）
      暂停体系：空格手动暂停 + 窗口失焦自动暂停（回合制但用时参与评级，暂停冻结计时）
-     脚本：audio.js 公共音效库 / fullscreen.js 全屏控制 / klotski.js 游戏逻辑
+     脚本：audio.js 公共音效库 / fx.js 公共特效库 FX（画布适配/粒子池/烟花/时长统计/键帽高亮） /
+          fullscreen.js 全屏控制 / gamepad.js 手柄支持 / klotski.js 游戏逻辑
      触发器：ach-trigger.css + ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      视听增强：棋子精细纹理（确定性木纹线 / 曹操锦缎菱格+鎏金双线框+渐变铆钉+
           描边王冠+鎏金文字 / 关羽绦带纹 / 武将束带扣 / 兵卒圆环徽章 / 边缘光影 /
@@ -958,7 +959,7 @@
     </div>
     <!-- 成就解锁 toast 容器：右上角悬浮队列，解锁瞬间滑入展示后自动移除 -->
     <div id="achToastStack" class="ach-toast-stack"></div>
-    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → klotski.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js(手柄→合成键盘) ach-trigger.js(成就墙触发器) → klotski.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="audio.js?v=20261107-1"></script>
     <script src="fx.js?v=20261107-1"></script>
     <script src="fullscreen.js?v=20261105-1"></script>

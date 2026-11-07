@@ -4,7 +4,7 @@
  * 核心机制：方向输入暂存到下一 tick 才应用，杜绝同一 tick 内连按两键
  *          导致 180° 掉头；最高分 localStorage 持久化；空格暂停；
  *          切出窗口自动暂停（防止回来时蛇已撞死）
- * 进度镜像：返回游戏厅 / 收到 arcade:save 消息 / 页面卸载时保存本局快照（arcade_save_snake），
+ * 进度镜像：收到 arcade:save 消息（返回游戏厅）/ 页面卸载时保存本局快照（arcade_save_snake），
  *          下次进入自动校验并恢复续玩（停在暂停遮罩等空格继续），游戏结束清除快照
  * 成长节奏：每吃 5 个食物移动间隔 ×0.93（下限 60ms），STATS 面板实时显示速度等级；
  *          连击窗口（3s）内连续进食按 基础分×(1+0.5×(连击-1)) 加成计分，连击递增有专属升调音
@@ -693,7 +693,7 @@ function drawFood(now) {
     const fy = food.y * gridSize + gridSize / 2;
     const pulse = 0.5 + 0.5 * Math.sin(now / 220); // 0→1→0 呼吸相位
     // 出生弹入：foodAge 前 0.2s 用 easeOutBack 从 0 过冲弹到 1（减弱动效偏好时恒为 1）；
-    // 钳位非负——easeOutBack 起始段会下冲为负值，若直接作为 L628 脉冲环的半径缩放
+    // 钳位非负——easeOutBack 起始段会下冲为负值，若直接作为下方脉冲环的半径缩放
     // 会传给 arc 负半径抛 IndexSizeError（首次打开偶发跳帧），下冲瞬间按 0 处理（环不可见）
     const pop = FX.prefersReduced ? 1 : Math.max(0, easeOutBack(Math.min(1, foodAge / 0.2)));
     // 本体：随呼吸微涨缩的粉色方块 + 霓虹光晕，整体乘弹入缩放
@@ -1430,7 +1430,7 @@ pauseScreen.addEventListener('pointerdown', (e) => {
     if (isRunning && !isDying && isPaused) togglePause();
 });
 
-/* ---------- 进度镜像快照：三处保存触发点 ---------- */
+/* ---------- 进度镜像快照：两处保存触发点 ---------- */
 
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
 // （saveSnapshot 内部自行区分：进行中/暂停中保存，未开始/已结束则清除快照）

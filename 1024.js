@@ -146,7 +146,7 @@ function completeDailyChallenge() {
     SFX.n1024Milestone(); // 复用里程碑号角做达成音
 }
 /** 对局进度镜像快照 localStorage 键（街机厅统一契约 arcade_save_1024，与 snake/tetris/pac/bee/pinball 同族）：
- *  返回游戏厅 / 收到 arcade:save 消息 / 页面卸载时保存，下次进入校验版本号与字段后恢复续玩；
+ *  收到 arcade:save 消息 / 页面卸载时保存，下次进入校验版本号与字段后恢复续玩；
  *  玩家主动重开、切换难度、达成胜利、棋盘死局结算时清除 */
 const SAVE_KEY = 'arcade_save_1024';
 /** 各方向的行列增量（dr：行偏移 / dc：列偏移） */
@@ -1392,8 +1392,8 @@ function isValidBoard(board) {
  * 仅在「对局进行中（含暂停中）」时写入；开始界面 / 胜利面板 / 死局结算等非进行中状态
  * 一律转为清除存档（快照只服务于未打完的局）。整体 try/catch 静默处理，
  * 存储不可用（隐私模式 / 配额满）等异常不影响游戏本体。
- * 触发时机：每步有效滑动 / 撤销后（局内主动落盘），以及返回游戏厅链接单击、
- * 父页 arcade:save 消息、pagehide 页面卸载三处兜底。
+ * 触发时机：每步有效滑动 / 撤销后（局内主动落盘），以及父页 arcade:save 消息、
+ * pagehide 页面卸载两处兜底。
  * 快照字段（首字段固定结构版本号 v，恢复时不匹配立即视为无效）：
  *   v           快照格式版本，恒为 1
  *   diff        难度键名（easy / normal / hard，棋盘尺寸与存档绑定）
@@ -1867,7 +1867,7 @@ requestAnimationFrame(loop);
 FX.playtime.init('1024');
 FX.KeyLight.init();
 
-/* ---------- 进度镜像快照的三处保存触发点（街机厅统一契约，与 snake 等游戏一致） ---------- */
+/* ---------- 进度镜像快照的两处保存触发点（街机厅统一契约，与 snake 等游戏一致） ---------- */
 
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
 // （saveSnapshot 内部自行区分：进行中写入，未开始/胜利面板/死局结算则清除存档）

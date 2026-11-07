@@ -4,7 +4,7 @@
  * 机制：7-bag 随机袋 / Hold 暂存（C/Shift，每次落子限一次）/ NEXT 三块预览 /
  *      SRS 踢墙旋转（顺时针 ↑/W/X · 逆时针 Z）/ 触底锁定延迟 500ms（移动旋转可重置，上限 15 次）/
  *      DAS 150ms + ARR 30ms 自实现按键重复 / 危险分级警报音（冷却 2.5s）/
- *      连消 COMBO 加成（50×连击×等级）/ 累计成就三条（V 键查看）/
+ *      连消 COMBO 加成（50×连击×等级）/ 累计成就八条（V 键查看）/
  *      T-Spin 判定（T 块旋入凹槽：四角占 3 + 最后动作为旋转，区分 FULL/MINI）/
  *      B2B 连锁（连续困难消行——Tetris 或 T-Spin 消行——得分 ×1.5）/
  *      All Clear 全消奖励（一次消行后棋盘清空追加高额奖励分）/
@@ -847,7 +847,7 @@ const gridLayerCtx = gridLayerCanvas.getContext('2d');
 let gridLayerDirty = true;
 
 /**
- * 将棋盘背景网格线渲染到离屏层：约 29 段网格路径原先每帧重绘，
+ * 将棋盘背景网格线渲染到离屏层：28 段网格路径原先每帧重绘，
  * 现仅在尺寸/DPR 变化时重建一次。棋盘底色（外扩 10px 防震动露边）保留每帧绘制
  */
 function renderGridLayer() {
@@ -1048,7 +1048,7 @@ function draw() {
         ctx.fillText(clearText.text, VIEW_W / 2, VIEW_H * 0.42 - (1 - k) * 12);
         ctx.globalAlpha = 1;
     }
-    // 全屏白闪（仅 TETRIS 庆祝时触发，快速衰减）
+    // 全屏白闪（TETRIS / ALL CLEAR 庆祝时触发，快速衰减）
     if (flashTime > 0) {
         ctx.fillStyle = `rgba(255,255,255,${(flashTime / 0.3) * 0.5})`;
         ctx.fillRect(-10, -10, VIEW_W + 20, VIEW_H + 20);

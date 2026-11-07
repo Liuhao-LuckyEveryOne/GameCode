@@ -2,7 +2,7 @@
 <!-- ==================================================================
      小蜜蜂游戏页（固定射击）
      结构：左上角成就墙入口 → 右上角音效开关/全屏切换 → 标题 →
-          主布局（左侧游戏容器：480×560 画布 + 开始/结束两块遮罩 +
+          主布局（左侧游戏容器：480×560 画布 + 开始/结束/暂停三块遮罩 +
           右侧 STATS 记分面板 + KEYS 键位说明栏）
      玩法：蜂群横移下压 + 随机俯冲 + 精英蜂 + 每 5 波 Boss 战；
           特殊蜂种（分裂蜂/自爆蜂）+ 事件波（俯冲潮/精英阵）；
@@ -10,7 +10,7 @@
           冲刺闪避（Shift，短暂无敌）+ 成就墙（V 开 / Esc 关）；
           连击倍率计分；粒子/震动/顿帧反馈；
           四档难度选择（无敌/简单/普通/困难，localStorage 持久化）
-     脚本：audio.js 公共音效库 / fullscreen.js 全屏控制 / bee.js 游戏逻辑
+     脚本：audio.js 公共音效库 / fx.js 全局特效库 / fullscreen.js 全屏控制 / gamepad.js 手柄支持 / bee.js 游戏逻辑
      共享：ach-trigger.css / ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
@@ -822,7 +822,7 @@
     </div>
     <!-- 成就解锁 toast 容器：右上角悬浮队列，解锁瞬间滑入展示后自动移除 -->
     <div id="achToastStack" class="ach-toast-stack"></div>
-    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → bee.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → bee.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="audio.js?v=20261107-1"></script>
     <script src="fx.js?v=20261107-1"></script>
     <script src="fullscreen.js?v=20261105-1"></script>

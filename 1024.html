@@ -5,7 +5,8 @@
           主布局（左列游戏容器：500×500 画布 + 开始/胜利/暂停/结束四块遮罩 +
           撤销按钮行；右侧信息栏：STATS 记分面板（分数/连击/最高分/目标进度）+
           KEYS 键位说明栏）
-     脚本：audio.js 公共音效库 / fx.js 全局特效库（成就解锁烟花）/ fullscreen.js 全屏控制 / 1024.js 游戏逻辑 /
+     脚本：audio.js 公共音效库 / fx.js 全局特效库（成就解锁烟花）/ fullscreen.js 全屏控制 /
+          gamepad.js 手柄支持公共库 / 1024.js 游戏逻辑 /
           ach-trigger.css + ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
@@ -1114,7 +1115,7 @@
     </div>
     <!-- 右上角成就解锁 toast 堆叠容器 -->
     <div id="achToastStack" aria-live="polite"></div>
-    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → 1024.js 游戏逻辑（仅依赖 audio.js 的 SFX） -->
+    <!-- 脚本加载顺序：audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js(GP) → ach-trigger.js → 1024.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="audio.js?v=20261107-1"></script>
     <script src="fx.js?v=20261107-1"></script>
     <script src="fullscreen.js?v=20261105-1"></script>

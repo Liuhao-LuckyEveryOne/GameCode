@@ -10,13 +10,13 @@
  *          目标灯：击中点亮得分，全部点亮触发清板奖励（加分 + 重置灯 + 武装 Jackpot + 掉落多球）；
  *          Jackpot：清板后下一次击中中央弹柱触发大奖（5000×倍率 + JACKPOT 金色大字演出）；
  *          最高分 localStorage 持久化（破纪录瞬间专属音效 + 全屏庆祝特效）；
- *          成就系统三条（localStorage：arcade_ach_pinball），V 键切换成就面板；
+ *          成就系统八条（localStorage：arcade_ach_pinball），V 键切换成就面板；
  *          空格按住蓄力、松开发射（力度决定初速，蓄力期间播放充电音）/暂停；P 暂停；切出窗口自动暂停
  * 视听特效：球速拖尾残影（渐隐蓝光）· 弹球台面投影阴影 · 弹射器/弹柱/目标灯命中火花粒子（跟随台面震动）·
  *          挡板大力击球火花 + 白色发光描边渐隐 + 短促震颤 · 蓄力发射充能环（青色充能 → 满力金色）·
  *          失球深渊坠落演出（深渊口火花喷发 + 双环冲击波 + 坠落烧红球体 +
  *          随机抖动警告大字 + 红色警报）+ 得分飘字 · JACKPOT 金色大字演出
- * 依赖：audio.js 全局音效库 SFX（通用开始/结束/点击音 + PINBALL 专属音效）
+ * 依赖：audio.js 全局音效库 SFX（通用开始/结束/点击音 + PINBALL 专属音效）/ fx.js 公共特效库 FX（画布适配/粒子池/数字滚动/时长统计）
  * ==================================================================== */
 
 /* ===================== 常量与世界参数 ===================== */
@@ -151,7 +151,7 @@ let flipperLen = 74;
 let invincibleMode = false;
 /** 难度选择存档键（localStorage），页面加载时恢复上一次选择 */
 const DIFFICULTY_KEY = 'pinballDifficulty';
-/** 进度快照存档键（localStorage）：返回游戏厅 / 收到 arcade:save 消息 / 关页时保存当前局进度，游戏结束即清除 */
+/** 进度快照存档键（localStorage）：父页返回游戏厅（arcade:save 消息）/ 关页时保存当前局进度，游戏结束即清除 */
 const SAVE_KEY = 'arcade_save_pinball';
 /** 本局是否刷新了历史最高分（结算面板据此显示"新纪录"提示） */
 let isNewRecord = false;
@@ -715,7 +715,7 @@ function collideBalls() {
                 const mx = (a.x + c.x) / 2;
                 const my = (a.y + c.y) / 2;
                 spawnSparks(mx, my, '#7ef3ff', 8);
-                SFX.pinWall(); // 内置 90ms 节流，球-球与撞墙共享防连续爆音
+                SFX.pinWall(); // 复用撞墙音色（库内无节流，此处靠 BALL_HIT_MIN_VN 阈值过滤防连续爆音）
                 addScore(BALL_HIT_SCORE * mult, mx, my);
             }
         }
@@ -814,8 +814,8 @@ function addScore(pts, wx, wy) {
 
 /**
  * 落盘最高分（脏标记置位时才真正写 localStorage，键 pinballHighScore）：
- * 在既有落盘时机统一调用——结算（gameOver）与各存档钩子（saveSnapshot 的三个触发点：
- * 返回大厅链接 / arcade:save 消息 / pagehide），碰撞热路径内不再同步写存储；
+ * 在既有落盘时机统一调用——结算（gameOver）与各存档钩子（saveSnapshot 的两个触发点：
+ * arcade:save 消息 / pagehide），碰撞热路径内不再同步写存储；
  * 存储写入失败（隐私模式 / 配额满）静默忽略，脏标记保留供下次时机重试
  */
 function flushHighScore() {
@@ -1110,7 +1110,7 @@ function togglePause() {
  */
 function saveSnapshot() {
     try {
-        flushHighScore(); // 复用三个既有存档钩子（返回大厅 / arcade:save / pagehide）顺带补写脏最高分，避免中途刷新丢纪录
+        flushHighScore(); // 复用既有存档钩子（arcade:save / pagehide）顺带补写脏最高分，避免中途刷新丢纪录
         if (state !== 'play' && state !== 'ready') {
             localStorage.removeItem(SAVE_KEY); // 未开始 / 已结束：清除残留快照
             return;
@@ -1144,7 +1144,7 @@ function saveSnapshot() {
  * 球数 1~3、分数非负有限等），任何异常或非法数据一律清除快照并返回 false，绝不因脏数据抛错；
  * 校验通过后覆盖游戏状态（含难度参数 / 目标灯 / Jackpot / 连击 / 多球位置速度），
  * 挡板复位默认角度、清空瞬态演出对象，刷新 HUD 与画布一帧，
- * 并停回暂停遮罩（追加"已恢复上次进度"提示）等待玩家按 P / 空格继续——不立即开跑。
+ * 并停回暂停遮罩（追加"已恢复上次进度"提示）等待玩家按 P 或点击遮罩继续——不立即开跑。
  * @returns {boolean} true 表示已成功恢复快照；false 表示无快照或快照非法（维持默认新局）
  */
 function restoreSnapshot() {
@@ -2233,7 +2233,7 @@ multElement.textContent = '×' + mult;
 drawBalls();
 
 // 进度快照恢复：位于核心状态创建之后、默认新局逻辑（开始按钮触发的新局）之前。
-// 恢复成功则停回暂停遮罩等待玩家按 P / 空格继续（不立即开跑），
+// 恢复成功则停回暂停遮罩等待玩家按 P 或点击遮罩继续（不立即开跑），
 // 失败或无快照则维持默认新局（开始遮罩 + 初始待发射球）不变
 restoreSnapshot();
 

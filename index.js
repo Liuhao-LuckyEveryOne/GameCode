@@ -2,7 +2,7 @@
    像素街机厅 · 大厅脚本（index.js）
    由 index.html 内联脚本外置而来（2026-11-04，结构优化：html 只留结构与样式），
    逻辑零改动，仅剥除原内联时的 8 空格基础缩进；
-   于 body 尾部、公共库（audio.js / fx.js / fullscreen.js）之后同步加载，
+   于 body 尾部、公共库（audio.js / fx.js / fullscreen.js / gamepad.js）之后同步加载，
    普通外部脚本顶层声明仍为全局作用域，HTML 行内 on* 处理器可正常引用。
 
    职责（对应大厅全部 JS 动效与逻辑）：
@@ -2037,7 +2037,7 @@ document.addEventListener('keydown', e => {
         // 动画（延迟随之失效），摘类即瞬变彩色
         document.body.classList.add('lights-on');
         document.body.classList.remove('pre-coin');
-        setTimeout(() => document.body.classList.remove('lights-on'), 6000); // 金币演出 2.7s + 最晚卡片幕帘 5.25s + 动画 0.45s ≈ 5.7s，留余量摘类清理
+        setTimeout(() => document.body.classList.remove('lights-on'), 6000); // 最晚卡片幕帘延迟 5.25s（已含金币演出 2.7s）+ 动画 0.45s ≈ 5.7s，留余量摘类清理
     }
     // 鼠标路径：点击投币口即投币——每次点击都有完整的中央展示+抛物线飞入演出；
     // 首次投币顺带点亮解锁（insertCoin 幂等）。事件继续冒泡到 window，
