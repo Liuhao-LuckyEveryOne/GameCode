@@ -1739,13 +1739,18 @@ document.addEventListener('keyup', (event) => {
     if (i !== -1) heldKeys.splice(i, 1);
 });
 
-// 切出窗口时自动暂停：回来后从暂停遮罩继续，对局节奏不被切窗打断
-// （与 snake / tetris / pac / pinball 的失焦即暂停行为保持一致）
-window.addEventListener('blur', () => {
+/**
+ * 失焦/切后台兜底：自动暂停 + 清空按住记录与拖拽手势
+ * blur 与 visibilitychange 双通道共用本函数（visibilitychange 兜底移动端切应用
+ * 不触发 blur 的场景；双触发经 isPaused 守卫天然幂等）
+ */
+function handleFocusLoss() {
     if (playing && !isPaused) togglePause();
     heldKeys.length = 0; // 清空按住记录：切窗后系统不会补发 keyup，防止回来后莫名连滑
     endMouseDrag(); // 清理进行中的鼠标拖拽手势：切窗后不会补发 pointerup，残留拖拽恢复后会误出招
-});
+}
+window.addEventListener('blur', handleFocusLoss);
+document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
 
 // 触屏：按下记录起点，手指划过阈值即刻出招（无需抬手），
 // 且每次触发后把起点重置为当前位置，一次连续拖动即可连环滑动

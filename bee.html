@@ -185,6 +185,8 @@
         /* 游戏主画布：480×560，粉色霓虹边框与内外光晕 */
         #gameCanvas {
             display: block;
+            /* 禁用浏览器手势（页面滚动/双击缩放）：触屏拖拽转向全部交给画布 pointer 通道处理 */
+            touch-action: none;
             /* 固定 CSS 逻辑尺寸：DPR 适配会放大画布物理分辨率（width/height 属性），
                锁定显示尺寸保证布局恒为 480×560，clientWidth/Height 恒等于逻辑坐标 */
             width: 480px;

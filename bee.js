@@ -363,6 +363,8 @@ let mouseDirTimer = 0;
 let mouseDx = 0;
 /** 鼠标左键按下状态：true 期间等同按住空格持续射击 */
 let mouseFire = false;
+/** 触屏转向手势上一次触点 X 坐标：null 表示无进行中的触屏转向（pointerup/cancel/失焦清空） */
+let touchLastX = null;
 /** 玩家朝向：1 右 / -1 左（原地冲刺时决定冲刺方向） */
 let facing = 1;
 /** 冲刺剩余时间（秒），大于 0 时处于冲刺位移与无敌帧中 */
@@ -2795,6 +2797,33 @@ document.addEventListener('mousedown', e => {
 document.addEventListener('mouseup', e => {
     if (e.button === 0) mouseFire = false;
 });
+// 触屏转向通道（监听画布）：移动端没有 mousemove 的 movementX，无法经鼠标通道转向，
+// 改由画布 pointer 事件驱动——按下记录触点、拖动按帧间位移折算方向，复用鼠标通道
+// 同一套累计判定（≥2px 出方向 / >60px 跳变忽略 / 0.15s 保持窗）；pointerType 判界
+// 保证两通道互不叠加（桌面鼠标仍走上方 mousemove，触屏合成的 mousemove 无有效 movementX）
+canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return; // 鼠标维持原通道，避免双输入叠加
+    touchLastX = e.clientX;
+    // 捕获到画布：手指拖出画布区域仍能持续收到 move/up，转向不中断
+    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'touch' || touchLastX === null) return;
+    const dx = e.clientX - touchLastX;
+    touchLastX = e.clientX; // 触点恒随行：暂停期间也刷新，避免恢复瞬间按陈旧坐标折算出跳变
+    // 暂停中（失焦或手动）不更新方向状态：与 mousemove 通道守卫一致，防止恢复后漂移
+    if (paused || blurPaused) return;
+    if (Math.abs(dx) > 60) return; // 忽略异常跳变（与鼠标通道同一阈值）
+    mouseDx += dx;
+    if (Math.abs(mouseDx) >= 2) {
+        mouseDir = mouseDx > 0 ? 1 : -1;
+        mouseDirTimer = MOUSE_DIR_HOLD;
+        mouseDx = 0;
+    }
+});
+// 抬手/系统接管结束转向手势：清触点与未满阈值的位移残量，方向交给保持窗自然衰减
+canvas.addEventListener('pointerup', () => { touchLastX = null; mouseDx = 0; });
+canvas.addEventListener('pointercancel', () => { touchLastX = null; mouseDx = 0; });
 // 窗口失焦：清空键鼠状态，防止切窗期间按键"卡住"、回来后自动漂移/自动开火；
 // 游戏进行中同时进入失焦暂停，由主循环挂起逻辑并绘制暂停遮罩
 window.addEventListener('blur', () => {
@@ -2803,6 +2832,7 @@ window.addEventListener('blur', () => {
     mouseDir = 0;
     mouseDirTimer = 0;
     mouseDx = 0;
+    touchLastX = null; // 触屏转向手势同步终止：切窗后不会补发 pointerup
     if (gameState === 'playing') {
         blurPaused = true;
         // 失焦暂停同步挂起 BGM，与手动暂停保持一致
@@ -2864,8 +2894,8 @@ document.addEventListener('keydown', e => {
         return;
     }
     keys[e.code] = true;
-    // Shift 触发冲刺闪避（左右 Shift 均可）
-    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') performDash();
+    // Shift 触发冲刺闪避（左右 Shift 均可；!e.repeat 防长按连发反复冲刺，与 P/V 键守卫一致）
+    if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) performDash();
 });
 // 键盘抬起：清除按键状态
 document.addEventListener('keyup', e => {

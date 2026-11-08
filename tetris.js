@@ -113,6 +113,7 @@ const LOCK_DELAY = 500;      // 方块触底后的锁定延迟（毫秒）
 const MAX_LOCK_RESETS = 15;  // 同一方块因移动/旋转重置锁定计时的最大次数
 const DAS_DELAY = 150;       // 按住方向键的初段延迟（毫秒），过后进入自动重复
 const ARR_INTERVAL = 30;     // 自动重复阶段每格移动间隔（毫秒）
+const SOFT_DROP_INTERVAL = 70; // 软降连发间隔（毫秒）：与触屏软降连发同节奏
 const ALARM_COOLDOWN = 2500; // 危险警报音效冷却（毫秒）
 let lockTimer = 0;           // 锁定延迟计时累加器（毫秒）
 let lockResets = 0;          // 当前方块已重置锁定计时的次数
@@ -124,6 +125,8 @@ let rightHeld = false; // 右方向键是否按住
 let activeDir = 0;     // 当前 DAS 驱动方向（-1 左 / 1 右 / 0 无）
 let dasTimer = 0;      // DAS 初段延迟计时（毫秒）
 let arrTimer = 0;      // ARR 自动重复计时（毫秒）
+let downHeld = false;  // 下方向键是否按住（软降连发驱动标记）
+let softDropTimer = 0; // 软降连发计时累加器（毫秒）
 
 // ---------- 特效状态 ----------
 const CLEAR_FX_TIME = 0.35; // 消行闪白演出时长（秒）
@@ -787,6 +790,21 @@ function updateDAS(deltaMs) {
 }
 
 /**
+ * 推进软降自动重复状态机：按住 ↓/S 期间每 SOFT_DROP_INTERVAL 落一格。
+ * keydown 已立即落一格，这里只负责按住期间的连发节奏（与左右 DAS 状态机同构）；
+ * 触底时 softDrop 内部自守卫为空操作，新块生成后自动恢复连发
+ * @param {number} deltaMs 本帧时间增量（毫秒）
+ */
+function updateSoftDrop(deltaMs) {
+    if (!downHeld) return;
+    softDropTimer += deltaMs;
+    while (softDropTimer >= SOFT_DROP_INTERVAL) {
+        softDropTimer -= SOFT_DROP_INTERVAL;
+        softDrop();
+    }
+}
+
+/**
  * 危险分级警报检查：堆叠最高点进入顶部 2 行播 2 级警报，
  * 进入顶部 DANGER_ROWS(4) 行播 1 级警报；音效冷却 ALARM_COOLDOWN 毫秒
  * @param {number} now 当前帧时间戳（毫秒，与 rAF 时间戳同源）
@@ -1180,6 +1198,8 @@ function startGame() {
     alarmCooldownUntil = 0;
     leftHeld = false;
     rightHeld = false;
+    downHeld = false;
+    softDropTimer = 0;
     activeDir = 0;
     dasTimer = 0;
     arrTimer = 0;
@@ -1259,7 +1279,8 @@ function loop(t) {
             } else {
                 lockTimer = 0;
             }
-            updateDAS(deltaMs);  // 推进 DAS/ARR 自动重复
+            updateDAS(deltaMs);       // 推进 DAS/ARR 自动重复
+            updateSoftDrop(deltaMs);  // 推进软降连发（与左右 DAS 同守卫块，piece 必然存在）
             checkDangerAlarm(t); // 危险分级警报检查（含冷却）
         }
     }
@@ -1313,7 +1334,9 @@ document.addEventListener('keydown', e => {
             if (!e.repeat && !rightHeld) { rightHeld = true; startDAS(1); }
             break;
         case 'ArrowDown': case 'KeyS':
-            if (!e.repeat) softDrop();
+            // 立即软降一格并置按住标记：连发由 updateSoftDrop 驱动（与左右 DAS 同构，
+            // 修正此前按住仅降 1 格、无按住连发的问题）
+            if (!e.repeat) { downHeld = true; softDropTimer = 0; softDrop(); }
             break;
         case 'ArrowUp': case 'KeyW': case 'KeyX':
             if (!e.repeat) rotatePiece(); // 顺时针旋转（↑ / W / X）
@@ -1334,16 +1357,24 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => {
     if (e.code === 'ArrowLeft' || e.code === 'KeyA') releaseDir(-1);
     else if (e.code === 'ArrowRight' || e.code === 'KeyD') releaseDir(1);
+    else if (e.code === 'ArrowDown' || e.code === 'KeyS') downHeld = false; // 松开下键：终止软降连发
 });
 
-// 失焦：清空 DAS 按键状态（防止切回后按键"卡住"持续移动）与触屏连发计时，并自动暂停
-window.addEventListener('blur', () => {
+/**
+ * 失焦/切后台兜底：清空 DAS 与软降按住状态（防止切回后按键"卡住"持续移动/连降）
+ * 与触屏连发计时，并自动暂停；blur 与 visibilitychange 双通道共用本函数
+ * （visibilitychange 兜底移动端切应用不触发 blur 的场景，双触发经暂停守卫天然幂等）
+ */
+function handleFocusLoss() {
     leftHeld = false;
     rightHeld = false;
+    downHeld = false;
     activeDir = 0;
     stopAllTouchRepeats(); // 触屏按钮连发计时同步清空（对齐失焦清理惯例）
     if (running && !paused) togglePause();
-});
+}
+window.addEventListener('blur', handleFocusLoss);
+document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
 
 // 暂停遮罩点击恢复（参照华容道 / 蜜蜂机台）：遮罩悬浮于画布之上会拦截点击，
 // 点击遮罩空白处即恢复（与 P 键同走 togglePause；失焦自动暂停弹出的遮罩同样适用，
@@ -1756,6 +1787,8 @@ function restoreSnapshot() {
         lockResets = 0;
         leftHeld = false;
         rightHeld = false;
+        downHeld = false;
+        softDropTimer = 0;
         activeDir = 0;
         dasTimer = 0;
         arrTimer = 0;

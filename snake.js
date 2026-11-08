@@ -1356,7 +1356,7 @@ document.addEventListener('keydown', (event) => {
     if (!newDirection) return;
     event.preventDefault(); // 阻止方向键滚动页面
     if (event.repeat) return; // 防御：按住方向的系统重复键不再入队（队列同向去重已兜底，此处显式拦截语义更清晰）
-    if (isPaused) return; // 暂停中（含切窗自动暂停）蛇已冻结：不入队、不播转向音，避免恢复瞬间莫名转向
+    if (isPaused || achPanelOpen) return; // 暂停（含切窗自动暂停）/ 成就墙打开期间蛇已冻结：不入队、不播转向音，与触屏手势通道守卫对齐
     queueDirection(newDirection); // 压入预输入队列：拐双弯的两个意图分属两个 tick 依次生效
 });
 
@@ -1417,11 +1417,17 @@ canvas.addEventListener('pointermove', (event) => {
 canvas.addEventListener('pointerup', endSwipe); // 松手结束手势（capture 保证按住拖出画布也必送达）
 canvas.addEventListener('pointercancel', endSwipe); // 系统接管指针（如来电 / 触控冲突）时兜底终止
 
-// 切出窗口时自动暂停，避免回来时蛇已经撞死
-window.addEventListener('blur', () => {
-    endSwipe(); // 清理进行中的滑动手势：切窗后不会补发 pointerup，残留手势恢复后会误出招
+/**
+ * 失焦/切后台兜底：清理进行中的滑动手势并自动暂停，避免回来时蛇已撞死
+ * blur 与 visibilitychange 双通道共用本函数（visibilitychange 兜底移动端切应用
+ * 不触发 blur 的场景；双触发经 isPaused 守卫天然幂等）
+ */
+function handleFocusLoss() {
+    endSwipe(); // 切窗后不会补发 pointerup，残留手势恢复后会误出招
     if (isRunning && !isDying && !isPaused) togglePause();
-});
+}
+window.addEventListener('blur', handleFocusLoss);
+document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
 
 // 暂停遮罩点击恢复：点遮罩空白处续玩，与键盘空格等效；
 // 失焦自动暂停与快照续玩等待确认共用同一遮罩，点击同样适用

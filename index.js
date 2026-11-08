@@ -1543,6 +1543,7 @@ document.addEventListener('keydown', e => {
         // 对应卡片（叙事闭环——"画面装回卡带"）。截图/动画全链路 try-catch，任何失败
         // （跨源、画布为空、LOADING 中关闭）静默跳过，退回原 CRT 关机演出；减动效不启动
         flyBackSnapshot(frame, openedCard);
+        const backCard = openedCard; // 焦点回流目标先暂存：下方置空后 remove 回调仍需引用
         openedCard = null; // 落点引用用后即清，防止异常路径残留
         // 关机演出启动前先恢复大厅动效与 BGM：演出进行到黑底开始淡出（64%）时，
         // 露出的大厅已处于活动状态，BGM 恰在演出结束前后淡入，衔接无缝
@@ -1555,6 +1556,10 @@ document.addEventListener('keydown', e => {
             if (removed) return;
             removed = true;
             el.remove();
+            // 焦点回流：iframe 移除后焦点随其销毁落到 body，键盘导航因 activeElement
+            // 不在卡片上而整体失灵（索引查询恒为 -1）；把焦点还给来源卡片，
+            // 方向键/空格可立即继续导航与启动（preventScroll 避免页面突兀滚动）
+            if (backCard && backCard.isConnected) backCard.focus({ preventScroll: true });
             // 从游戏返回大厅：主动刷新 BEST（游戏在 iframe 内写入的最高分即时上屏，
             // 与 storage 事件兜底双保险）
             refreshBest();

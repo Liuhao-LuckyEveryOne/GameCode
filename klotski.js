@@ -3094,6 +3094,7 @@ canvas.addEventListener('pointerdown', e => {
     // 暂停中：任意点击画布恢复（计时随之解冻），本次点击不作为选子/拖拽输入
     if (isPaused) { togglePause(); return; }
     if (demoActive) return; // 演示进行中：忽略指针操作，防止拖拽打断自动走子
+    if (drag) return; // 已有进行中的拖拽（多指误触）：忽略新指，防止覆盖旧手势致旧棋子偏移残留
     e.preventDefault();
     const pos = toCanvasPos(e);
     const p = pieceAt(pos.x, pos.y);
@@ -3104,7 +3105,7 @@ canvas.addEventListener('pointerdown', e => {
     setCursor('grabbing'); // 拖拽中切换抓取手型
     p.anim = null; // 打断进行中的补间，避免拖拽起点错位
     p.bounce = null; // 打断回弹补间，避免覆盖跟手位移
-    drag = { p, sx: pos.x, sy: pos.y, dir: null, k: 0, off: 0, locked: false };
+    drag = { id: e.pointerId, p, sx: pos.x, sy: pos.y, dir: null, k: 0, off: 0, locked: false };
     canvas.setPointerCapture(e.pointerId);
 });
 
@@ -3126,7 +3127,7 @@ canvas.addEventListener('pointermove', e => {
         hoverPiece = state === 'playing' && !isPaused && !demoActive ? pieceAt(pos.x, pos.y) : null;
         setCursor(hoverPiece ? 'grab' : 'default');
     }
-    if (!drag || drag.locked) return;
+    if (!drag || e.pointerId !== drag.id || drag.locked) return; // 非拖拽发起指针（多指另指）不干预手势
     const dxp = pos.x - drag.sx;
     const dyp = pos.y - drag.sy;
     // 方向未定：超过判定阈值后按位移更大的轴确定主方向
@@ -3156,8 +3157,8 @@ canvas.addEventListener('pointermove', e => {
  * 指针抬起：位移吸附到最近整数格——滑过至少半格才算有效滑动
  * （结算步数 / 撤销栈 / 音效 / 通关检查），否则回弹原地
  */
-canvas.addEventListener('pointerup', () => {
-    if (!drag) return;
+canvas.addEventListener('pointerup', e => {
+    if (!drag || e.pointerId !== drag.id) return; // 仅拖拽发起指针的抬起才结算，多指另指抬起不劫持
     const d = drag;
     drag = null;
     const p = d.p;
@@ -3190,7 +3191,7 @@ canvas.addEventListener('pointerup', () => {
 /**
  * 指针离开画布（捕获中触发取消）：按抬起逻辑结算，防止手势悬挂
  */
-canvas.addEventListener('pointercancel', () => { if (drag) endDrag(); });
+canvas.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) endDrag(); });
 
 /**
  * 指针离开画布：清空悬停所指并复位光标（拖拽捕获中不会触发，无需顾虑手势）
@@ -3271,6 +3272,7 @@ document.addEventListener('keydown', e => {
     if (dirMap[e.key]) {
         e.preventDefault();
         if (state !== 'playing') return;
+        if (drag) return; // 拖拽进行中忽略方向键：trySlide 改格子坐标会与拖拽位移基准脱节，松手结算将产生逻辑重叠
         const [dx, dy] = dirMap[e.key];
         trySlide(selected, dx, dy, 1);
         return;
