@@ -537,7 +537,7 @@ function finishClear() {
     const newLevel = Math.floor(totalLines / 10) + 1;
     if (newLevel > level) {
         level = newLevel;
-        dropInterval = Math.max(80, dropBase - (level - 1) * 60); // 每升 1 级间隔缩短 60ms，下限 80ms
+        dropInterval = levelDropInterval(level); // 每升 1 级间隔缩短 60ms，下限 80ms
         bigText = { text: 'LEVEL UP', t: BIGTEXT_TIME };
         SFX.tLevelUp();
     }
@@ -1077,7 +1077,7 @@ function draw() {
         ctx.fillRect(-10, -10, VIEW_W + 20, VIEW_H + 20);
     }
     // 危险警报：堆叠最高点进入顶部 DANGER_ROWS 行范围内时，四边红色渐变呼吸警示
-    if (running && stackTopRow() >= ROWS - DANGER_ROWS) {
+    if (running && stackTopRow() < DANGER_ROWS) {
         const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160); // 呼吸脉冲 0 → 1
         const a = 0.08 + pulse * 0.16;                               // 透明度随呼吸起伏
         const edge = 42;                                             // 光带厚度（像素）
@@ -1160,6 +1160,52 @@ function selectDifficulty(btn) {
 }
 
 /**
+ * 按等级推导下落间隔：以难度初始间隔 dropBase 为基准，每升 1 级缩短 60ms，下限 80ms
+ * @param {number} lvl 等级（≥1）
+ * @returns {number} 下落间隔（毫秒）
+ */
+function levelDropInterval(lvl) {
+    return Math.max(80, dropBase - (lvl - 1) * 60);
+}
+
+/**
+ * 复位瞬态状态（开始新局与恢复快照共用的清扫逻辑）：
+ * 输入时序（自然下落计数 / 锁定延迟 / DAS-ARR / 软降连发 / 警报冷却 / 死亡渐隐）、
+ * 特效残留（消行演出 / 粒子 / 残影 / 震动 / 白闪 / 大字飘字）、
+ * T-Spin / B2B 连锁计数全部归零；棋盘 / 分数等核心状态不在此列，由调用方自行处置
+ */
+function resetTransientState() {
+    // —— 输入时序状态 ——
+    dropCounter = 0;
+    lockTimer = 0;
+    lockResets = 0;
+    leftHeld = false;
+    rightHeld = false;
+    downHeld = false;
+    softDropTimer = 0;
+    activeDir = 0;
+    dasTimer = 0;
+    arrTimer = 0;
+    alarmCooldownUntil = 0;
+    deathFadeTime = 0;
+    // —— 特效残留 ——
+    clearing = null;
+    particlePool.clear(); // 归还全部粒子（池对象保留复用）
+    trails = [];
+    shakeTime = 0;
+    flashTime = 0;
+    bigText = null;
+    comboCount = 0;
+    comboText = null;
+    clearText = null;
+    spinText = null;
+    // —— T-Spin / B2B 连锁状态 ——
+    b2bActive = false;
+    lastActionRotate = false;
+    lastKickIndex = -1;
+}
+
+/**
  * 开始新游戏：重置全部状态并隐藏遮罩
  */
 function startGame() {
@@ -1175,34 +1221,8 @@ function startGame() {
     runStats.level = 1;
     runStats.maxRows = 0;
     dropInterval = dropBase; // 应用所选难度的初始速度
-    dropCounter = 0;
     lastTime = performance.now(); // 防止首帧 delta 过大导致瞬间下落
-    // 清空全部特效残留
-    clearing = null;
-    particlePool.clear(); // 归还全部粒子（池对象保留复用）
-    trails = [];
-    shakeTime = 0;
-    flashTime = 0;
-    bigText = null;
-    comboCount = 0;
-    comboText = null;
-    clearText = null;
-    spinText = null;
-    // 重置 T-Spin / B2B 连锁状态
-    b2bActive = false;
-    lastActionRotate = false;
-    lastKickIndex = -1;
-    // 重置锁定延迟 / DAS-ARR / 警报冷却状态
-    lockTimer = 0;
-    lockResets = 0;
-    alarmCooldownUntil = 0;
-    leftHeld = false;
-    rightHeld = false;
-    downHeld = false;
-    softDropTimer = 0;
-    activeDir = 0;
-    dasTimer = 0;
-    arrTimer = 0;
+    resetTransientState(); // 清空特效残留 / 输入时序 / 连锁状态（与快照恢复共用）
     // 重置 7-bag 随机袋并预填 NEXT 队列、清空 HOLD 暂存
     bag = [];
     nextQueue = [];
@@ -1249,7 +1269,8 @@ function gameOver() {
 
 /**
  * 主循环（requestAnimationFrame 驱动，下一帧排程前置于帧逻辑：先排程后执行，
- * 单帧异常只跳过该帧，渲染链永不中断）：时间增量累加器控制自然下落节奏；
+ * 单帧异常只跳过该帧，渲染链永不中断）：时间增量累加器控制自然下落节奏（逻辑
+ * deltaMs 与特效 dt 同按 50ms 封顶，卡顿/切页回帧不产生连击）；
  * 消行演出期间暂停下落并倒计时，演出结束交棒 finishClear；
  * hitstop 卡帧期间（FX.frozen）跳过全部逻辑与特效推进，仅渲染定格画面；
  * 特效在非暂停时持续推进（游戏结束后余韵继续播完）；每帧无条件刷新 lastTime，
@@ -1266,7 +1287,7 @@ function loop(t) {
             clearing.timer -= dt;
             if (clearing.timer <= 0) finishClear();
         } else {
-            const deltaMs = t - lastTime;
+            const deltaMs = Math.min(t - lastTime, 50); // 毫秒，与特效 dt 同按 50ms 封顶：卡顿/切页回帧不会连移 DAS、连发软降或瞬间击穿锁延迟
             dropCounter += deltaMs;
             if (dropCounter > dropInterval) {
                 drop();
@@ -1302,12 +1323,14 @@ function loop(t) {
  * 全局键盘控制：
  * P 暂停/恢复（游戏进行中含暂停态可按）；游戏进行中 ←/A →/D 平移、↓/S 软降、
  * ↑/W/X 顺时针旋转、Z 逆时针旋转、空格硬降；
- * 方向键与空格均阻止默认的页面滚动行为
+ * 对局进行中方向键与空格阻止默认的页面滚动（非对局状态保留原生滚动）
  * @param {KeyboardEvent} e 键盘事件
  */
 document.addEventListener('keydown', e => {
-    // 阻止方向键 / 空格滚动页面
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+    // 仅对局进行中阻止方向键 / 空格的默认滚动：开始界面 / 暂停 / 结算 / 成就墙打开期间
+    // 不拦截，保留页面原生滚动；对局内含消行演出窗口一并拦截，防止演出期按住键漏滚页面
+    if (running && !paused && piece &&
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
         e.preventDefault();
     }
     if (e.code === 'KeyP') {
@@ -1780,34 +1803,8 @@ function restoreSnapshot() {
         score = s.score;
         level = s.level;
         totalLines = s.totalLines;
-        dropInterval = Math.max(80, dropBase - (level - 1) * 60); // 下落速度按恢复后的等级重新推导
-        // —— 输入时序状态复位为默认值（Lock Delay / DAS-ARR / 警报冷却 / 死亡渐隐） ——
-        dropCounter = 0;
-        lockTimer = 0;
-        lockResets = 0;
-        leftHeld = false;
-        rightHeld = false;
-        downHeld = false;
-        softDropTimer = 0;
-        activeDir = 0;
-        dasTimer = 0;
-        arrTimer = 0;
-        alarmCooldownUntil = 0;
-        deathFadeTime = 0;
-        // —— 特效与 T-Spin / B2B / COMBO 状态清零 ——
-        clearing = null;
-        particlePool.clear();
-        trails = [];
-        shakeTime = 0;
-        flashTime = 0;
-        bigText = null;
-        comboCount = 0;
-        comboText = null;
-        clearText = null;
-        spinText = null;
-        b2bActive = false;
-        lastActionRotate = false;
-        lastKickIndex = -1;
+        dropInterval = levelDropInterval(level); // 下落速度按恢复后的等级重新推导
+        resetTransientState(); // 输入时序 / 特效 / 连锁状态复位为默认值（与开始新局共用）
         // —— 进入暂停遮罩等待玩家继续（防恢复即死） ——
         running = true;
         paused = true;
@@ -1843,7 +1840,12 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
+// 来源校验：仅接受同源消息（大厅与机台页同源部署）；file:// 直开时父子页均为
+// 不透明源（origin 序列化为 "null"），按协议单独放行；跨源伪造的 arcade:fs /
+// arcade:save 指令在此丢弃，防止干扰全屏音效或诱导覆写存档
+const TRUSTED_ORIGIN = location.protocol === 'file:' ? 'null' : location.origin;
 window.addEventListener('message', e => {
+    if (e.origin !== TRUSTED_ORIGIN) return; // 非可信来源直接丢弃
     const d = e.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'arcade:fs') {
@@ -1969,7 +1971,7 @@ window.__ARCADE_TESTS__ = [
             if (nextQueue[0] !== 4 || nextQueue[1] !== 6) throw new Error('顺序生成队列错位: ' + nextQueue.join(','));
         } finally { board = oldBoard; piece = oldPiece; nextQueue = oldQueue; }
     } },
-    // 泵帧用例：合成时间戳连调 loop，验证裸 deltaMs 累积触发软降（与 dt 封顶无关）
+    // 泵帧用例：合成时间戳连调 loop，验证 deltaMs 累积触发自然下落（封顶 50ms 不影响越阈判定）
     { name: 'loop 泵帧驱动软降（dropCounter 累积触发 drop）', fn: () => {
         const realRAF = window.requestAnimationFrame;
         window.requestAnimationFrame = () => 0; // 桩化：泵帧期间不再叠加真实排程
@@ -1987,7 +1989,7 @@ window.__ARCADE_TESTS__ = [
             dropCounter = dropInterval - 1;
             loop(t0);                           // deltaMs=0 → dropCounter 不变，不落
             if (piece.y !== y0) throw new Error('未达阈值不应下落');
-            loop(t0 + 100);                     // deltaMs=100 → 累积越过 dropInterval → drop 一次
+            loop(t0 + 100);                     // deltaMs=100 → 封顶取 50，dropInterval-1+50 仍越阈 → drop 一次
             if (piece.y !== y0 + 1) throw new Error('软降未触发: y=' + piece.y + ' 预期 ' + (y0 + 1));
         } finally {
             window.requestAnimationFrame = realRAF;
