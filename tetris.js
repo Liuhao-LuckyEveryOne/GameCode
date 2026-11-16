@@ -1545,29 +1545,23 @@ let achFrozen = false;
  * @returns {{unlocked: Object<string, number>, best: Object<string, number>}} v2 成就存档
  */
 function loadAchStore() {
-    try {
-        const raw = localStorage.getItem(ACH_KEY);
-        if (!raw) return { unlocked: {}, best: { ...BEST_DEFAULTS } }; // 无存档：全新档案
-        const data = JSON.parse(raw);
-        if (Array.isArray(data)) {
-            // v1 → v2 迁移：旧 id 全部保留，历史最佳无从考证按默认值起步（后续游玩自然填充）
-            const migrated = { unlocked: {}, best: { ...BEST_DEFAULTS } };
-            for (const id of data) migrated.unlocked[id] = 0;
-            return migrated;
-        }
-        // v2 结构：best 缺失维度用默认值补齐（展开时已存键覆盖默认值，缺失键自然落到默认值）
-        return { unlocked: data.unlocked || {}, best: { ...BEST_DEFAULTS, ...(data.best || {}) } };
-    } catch (e) { /* 存档损坏：按全新档案处理 */ }
-    return { unlocked: {}, best: { ...BEST_DEFAULTS } };
+    const data = Arcade.loadJSON(ACH_KEY); // 键缺失 / 损坏 / 存储不可用统一返回 null，按全新档案处理
+    if (!data) return { unlocked: {}, best: { ...BEST_DEFAULTS } }; // 无存档：全新档案
+    if (Array.isArray(data)) {
+        // v1 → v2 迁移：旧 id 全部保留，历史最佳无从考证按默认值起步（后续游玩自然填充）
+        const migrated = { unlocked: {}, best: { ...BEST_DEFAULTS } };
+        for (const id of data) migrated.unlocked[id] = 0;
+        return migrated;
+    }
+    // v2 结构：best 缺失维度用默认值补齐（展开时已存键覆盖默认值，缺失键自然落到默认值）
+    return { unlocked: data.unlocked || {}, best: { ...BEST_DEFAULTS, ...(data.best || {}) } };
 }
 
 /**
  * 持久化成就存档（unlocked 解锁表 + best 历史最佳一并写入 localStorage）
  */
 function saveAchStore() {
-    try {
-        localStorage.setItem(ACH_KEY, JSON.stringify(achStore));
-    } catch (e) { /* 隐私模式写入失败：成就提示照常弹出，仅不入盘，不中断结算链 */ }
+    Arcade.saveJSON(ACH_KEY, achStore); // 隐私模式写入失败：成就提示照常弹出，仅不入盘，不中断结算链
 }
 
 /**
@@ -1720,8 +1714,8 @@ function saveSnapshot() {
             level: level,                                                // 等级
             totalLines: totalLines                                       // 累计消行数
         };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot));
-    } catch (e) { /* 序列化或存储失败：静默跳过，不影响游戏 */ }
+        Arcade.saveJSON(SAVE_KEY, snapshot); // 存储失败由 saveJSON 静默降级
+    } catch (e) { /* 快照组装异常：静默跳过，不影响游戏 */ }
 }
 
 /**
@@ -1779,9 +1773,8 @@ function isValidSnapshot(s) {
  */
 function restoreSnapshot() {
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
-        if (!raw) return false; // 无存档：按新开局处理
-        const s = JSON.parse(raw);
+        const s = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
+        if (!s) return false; // 无存档或已损坏：按新开局处理
         if (!isValidSnapshot(s)) {
             localStorage.removeItem(SAVE_KEY); // 脏数据：弃用并清除
             return false;

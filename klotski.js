@@ -1241,9 +1241,7 @@ function saveSnapshot() {
             pieces: pieces.map(p => [p.x, p.y]), // 全部棋子当前位置（按布局棋子表顺序对应）
             moves: moves // 当前步数
         };
-        try {
-            localStorage.setItem(SAVE_KEY, JSON.stringify(snap));
-        } catch (e) { /* 存储不可用 / 配额满时静默放弃，不影响游戏 */ }
+        Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用 / 配额满时静默放弃，不影响游戏
     } else {
         // 游戏未开始 / 已通关：不留快照
         try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* 静默 */ }
@@ -1271,9 +1269,8 @@ function clearSnapshot() {
  */
 function restoreSnapshot() {
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
-        if (!raw) return false; // 无快照：正常新开局，无需清理
-        const snap = JSON.parse(raw);
+        const snap = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
+        if (!snap) return false; // 无快照或已损坏：正常新开局，无需清理
         // 版本号不符（损坏或未来格式）：立即弃用并清除
         if (!snap || typeof snap !== 'object' || snap.v !== 1) {
             localStorage.removeItem(SAVE_KEY);

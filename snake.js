@@ -276,7 +276,7 @@ let goldCountRun = 0;
 function loadAchStore() {
     const store = { unlocked: {}, best: { ...BEST_DEFAULTS } };
     try {
-        const raw = JSON.parse(localStorage.getItem(ACHIEVEMENT_KEY) || 'null');
+        const raw = Arcade.loadJSON(ACHIEVEMENT_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
         if (Array.isArray(raw)) {
             // v1 → v2 迁移：旧存档只有解锁 id 列表，无解锁时间与历史最佳
             for (const id of raw) {
@@ -305,9 +305,7 @@ function loadAchStore() {
  * @param {{unlocked: Object<string, number>, best: Object<string, number>}} store 成就存档
  */
 function saveAchStore(store) {
-    try {
-        localStorage.setItem(ACHIEVEMENT_KEY, JSON.stringify(store));
-    } catch (e) { /* 存储不可用时静默放弃，不影响游戏 */ }
+    Arcade.saveJSON(ACHIEVEMENT_KEY, store); // 存储不可用时静默放弃，不影响游戏
 }
 
 /**
@@ -1176,9 +1174,7 @@ function saveSnapshot() {
             maxCombo: maxComboRun, // 本局连击峰值（成就进度随快照延续）
             gold: goldCountRun     // 本局已捕获金苹果数（成就进度随快照延续）
         };
-        try {
-            localStorage.setItem(SAVE_KEY, JSON.stringify(snap));
-        } catch (e) { /* 存储不可用时静默放弃，不影响游戏 */ }
+        Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用时静默放弃，不影响游戏
     } else {
         // 未开始 / 游戏结束 / 死亡演出中：不留快照
         try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* 静默 */ }
@@ -1198,9 +1194,8 @@ function saveSnapshot() {
  */
 function restoreSnapshot() {
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
-        if (!raw) return false; // 无快照：正常新开局，无需清理
-        const snap = JSON.parse(raw);
+        const snap = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
+        if (!snap) return false; // 无快照或已损坏：正常新开局，无需清理
         // 版本号不符（损坏或未来格式）：立即弃用并清除
         if (!snap || typeof snap !== 'object' || (snap.v !== 1 && snap.v !== 2)) { // v1/v2 均兼容读取
             localStorage.removeItem(SAVE_KEY);

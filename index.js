@@ -223,19 +223,18 @@ const ACH_TOTAL = ACH_DEFS.reduce((sum, def) => sum + def.photos.length, 0);
  *                   键缺失 / JSON 损坏 / 存储不可用时为空对象
  */
 function readUnlockMap(def) {
-    try {
-        const data = JSON.parse(localStorage.getItem(def.key));
-        if (!data) return {}; // 键不存在：无任何解锁
-        // v1 纯数组档与过渡数组档统一转为「已解锁、时间戳 0」的映射
-        const list = Array.isArray(data) ? data : (Array.isArray(data.unlocked) ? data.unlocked : null);
-        if (list) {
-            const m = {};
-            for (let i = 0; i < list.length; i++) m[list[i]] = 0;
-            return m;
-        }
-        const map = data.unlocked;
-        return map && typeof map === 'object' ? map : {};
-    } catch (e) { return {}; } // JSON 损坏 / 存储不可用：按空映射处理，不中断面板渲染
+    // 键缺失 / JSON 损坏 / 存储不可用统一返回 null，按空映射处理，不中断面板渲染
+    const data = Arcade.loadJSON(def.key);
+    if (!data) return {}; // 键不存在或已损坏：无任何解锁
+    // v1 纯数组档与过渡数组档统一转为「已解锁、时间戳 0」的映射
+    const list = Array.isArray(data) ? data : (Array.isArray(data.unlocked) ? data.unlocked : null);
+    if (list) {
+        const m = {};
+        for (let i = 0; i < list.length; i++) m[list[i]] = 0;
+        return m;
+    }
+    const map = data.unlocked;
+    return map && typeof map === 'object' ? map : {};
 }
 
 /**

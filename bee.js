@@ -458,7 +458,7 @@ const ACHIEVEMENT_LEGACY_KEY = 'beeAchievements';
 function loadAchStore() {
     try {
         // 先读新键：命中 v2 结构（unlocked 为对象映射而非数组）直接采用，best 缺项用初始值补齐
-        const raw = JSON.parse(localStorage.getItem(ACHIEVEMENT_KEY) || 'null');
+        const raw = Arcade.loadJSON(ACHIEVEMENT_KEY); // 键缺失 / 损坏 / 存储不可用统一返回 null
         if (raw && raw.unlocked && typeof raw.unlocked === 'object' && !Array.isArray(raw.unlocked)) {
             return { unlocked: raw.unlocked, best: Object.assign({}, ACH_BEST_DEFAULTS, raw.best || {}) };
         }
@@ -470,7 +470,7 @@ function loadAchStore() {
             legacyBest.totalKills = raw.totalKills || 0;
             legacyBest.totalBombs = raw.totalBombs || 0;
         } else {
-            const legacy = JSON.parse(localStorage.getItem(ACHIEVEMENT_LEGACY_KEY) || 'null');
+            const legacy = Arcade.loadJSON(ACHIEVEMENT_LEGACY_KEY); // 旧键缺失 / 损坏 / 存储不可用统一返回 null
             if (legacy && Array.isArray(legacy.unlocked)) {
                 legacyIds = legacy.unlocked;
                 legacyBest.totalKills = legacy.totalKills || 0;
@@ -482,7 +482,7 @@ function loadAchStore() {
             const migrated = { unlocked: {}, best: Object.assign({}, ACH_BEST_DEFAULTS, legacyBest) };
             for (let i = 0; i < legacyIds.length; i++) migrated.unlocked[legacyIds[i]] = 0;
             // 迁移写入直接落新键（此刻全局 achStore 尚未初始化，不走 saveAchStore）；失败静默，下次解锁会再次尝试持久化
-            try { localStorage.setItem(ACHIEVEMENT_KEY, JSON.stringify(migrated)); } catch (e) { /* 存储不可用时忽略 */ }
+            Arcade.saveJSON(ACHIEVEMENT_KEY, migrated); // 存储不可用时忽略
             return migrated;
         }
     } catch (e) { /* 数据损坏时按首次游玩处理 */ }
@@ -509,8 +509,7 @@ const achToastStack = document.getElementById('achToastStack');
  * （隐私模式等存储不可用时静默降级为仅本会话生效）
  */
 function saveAchStore() {
-    try { localStorage.setItem(ACHIEVEMENT_KEY, JSON.stringify(achStore)); }
-    catch (e) { /* 存储不可用：跳过持久化 */ }
+    Arcade.saveJSON(ACHIEVEMENT_KEY, achStore); // 存储不可用：跳过持久化
 }
 
 /**
@@ -2526,8 +2525,8 @@ function saveSnapshot() {
                 flash: boss.flash, enraged: !!boss.enraged
             } : null
         };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(snap));
-    } catch (e) { /* 存储不可用/序列化异常：静默放弃本次保存，不影响游戏运行 */ }
+        Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用由 saveJSON 静默降级
+    } catch (e) { /* 快照组装异常：静默放弃本次保存，不影响游戏运行 */ }
 }
 
 /**
@@ -2541,10 +2540,9 @@ function saveSnapshot() {
  */
 function restoreSnapshot() {
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
-        // 无存档：按新局处理
-        if (!raw) return false;
-        const s = JSON.parse(raw);
+        const s = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
+        // 无存档或已损坏：按新局处理
+        if (!s) return false;
         // ---- 顶层结构与协议版本校验 ----
         if (!s || typeof s !== 'object' || s.v !== 1) snapFail();
         // ---- 标量字段类型/范围校验：分数/生命/波次非负有限 ----

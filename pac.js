@@ -742,8 +742,8 @@ function saveSnapshot() {
                 releaseTimer: g.releaseTimer
             }))
         };
-        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
-    } catch (e) { /* 存储不可用或序列化失败时静默放弃，绝不妨碍游戏运行 */ }
+        Arcade.saveJSON(SNAPSHOT_KEY, snap); // 存储不可用时由 saveJSON 静默降级
+    } catch (e) { /* 快照组装异常时静默放弃，绝不妨碍游戏运行 */ }
 }
 
 /**
@@ -756,9 +756,8 @@ function saveSnapshot() {
  */
 function restoreSnapshot() {
     try {
-        const raw = localStorage.getItem(SNAPSHOT_KEY);
-        if (raw === null) return false; // 无快照：按原逻辑新开局
-        const s = JSON.parse(raw);
+        const s = Arcade.loadJSON(SNAPSHOT_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
+        if (s === null) return false; // 无快照或已损坏：按原逻辑新开局
         // 首字段版本校验：v !== 1 即弃用
         if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) {
             throw new Error('snapshot version mismatch');
@@ -1695,12 +1694,7 @@ let achPanelOpen = false;
  * @returns {{unlocked: Object.<string, number>, best: Object.<string, number>}} 归一化后的成就存档
  */
 function loadAchStore() {
-    let raw = null;
-    try {
-        raw = JSON.parse(localStorage.getItem(ACH_KEY_PAC) || 'null');
-    } catch (e) {
-        raw = null; // JSON 解析失败按无存档处理
-    }
+    const raw = Arcade.loadJSON(ACH_KEY_PAC); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
     // 归一化为 v2 结构：数组即旧档；对象逐键校验类型，字段缺失/类型不符一律补默认值
     const store = {
         unlocked: (raw && !Array.isArray(raw) && raw.unlocked && !Array.isArray(raw.unlocked) && typeof raw.unlocked === 'object') ? raw.unlocked : {},
@@ -1733,9 +1727,7 @@ function loadAchStore() {
  * @returns {void}
  */
 function saveAchStore(store) {
-    try {
-        localStorage.setItem(ACH_KEY_PAC, JSON.stringify(store));
-    } catch (e) { /* 存储不可用时静默放弃 */ }
+    Arcade.saveJSON(ACH_KEY_PAC, store); // 存储不可用时静默放弃
 }
 
 /**

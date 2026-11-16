@@ -713,12 +713,7 @@ function move(dir, announceBlock = true) {
  *  v1 旧格式：纯字符串数组（1024 老版）——旧 id 全部迁入新 unlocked（时间戳 0），绝不丢玩家已有成就
  *  @returns {{unlocked: Object, best: Object}} 归一化后的成就存档 */
 function loadAchStore() {
-    let raw = null;
-    try {
-        raw = JSON.parse(localStorage.getItem(ACH_KEY_1024) || 'null');
-    } catch (e) {
-        raw = null; // JSON 解析失败按无存档处理
-    }
+    const raw = Arcade.loadJSON(ACH_KEY_1024); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
     // 归一化为 v2 结构：非对象 / 缺字段 / 字段类型不符一律补默认值
     const store = {
         unlocked: (raw && !Array.isArray(raw) && raw.unlocked && !Array.isArray(raw.unlocked)) ? raw.unlocked : {},
@@ -730,7 +725,7 @@ function loadAchStore() {
         for (const id of legacyIds) {
             if (typeof id === 'string' && !(id in store.unlocked)) store.unlocked[id] = 0;
         }
-        try { localStorage.setItem(ACH_KEY_1024, JSON.stringify(store)); } catch (e) { /* 迁移写盘失败静默，内存态已生效 */ }
+        Arcade.saveJSON(ACH_KEY_1024, store); // 迁移写盘失败静默，内存态已生效
     }
     return store;
 }
@@ -739,9 +734,7 @@ function loadAchStore() {
  *  @param {{unlocked: Object, best: Object}} store 成就存档
  *  @returns {void} */
 function saveAchStore(store) {
-    try {
-        localStorage.setItem(ACH_KEY_1024, JSON.stringify(store));
-    } catch (e) { /* 存储受限时静默跳过 */ }
+    Arcade.saveJSON(ACH_KEY_1024, store); // 存储受限时静默跳过
 }
 
 /** 上报本局统计（max 语义）：刷新历史最佳并顺带判定挂在该统计上的进度型成就
@@ -1429,8 +1422,8 @@ function saveSnapshot() {
             // 撤销栈镜像：只保留最近 32 步（slice(-32) 负索引从尾部截取），与恢复端上限一致
             history: history.slice(-32).map((h) => ({ board: h.board, score: h.score, combo: h.combo })),
         };
-        localStorage.setItem(SAVE_KEY, JSON.stringify(snap));
-    } catch (e) { /* 写入受限（隐私模式 / 配额满）时静默放弃，不影响游戏 */ }
+        Arcade.saveJSON(SAVE_KEY, snap); // 写入受限（隐私模式 / 配额满）由 saveJSON 静默降级
+    } catch (e) { /* 快照组装异常时静默放弃，不影响游戏 */ }
 }
 
 /**
@@ -1461,9 +1454,8 @@ function restoreSnapshot() {
         return false;
     };
     try {
-        const raw = localStorage.getItem(SAVE_KEY);
-        if (!raw) return false; // 无存档：正常新开局，无需清理
-        const snap = JSON.parse(raw);
+        const snap = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
+        if (!snap) return false; // 无存档或已损坏：正常新开局，无需清理
         // 结构版本号不匹配（损坏 / 被篡改 / 未来格式）：立即判无效并清除
         if (!snap || typeof snap !== 'object' || snap.v !== 1) return drop();
         if (snap.diff !== currentDifficulty) return drop(); // 属于其他难度的对局

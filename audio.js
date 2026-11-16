@@ -41,6 +41,8 @@
  * v3.3（20261106）：演出强度行扩展「自动」第四档（按滚动帧率自适应降级，引擎与裁决均在 fx.js）；
  *                面板高亮改读 FX.getFxMode()（自动档下高亮「自动」钮而非引擎实际档）；
  *                档位名与档数继续取 FX.FX_LEVEL_NAMES 自动生成（含兜底字面量同步扩四档）
+ * v3.4（20261116）：音控状态存取统一走 Arcade.saveJSON/loadJSON 原语（写失败/读损坏同键一次告警）；
+ *                提取 pickAudio 校验钳位辅助（新键读取与外部报文共用），boot 迁移结构扁平化（行为不变）
  * 音控状态通过 localStorage（键 arcadeAudio）在所有页面间共享；
  * 嵌入模式（?embed 于 iframe 内运行）下状态由大厅（父页）统一持有，经 postMessage 实时同步大厅与游戏
  */
@@ -59,39 +61,48 @@ const SFX = (() => {
     // 非数值（伪造消息的字符串/NaN）按 0 兜底：原实现 Math.max(NaN,0) 仍为 NaN，
     // 会让 VOL_STEPS[NaN] 得到 undefined 并传给 setTargetAtTime 抛 TypeError，写坏档位
     const clampStep = (n) => (Number.isFinite(n) ? Math.min(Math.max(Math.round(n), 0), VOL_STEPS.length - 1) : 0);
+    /**
+     * 校验并钳位音控状态：m 必须为布尔、b/s 必须为整数，档位越界钳到 0~3；
+     * 非法（伪造报文 / 脏数据 / 键缺失）返回 null。新键读取与外部广播报文共用本入口
+     * @param {*} v 待校验的音控状态
+     * @returns {{m:boolean, b:number, s:number}|null} 合法状态；非法返回 null
+     */
+    function pickAudio(v) {
+        if (!v || typeof v.m !== 'boolean' || !Number.isInteger(v.b) || !Number.isInteger(v.s)) return null;
+        return { m: v.m, b: clampStep(v.b), s: clampStep(v.s) };
+    }
+
     // 启动状态：优先读新键；新键缺失（v2.2 及更早）时从旧键 arcadeSound/arcadeVol 一次性迁移
     const boot = (() => {
-        try {
-            const saved = JSON.parse(localStorage.getItem(AUDIO_KEY) || 'null');
-            if (saved && typeof saved.m === 'boolean' && Number.isInteger(saved.b) && Number.isInteger(saved.s)) {
-                return { m: saved.m, b: clampStep(saved.b), s: clampStep(saved.s) };
-            }
-        } catch (e) { /* 脏数据走旧键迁移 */ }
-        // 旧版迁移：arcadeSound==='off'（总开关关闭）映射为静音；arcadeVol 双通道档位原样保留
-        // 整段包 try：存储被禁（隐私模式 / 部分 file:// 场景）时 getItem 本身会抛错，
-        // 若只包住 JSON.parse，异常会掀翻整个音效 IIFE，导致全站无声
-        let m = false, b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1;
+        // 键缺失 / JSON 损坏 / 存储不可用统一 null → 走旧键迁移
+        const cur = pickAudio(Arcade.loadJSON(AUDIO_KEY));
+        if (cur) return cur;
+        let m = false, b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1; // 默认：有声 + 双通道满档
+        // 旧键迁移：arcadeSound==='off' 映射为静音，arcadeVol 档位合法则原样保留
+        // （旧键结构为 {b, s} 无 m，不经 pickAudio，仅校验双通道整数档位）
+        // 唯一的 try 只因标量 getItem 在存储被禁（隐私模式 / 部分 file:// 场景）时本身抛错，
+        // 不接住会掀翻整个音效 IIFE 导致全站无声
         try {
             m = localStorage.getItem('arcadeSound') === 'off';
-            const v = JSON.parse(localStorage.getItem('arcadeVol') || 'null');
-            if (v && Number.isInteger(v.b) && Number.isInteger(v.s)) { b = clampStep(v.b); s = clampStep(v.s); }
-        } catch (e) { /* 旧键不可读或脏数据：回退默认（有声 + 双通道满档） */ }
+            const old = Arcade.loadJSON('arcadeVol');
+            if (old && Number.isInteger(old.b) && Number.isInteger(old.s)) { b = clampStep(old.b); s = clampStep(old.s); }
+        } catch (e) { /* 存储禁用：保持默认 */ }
         return { m, b, s };
     })();
     let muted = boot.m;                 // 一键静音标志（独立于档位：静音不破坏设置，恢复时档位无损还原）
     let vol = { b: boot.b, s: boot.s }; // 双通道音量档位（b=BGM 音乐，s=SFX 音效）
-    // 迁移后立即落新键并清理旧键（存储不可用时仅内存态运行）
+    // 迁移后立即落新键并清理旧键；唯一的 try 只因 removeItem 在存储禁用时抛错（saveJSON 自带降级告警）
     try {
-        localStorage.setItem(AUDIO_KEY, JSON.stringify({ m: muted, b: vol.b, s: vol.s }));
+        Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s });
         localStorage.removeItem('arcadeSound');
         localStorage.removeItem('arcadeVol');
-    } catch (e) { /* 忽略持久化失败 */ }
+    } catch (e) { /* 存储禁用：仅内存态运行，旧键留待下次启动再清理 */ }
 
     /**
      * 持久化当前音控状态到 localStorage（父页角色专用；嵌入模式子页状态由大厅统一持有）
      */
     function saveAudio() {
-        try { localStorage.setItem(AUDIO_KEY, JSON.stringify({ m: muted, b: vol.b, s: vol.s })); } catch (e) { /* 忽略 */ }
+        Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s }); // 存储受限时静默跳过
     }
 
     /**
@@ -99,9 +110,10 @@ const SFX = (() => {
      * @param {{m:boolean, b:number, s:number}} v 音控状态（m=静音，b/s=双通道档位）
      */
     function applyAudioState(v) {
-        if (!v || typeof v.m !== 'boolean' || !Number.isInteger(v.b) || !Number.isInteger(v.s)) return;
-        muted = v.m;
-        vol = { b: clampStep(v.b), s: clampStep(v.s) };
+        const st = pickAudio(v); // 非法报文（伪造 / 字段缺失 / 非整数档位）直接忽略
+        if (!st) return;
+        muted = st.m;
+        vol = { b: st.b, s: st.s };
         applyVol();
         syncUI();
     }
@@ -1055,3 +1067,5 @@ const SFX = (() => {
         cardN1024: () => { tone(330, 0.09, 'triangle', 0.09, 540); tone(540, 0.06, 'square', 0.09, 0, 0.1); tone(660, 0.08, 'square', 0.07, 0, 0.16); }
     };
 })();
+// 挂载到 window：与 fx.js / arcade-common.js / fullscreen.js 导出风格一致，供跨脚本引用
+window.SFX = SFX;

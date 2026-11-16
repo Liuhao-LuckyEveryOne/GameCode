@@ -542,3 +542,5 @@ const FS = (() => {
         toggle
     };
 })();
+// 挂载到 window：与 fx.js / arcade-common.js 导出风格一致，供页面 inline 处理器与跨脚本引用
+window.FS = FS;
