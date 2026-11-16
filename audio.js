@@ -72,7 +72,17 @@ const SFX = (() => {
         return { m: v.m, b: clampStep(v.b), s: clampStep(v.s) };
     }
 
-    // 启动状态：优先读新键；新键缺失（v2.2 及更早）时从旧键 arcadeSound/arcadeVol 一次性迁移
+    /* ==================== 启动状态与旧键迁移（为什么只剩一个 try） ====================
+     * 优先读新键 arcadeAudio；新键缺失（v2.2 及更早存档）时从旧键 arcadeSound/arcadeVol 一次性迁移。
+     * boot 里的存储调用分两类，防御策略因此不同：
+     * ① JSON 存取（新键 / arcadeVol）：已下沉到 Arcade.loadJSON——键缺失、JSON 损坏、存储被禁
+     *    三种失败一律在原语内部返回 null 兜底，调用侧没有任何可抛点，不再包 try；
+     * ② 标量读取（arcadeSound）：存的是 'off' 哨兵字符串而非 JSON，刻意不经 JSON 原语，
+     *    而裸 getItem 在存储被禁（隐私模式 / 部分 file:// 场景）时本身抛错（SecurityError 等）
+     *    ——这是 boot 全链路唯一的可抛点。
+     * 这个 try 不能删：它位于 SFX IIFE 的求值路径上，异常一旦逃逸，整个音效库求值中断 →
+     * SFX 未定义 → 依赖它的各游戏脚本连锁失败 → 全站无声 + 页面报错，单点故障被放大为全站故障；
+     * 也不必更大：JSON 行已被原语兜底，扩大包裹范围只会掩盖未来的真实回归 */
     const boot = (() => {
         // 键缺失 / JSON 损坏 / 存储不可用统一 null → 走旧键迁移
         const cur = pickAudio(Arcade.loadJSON(AUDIO_KEY));
@@ -80,23 +90,23 @@ const SFX = (() => {
         let m = false, b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1; // 默认：有声 + 双通道满档
         // 旧键迁移：arcadeSound==='off' 映射为静音，arcadeVol 档位合法则原样保留
         // （旧键结构为 {b, s} 无 m，不经 pickAudio，仅校验双通道整数档位）
-        // 唯一的 try 只因标量 getItem 在存储被禁（隐私模式 / 部分 file:// 场景）时本身抛错，
-        // 不接住会掀翻整个音效 IIFE 导致全站无声
-        try {
+        try { // 仅因首行裸 getItem 可抛（见上方块注释）；arcadeVol 行已由 loadJSON 兜底
             m = localStorage.getItem('arcadeSound') === 'off';
             const old = Arcade.loadJSON('arcadeVol');
             if (old && Number.isInteger(old.b) && Number.isInteger(old.s)) { b = clampStep(old.b); s = clampStep(old.s); }
-        } catch (e) { /* 存储禁用：保持默认 */ }
+        } catch (e) { /* 存储被禁：全部回退默认，引擎照常启动 */ }
         return { m, b, s };
     })();
     let muted = boot.m;                 // 一键静音标志（独立于档位：静音不破坏设置，恢复时档位无损还原）
     let vol = { b: boot.b, s: boot.s }; // 双通道音量档位（b=BGM 音乐，s=SFX 音效）
-    // 迁移后立即落新键并清理旧键；唯一的 try 只因 removeItem 在存储禁用时抛错（saveJSON 自带降级告警）
+    // 迁移后立即落新键并清理旧键。此处 try 与 boot 内同理：只为两行裸 removeItem 存在
+    // （saveJSON 已自带兜底告警不会抛）；不接住同样会中断 SFX IIFE 求值。
+    // 存储被禁时仅内存态运行，旧键清不掉、留待下次启动（存储恢复后）再清
     try {
         Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s });
         localStorage.removeItem('arcadeSound');
         localStorage.removeItem('arcadeVol');
-    } catch (e) { /* 存储禁用：仅内存态运行，旧键留待下次启动再清理 */ }
+    } catch (e) { /* 存储被禁：忽略，旧键留待下次启动再清理 */ }
 
     /**
      * 持久化当前音控状态到 localStorage（父页角色专用；嵌入模式子页状态由大厅统一持有）
