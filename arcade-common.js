@@ -21,13 +21,14 @@ const Arcade = (() => {
         });
     }
 
+    const warnedWriteKeys = new Set(); // 已告警过的写失败键：存储被禁时同键反复失败，仅首次告警避免刷屏
+
     /**
      * 安全写档：JSON 序列化后写入 localStorage；隐私模式/配额满等存储不可用时降级跳过，
      * 本局不受影响；首次失败控制台告警便于观测（键未落盘由 loadJSON 的兜底值承接）
      * @param {string} key 存档键名
      * @param {*} value 任意可 JSON 序列化的值
      */
-    const warnedWriteKeys = new Set(); // 已告警过的写失败键：存储被禁时同键反复失败，仅首次告警避免刷屏
     function saveJSON(key, value) {
         try {
             localStorage.setItem(key, JSON.stringify(value));
