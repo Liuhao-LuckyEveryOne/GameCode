@@ -2804,8 +2804,8 @@ document.addEventListener('mouseup', e => {
 canvas.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch') return; // 鼠标维持原通道，避免双输入叠加
     touchLastX = e.clientX;
-    // 捕获到画布：手指拖出画布区域仍能持续收到 move/up，转向不中断
-    if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId);
+    // 捕获到画布：手指拖出画布区域仍能持续收到 move/up，转向不中断（守卫见 arcade-common.js）
+    Arcade.capturePointer(canvas, e.pointerId);
 });
 canvas.addEventListener('pointermove', e => {
     if (e.pointerType !== 'touch' || touchLastX === null) return;
@@ -2908,9 +2908,8 @@ document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) SFX.crtOn();
     else SFX.crtOff();
 });
-window.addEventListener('message', e => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (d && d.type === 'arcade:fs') {
         if (d.fs) SFX.crtOn();

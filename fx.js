@@ -192,16 +192,16 @@ const FX = (() => {
 
     // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页收父页广播静默应用；父页收子页设档请求后经 setFxLevel 持久化并广播
     if (window.parent !== window) {
-        // 子页角色：仅信任直接父页；广播报文无 act 字段，收到即静默应用（不持久化、不回传）
-        window.addEventListener('message', (e) => {
-            if (e.source !== window.parent) return;
+        // 子页角色：广播报文无 act 字段，收到即静默应用（不持久化、不回传）
+        // 双校验：Arcade.onTrustedMessage 先过 origin 守卫（仅同源 + file:// 豁免），再确认消息确来自直接父页
+        Arcade.onTrustedMessage((e) => {
+            if (e.source !== window.parent) return; // 仅信任直接父页
             const d = e.data;
             if (d && d.type === 'arcade:fxlevel' && d.act === undefined) setFxLevel(d.idx, true);
         });
     } else {
-        // 父页（大厅）角色：来源守卫与音控协议一致（同源，或 file:// 直开时豁免 origin 'null'）
-        window.addEventListener('message', (e) => {
-            if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+        // 父页（大厅）角色：来源守卫收口至 arcade-common.js（仅同源，或 file:// 直开时豁免 origin 'null'）
+        Arcade.onTrustedMessage((e) => {
             const d = e.data;
             if (d && d.type === 'arcade:fxlevel' && d.act === 'set') setFxLevel(d.idx); // 内部自动广播
         });

@@ -2064,13 +2064,15 @@
             <div class="th-foot">集齐 58 项成就点亮满环 · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂</div>
         </div>
     </div>
-    <!-- 脚本加载顺序：audio.js 提供全局 SFX（音效开关按钮、卡片音效与 index.js 都依赖它），
+    <!-- 脚本加载顺序：arcade-common.js 提供 Arcade（跨帧消息统一来源守卫，其余公共库均依赖它）；
+         audio.js 提供全局 SFX（音效开关按钮、卡片音效与 index.js 都依赖它），
          fullscreen.js 提供全局 FS（仅供本页全屏按钮使用）；index.js 依赖 SFX，须放在其之后 -->
-    <script src="audio.js?v=20261107-1"></script>
-    <script src="fx.js?v=20261116-1"></script>
-    <script src="fullscreen.js?v=20261105-1"></script>
+    <script src="arcade-common.js?v=20261116-2"></script>
+    <script src="audio.js?v=20261116-2"></script>
+    <script src="fx.js?v=20261116-3"></script>
+    <script src="fullscreen.js?v=20261116-2"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，大厅键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261105-2"></script>
-    <script src="index.js?v=20261105-10"></script>
+    <script src="index.js?v=20261116-1"></script>
 </body>
 </html>

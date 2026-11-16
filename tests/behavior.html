@@ -3,10 +3,43 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>行为测试进行中</title>
+<title>行为测试进行中…</title>
+<style>
+    /* 深色控制台风（与 smoke.html 同款视觉）：测试过程实时可见，结果一眼可辨（绿过红败） */
+    body { background: #0a0a14; color: #e8e8ff; font: 14px/1.7 Consolas, 'Microsoft YaHei', monospace; margin: 0; padding: 24px 28px; }
+    h1 { font-size: 17px; color: #ffd23e; margin: 0 0 4px; }
+    .sub { color: #8a8ab0; font-size: 12px; margin-bottom: 14px; }
+    #summary { font-size: 16px; font-weight: 700; padding: 10px 14px; border: 1px solid #33335c; border-radius: 6px; margin-bottom: 14px; }
+    #summary.running { color: #35e0ff; border-color: #35e0ff; }
+    #summary.all-pass { color: #39ff6a; border-color: #39ff6a; }
+    #summary.has-fail { color: #ff3ea5; border-color: #ff3ea5; }
+    ol#results { margin: 0 0 16px; padding-left: 22px; }
+    ol#results li { margin-bottom: 4px; }
+    ol#results li.wait { color: #8a8ab0; }
+    ol#results li.pass { color: #39ff6a; }
+    ol#results li.fail { color: #ff3ea5; font-weight: 700; }
+    ol#results li.fail small { color: #ff8ec4; font-weight: 400; }
+    pre#detail { white-space: pre-wrap; background: #12122a; border: 1px solid #33335c; border-radius: 6px; padding: 10px 14px; margin: 0 0 14px; color: #c9c9ef; }
+    details#raw { margin-bottom: 14px; color: #8a8ab0; }
+    details#raw summary { cursor: pointer; user-select: none; }
+    details#raw pre { white-space: pre-wrap; word-break: break-all; background: #12122a; border: 1px solid #33335c; border-radius: 6px; padding: 10px 14px; margin: 8px 0 0; color: #9fd8ff; font-size: 12px; max-height: 320px; overflow: auto; }
+    #howto { color: #8a8ab0; font-size: 12px; line-height: 1.8; border-top: 1px solid #26264a; padding-top: 10px; }
+    #howto b { color: #b9b9e0; }
+</style>
 </head>
 <body>
+<h1>行为测试 · 像素街机厅</h1>
+<div class="sub">离屏 iframe 装载七个游戏页（?behavior=1），收集 arcade:behavior 报文按名归账；全部到齐或 9 秒超时出结论</div>
+<div id="summary" class="running">进行中…（0/7 上报）</div>
+<ol id="results"></ol>
 <pre id="detail"></pre>
+<details id="raw"><summary>运行详情（BEHAVIOR_RESULTS 完整 JSON）</summary><pre id="rawJson">采集中…</pre></details>
+<div id="howto">
+    <b>运行说明</b>：先起服（python server.py）后访问本页自动串行执行；
+    无头判定读 document.title / window.BEHAVIOR_RESULTS / #detail（自动化契约）。
+    各游戏页在 ?behavior=1 下由 fx.js 测试钩子采集用例并回传 arcade:behavior 报文，
+    本页按名归账、不计改游戏逻辑；测试写入的存档在收尾时恢复快照，不污染真实进度。
+</div>
 <script>
 'use strict';
 
@@ -15,17 +48,29 @@
  * 收集 arcade:behavior 报文按名归账；全部到齐（或 9 秒超时兜底）后：
  *   - document.title 输出结论（headless --dump-dom 直接读标题判定）
  *   - window.BEHAVIOR_RESULTS 暴露完整明细
+ *   - 失败明细写入 #detail（headless dump-dom 与手工排查均可直接读取）
  *   - 恢复测试前的 localStorage 快照（游戏页加载/测试会写入存档，防污染真实进度）
+ * 界面展示：顶部汇总条实时显示「n/7 上报」，每个游戏一行状态
+ * （等待上报 → 通过 x/y / 失败 x/y / 超时未上报），仅增量渲染不改变上述自动化契约
  */
 
 /** 参测游戏名单（与各游戏 js 尾部钩子的 FX.behavior 名称一一对应） */
 const GAMES = ['snake', 'tetris', '1024', 'klotski', 'pac', 'bee', 'pinball'];
 /** 结果归账表：游戏名 → 上报报文 { pass, total, fails } */
 const results = {};
+/** 每游戏状态行（li 元素）：收到报文/超时时原位刷新 */
+const rows = {};
 /** 是否已收尾（全到齐或超时只执行一次） */
 let finished = false;
 /** 测试前的存档快照：[key, value] 对数组 */
 const storageBackup = [];
+/** 计时起点：各行耗时与总耗时均相对此刻（页面脚本执行即起算） */
+const START = Date.now();
+
+/** 运行至今的秒数文本（一行耗时与汇总条共用） @returns {string} 如 "1.2s" */
+function elapsed() {
+    return ((Date.now() - START) / 1000).toFixed(1) + 's';
+}
 
 // 快照现有存档（存储不可用时静默跳过，恢复步骤同样跳过）
 try {
@@ -43,7 +88,53 @@ function restoreStorage() {
     } catch (e) { /* 存储不可用：跳过恢复 */ }
 }
 
-/** 收尾：统计归账结果、改写标题、暴露明细、恢复存档 */
+/** 刷新顶部汇总条：按当前上报数显示进行中/最终结论（finish 与逐个上报共用） */
+function updateSummary() {
+    const reported = GAMES.filter((g) => results[g]).length;
+    const el = document.getElementById('summary');
+    if (finished) {
+        const r = window.BEHAVIOR_RESULTS;
+        if (r && r.ok) {
+            el.className = 'all-pass';
+            el.textContent = '行为通过 ' + r.pass + '/' + r.total + ' · 总耗时 ' + elapsed();
+        } else {
+            // 与标题同文案：含通过数与未上报游戏名；附总耗时
+            el.className = 'has-fail';
+            el.textContent = document.title + ' · 总耗时 ' + elapsed();
+        }
+    } else {
+        el.textContent = '进行中…（' + reported + '/' + GAMES.length + ' 上报）';
+    }
+}
+
+/** 刷新单个游戏状态行：pass 全过绿、有失败红（逐条列出失败项名）、超时未上报红；
+ *  行尾统一附上报耗时，便于定位加载慢的游戏页
+ *  @param {string} g 游戏名 @param {{pass:number, total:number, fails:string[]}|null} r 上报报文（null=超时未上报） */
+function updateRow(g, r) {
+    const li = rows[g];
+    if (!li) return;
+    if (!r) {
+        li.className = 'fail';
+        li.textContent = g + '：超时未上报（' + elapsed() + ' 内无 arcade:behavior 报文）';
+        return;
+    }
+    if (r.pass === r.total) {
+        li.className = 'pass';
+        li.textContent = g + '：通过 ' + r.pass + '/' + r.total + '（' + elapsed() + '）';
+    } else {
+        li.className = 'fail';
+        li.textContent = g + '：失败 ' + r.pass + '/' + r.total + '（' + elapsed() + '）失败项：';
+        // 失败项逐条一行展示，定位到具体用例名
+        for (const f of r.fails) {
+            const line = document.createElement('div');
+            line.style.cssText = 'font-weight:400;padding-left:1.5em;';
+            line.textContent = '✗ ' + f;
+            li.appendChild(line);
+        }
+    }
+}
+
+/** 收尾：统计归账结果、改写标题、暴露明细、刷新界面、恢复存档 */
 function finish() {
     if (finished) return;
     finished = true;
@@ -70,14 +161,21 @@ function finish() {
     }
     if (missing.length > 0) lines.push('未上报游戏: ' + missing.join(','));
     document.getElementById('detail').textContent = lines.length > 0 ? lines.join('\n') : '（无失败明细）';
+    // 运行详情折叠区：完整归账 JSON（含每游戏 pass/total/fails 与未上报名单），供深查
+    document.getElementById('rawJson').textContent = JSON.stringify(window.BEHAVIOR_RESULTS, null, 2);
+    // 界面收尾：未上报游戏行标红 + 汇总条定格为最终结论
+    for (const g of missing) updateRow(g, null);
+    updateSummary();
     restoreStorage();
 }
 
-// 接收各游戏 iframe 的 arcade:behavior 报文按名归账，全部到齐即收尾
+// 接收各游戏 iframe 的 arcade:behavior 报文按名归账，同步刷新对应状态行；全部到齐即收尾
 window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || d.type !== 'arcade:behavior') return;
     results[d.name] = d;
+    updateRow(d.name, d);
+    updateSummary();
     if (GAMES.every((g) => results[g])) finish();
 });
 
@@ -89,8 +187,16 @@ setTimeout(finish, TIMEOUT_MS);
 // 离页兜底恢复存档（finish 未能执行时尽力还原）
 window.addEventListener('pagehide', restoreStorage);
 
-// 依次创建 7 个离屏 iframe 加载真实游戏页（?behavior=1 激活各页测试钩子）
+// 依次创建 7 个离屏 iframe 加载真实游戏页（?behavior=1 激活各页测试钩子），
+// 同步建立每游戏状态行（等待上报），保证测试过程在界面上可见
+const listEl = document.getElementById('results');
 for (const g of GAMES) {
+    const li = document.createElement('li');
+    li.className = 'wait';
+    li.textContent = g + '：等待上报…';
+    listEl.appendChild(li);
+    rows[g] = li;
+
     const frame = document.createElement('iframe');
     frame.setAttribute('aria-hidden', 'true');
     frame.style.position = 'absolute';
@@ -98,6 +204,10 @@ for (const g of GAMES) {
     frame.style.width = '1px';
     frame.style.height = '1px';
     frame.src = '../' + g + '.html?behavior=1';
+    // 装载可视化：iframe load 后行内改标"已装载"，与"迟迟未装载"（网络/脚本错误）区分开
+    frame.addEventListener('load', () => {
+        if (!results[g]) li.textContent = g + '：已装载，等待上报…（' + elapsed() + '）';
+    });
     document.body.appendChild(frame);
 }
 </script>

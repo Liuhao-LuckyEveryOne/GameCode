@@ -1395,7 +1395,7 @@ canvas.addEventListener('pointerdown', (event) => {
     // 死亡演出/成就面板期间均不接管，与键盘通道的暂停守卫语义一致
     if (!isRunning || isPaused || achPanelOpen || isDying) return;
     event.preventDefault(); // 阻止画布默认的触屏滚动 / 鼠标拖选行为
-    canvas.setPointerCapture(event.pointerId); // 按住后拖出画布仍持续跟踪至松手
+    Arcade.capturePointer(canvas, event.pointerId); // 按住后拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
     swipeActive = true;
     swipeX = event.clientX;
     swipeY = event.clientY;
@@ -1440,9 +1440,8 @@ pauseScreen.addEventListener('pointerdown', (e) => {
 
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
 // （saveSnapshot 内部自行区分：进行中/暂停中保存，未开始/已结束则清除快照）
-window.addEventListener('message', (e) => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage((e) => {
     if (e.data && e.data.type === 'arcade:save') saveSnapshot();
 });
 

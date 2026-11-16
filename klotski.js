@@ -3049,9 +3049,8 @@ document.addEventListener('fullscreenchange', queueStageRectRefresh);
 document.addEventListener('webkitfullscreenchange', queueStageRectRefresh);
 window.addEventListener('load', queueStageRectRefresh);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueStageRectRefresh);
-window.addEventListener('message', (e) => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage((e) => {
     if (e.data && e.data.type === 'arcade:fs') queueStageRectRefresh();
 });
 
@@ -3108,7 +3107,7 @@ canvas.addEventListener('pointerdown', e => {
     p.anim = null; // 打断进行中的补间，避免拖拽起点错位
     p.bounce = null; // 打断回弹补间，避免覆盖跟手位移
     drag = { id: e.pointerId, p, sx: pos.x, sy: pos.y, dir: null, k: 0, off: 0, locked: false };
-    canvas.setPointerCapture(e.pointerId);
+    Arcade.capturePointer(canvas, e.pointerId); // 拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
 });
 
 // 暂停面板本体点击恢复：面板悬浮于画布之上会拦截 pointerdown（不再落到上方 canvas 监听），
@@ -3326,9 +3325,8 @@ document.addEventListener('fullscreenchange', () => {
 // 并广播 arcade:fs 消息，此处同样接入 CRT 开关机音，保证两种打开方式行为一致
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
 // （saveSnapshot 内部自行区分：进行中保存，未开始 / 已通关则清除快照）
-window.addEventListener('message', e => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (d && d.type === 'arcade:fs') {
         if (d.fs) SFX.crtOn();

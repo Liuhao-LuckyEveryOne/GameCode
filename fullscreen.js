@@ -483,7 +483,8 @@ const FS = (() => {
      * 2. 向父页报到，请求一次当前全屏态（覆盖广播早于 iframe 就绪而丢失的情况）
      */
     function initEmbed() {
-        window.addEventListener('message', e => {
+        // 双校验：Arcade.onTrustedMessage 先过 origin 守卫（仅同源 + file:// 豁免），再确认消息确来自直接父页
+        Arcade.onTrustedMessage(e => {
             if (e.source !== window.parent) return; // 只信任父页消息
             const d = e.data;
             if (d && d.type === 'arcade:fs') sync(!!d.fs);
@@ -493,20 +494,20 @@ const FS = (() => {
 
     /**
      * 父页角色消息处理：回复子页状态询问、承接子页全屏切换请求
+     * （子页角色已在 initEmbed 单独监听；来源守卫收口至 arcade-common.js：仅同源 + file:// 豁免）
      */
-    window.addEventListener('message', e => {
-        if (EMBED) return; // 子页角色已在 initEmbed 单独监听
-        // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-        if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
-        const d = e.data;
-        if (!d || typeof d.type !== 'string') return;
-        if (d.type === 'arcade:hello') {
-            broadcast(); // 子页就绪：回复当前全屏状态
-        } else if (d.type === 'arcade:fs') {
-            // 子页请求切换全屏：等价于点击本页全屏按钮（顶层文档持有状态）
-            toggle(document.getElementById('fullscreenToggle'));
-        }
-    });
+    if (!EMBED) {
+        Arcade.onTrustedMessage(e => {
+            const d = e.data;
+            if (!d || typeof d.type !== 'string') return;
+            if (d.type === 'arcade:hello') {
+                broadcast(); // 子页就绪：回复当前全屏状态
+            } else if (d.type === 'arcade:fs') {
+                // 子页请求切换全屏：等价于点击本页全屏按钮（顶层文档持有状态）
+                toggle(document.getElementById('fullscreenToggle'));
+            }
+        });
+    }
 
     // 全屏状态变化时同步按钮文本与缩放，并向子 iframe 广播（含按 ESC 退出）
     document.addEventListener('fullscreenchange', () => { sync(); broadcast(); });

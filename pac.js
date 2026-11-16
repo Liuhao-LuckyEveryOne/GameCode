@@ -1914,9 +1914,8 @@ document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) SFX.crtOn();
     else SFX.crtOff();
 });
-window.addEventListener('message', e => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (!d) return;
     if (d.type === 'arcade:fs') {
@@ -2002,7 +2001,7 @@ canvas.addEventListener('pointerdown', e => {
     if (isPaused || achPanelOpen) return; // 与键盘通道相同的暂停守卫
     if (state !== 'play' && state !== 'ready') return; // 未开始/结束/过场动画不起手
     e.preventDefault(); // 阻止画布默认的拖选行为
-    canvas.setPointerCapture(e.pointerId);
+    Arcade.capturePointer(canvas, e.pointerId); // 拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
     swipeActive = true;
     swipeX = e.clientX;
     swipeY = e.clientY;

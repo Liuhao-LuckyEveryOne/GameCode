@@ -1734,11 +1734,8 @@ document.addEventListener('keydown', e => {
     });
 
     // 子页消息：arcade:playtime = 游玩时长冲账（父页累计落盘 arcade_playtime_<id> 并刷新卡片角标）
-    window.addEventListener('message', e => {
-        // 来源校验：仅接受同源消息；file:// 直开时本页与子页 origin 字面量均为 "null"，
-        // 仅当本页自身也是 file:// 协议时一并放行；其余来源（第三方页面嵌入本页等）一律
-        // 忽略，防止伪造关闭覆盖层。http(s) 部署下不再永久豁免 'null' 来源
-        if (e.origin !== location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+    // 来源守卫收口至 arcade-common.js（仅同源 + file:// 豁免；跨源伪造消息在守卫处丢弃）
+    Arcade.onTrustedMessage(e => {
         const d = e.data;
         // 游玩时长上报：子页 FX.playtime 周期冲账，父页累计落盘并刷新卡片角标
         if (d && d.type === 'arcade:playtime' && PLAYTIME_IDS.indexOf(d.id) !== -1

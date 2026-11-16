@@ -2140,7 +2140,7 @@ function zoneHeld(zone) {
 function handleZoneDown(event) {
     if (event.pointerType === 'mouse') return; // 桌面鼠标零改动：仅触屏/手写笔启用分区
     event.preventDefault(); // 抑制触屏默认手势（touch-action:none 之外的兜底，如长按菜单）
-    canvas.setPointerCapture(event.pointerId); // 后续抬起/取消即使移出画布也必送达，保证按下态必被复位
+    Arcade.capturePointer(canvas, event.pointerId); // 后续抬起/取消即使移出画布也必送达，保证按下态必被复位（守卫见 arcade-common.js）
     const rect = canvas.getBoundingClientRect();
     const zone = zoneAt(event.clientX - rect.left, event.clientY - rect.top);
     if (zone === 'plunger' && !(state === 'ready' && !isPaused && !charging)) {
@@ -2247,9 +2247,8 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
-window.addEventListener('message', e => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'arcade:fs') {

@@ -1787,7 +1787,7 @@ canvas.addEventListener('pointerdown', (event) => {
     if (event.pointerType !== 'mouse' || event.button !== 0) return; // 非鼠标或非左键不接管
     if (!playing || isPaused || achPanelOpen) return; // 与触屏通道相同的可操作态守卫
     event.preventDefault(); // 阻止画布默认的拖选行为
-    canvas.setPointerCapture(event.pointerId); // 按住后拖出画布仍持续跟踪至松手
+    Arcade.capturePointer(canvas, event.pointerId); // 按住后拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
     mouseDragging = true;
     dragX = event.clientX;
     dragY = event.clientY;
@@ -1876,9 +1876,8 @@ FX.KeyLight.init();
 
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
 // （saveSnapshot 内部自行区分：进行中写入，未开始/胜利面板/死局结算则清除存档）
-window.addEventListener('message', (e) => {
-    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+Arcade.onTrustedMessage((e) => {
     if (e.data && e.data.type === 'arcade:save') saveSnapshot();
 });
 

@@ -315,7 +315,8 @@ const SFX = (() => {
     // 跨文档同步接线（随本文件解析即注册；EMBED 为本文件局部常量，不依赖后加载的 fullscreen.js）
     if (EMBED) {
         // 子页角色：监听父页广播并应用状态；加载后向父页报到以获取当前权威状态（静音 + 双通道档位）
-        window.addEventListener('message', (e) => {
+        // 双校验：Arcade.onTrustedMessage 先过 origin 守卫（仅同源 + file:// 豁免），再确认消息确来自直接父页
+        Arcade.onTrustedMessage((e) => {
             if (e.source !== window.parent) return; // 仅信任直接父页
             const d = e.data;
             if (d && d.type === 'arcade:audio') applyAudioState(d);
@@ -323,9 +324,8 @@ const SFX = (() => {
         window.parent.postMessage({ type: 'arcade:audio', act: 'hello' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET；指纹须与父页监听约定一致（type:arcade:audio + act:hello）
     } else {
         // 父页（大厅）角色：响应子页的切换/设档请求与报到；大厅是音控状态的唯一持久化方
-        window.addEventListener('message', (e) => {
-            // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
-            if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+        // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
+        Arcade.onTrustedMessage((e) => {
             const d = e.data;
             if (!d || d.type !== 'arcade:audio') return;
             if (d.act === 'toggle') {

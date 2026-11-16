@@ -1475,8 +1475,8 @@ function bindTouchRepeatButton(btnId, action) {
     const btn = document.getElementById(btnId);
     btn.addEventListener('pointerdown', e => {
         e.preventDefault(); // 防止按钮抢焦点与触发滚动
-        // 触点捕获到按钮：手指滑出按钮区域仍能收到 pointerup/cancel，防止连发"卡住"
-        if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId);
+        // 触点捕获到按钮：手指滑出按钮区域仍能收到 pointerup/cancel，防止连发"卡住"（守卫见 arcade-common.js）
+        Arcade.capturePointer(btn, e.pointerId);
         if (!isTouchActionAllowed()) return;
         stopTouchRepeat(btn); // 防御：多指误触重复按下时先清旧连发
         action(); // 立即执行一次
@@ -1840,10 +1840,9 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
-// 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免；
-// 跨源伪造的 arcade:fs / arcade:save 指令在此丢弃，防止干扰全屏音效或诱导覆写存档
-window.addEventListener('message', e => {
-    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）；跨源伪造的 arcade:fs / arcade:save
+// 指令在守卫处丢弃，防止干扰全屏音效或诱导覆写存档
+Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'arcade:fs') {
