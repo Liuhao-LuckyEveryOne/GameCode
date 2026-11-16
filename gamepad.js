@@ -48,7 +48,7 @@
 
 // ---------- 对外暴露的最小状态对象：对齐 SFX / FX / FS 全局命名 ----------
 /** 手柄支持全局状态：connected 标识当前是否有已连接手柄（供页面按需查询；本库自治运行，不要求页面调用） */
-var GP = { connected: false };
+const GP = { connected: false };
 
 (function () {
     // ---------- 能力检测：无 Gamepad API 的环境（旧浏览器等）静默退出 ----------
@@ -56,7 +56,7 @@ var GP = { connected: false };
 
     // ---------- 按钮映射表：标准布局按钮索引 → 合成的键盘键 [key, code] ----------
     // key 与 code 取浏览器原生键盘事件的标准值，保证按 e.key / e.code 监听的两类页面均可命中
-    var BUTTON_MAP = {
+    const BUTTON_MAP = {
         0: [' ', 'Space'],      // A → 空格
         1: ['Escape', 'Escape'], // B → Esc
         2: ['p', 'KeyP'],       // X → P（暂停）
@@ -65,18 +65,18 @@ var GP = { connected: false };
         9: ['Enter', 'Enter']   // Start → 回车（投币 / 确认）
     };
     // 十字键映射表：标准布局 buttons 12=上 13=下 14=左 15=右 → 方向键（key 与 code 同名）
-    var DPAD_MAP = { 12: 'ArrowUp', 13: 'ArrowDown', 14: 'ArrowLeft', 15: 'ArrowRight' };
+    const DPAD_MAP = { 12: 'ArrowUp', 13: 'ArrowDown', 14: 'ArrowLeft', 15: 'ArrowRight' };
     // 左摇杆触发阈值（推杆幅度归一化 -1~1）：越过 0.4 判定按下、回落至 0.25 以内判定松开
     // ——双阈值滞回（带宽 0.15 不变）防止推杆停在临界值附近时反复触发「按下/松开」抖动；
     //   阈值取低于行程中点：多数手柄摇杆回中偏硬，轻推即应响应，不必推到底才能转向
-    var AXIS_ON = 0.4;
-    var AXIS_OFF = 0.25;
+    const AXIS_ON = 0.4;
+    const AXIS_OFF = 0.25;
 
     // ---------- 按下状态表：code → 本库是否处于「按下中」（用于边沿判定与卡键兜底释放） ----------
     // 方向键按 code 去重：十字键与左摇杆推同一方向共用一条状态，天然合并互不重复
-    var held = Object.create(null);
+    const held = Object.create(null);
     // 左摇杆四向的滞回状态（true=该方向处于按下中），与十字键分开记录便于独立判定
-    var stick = { up: false, down: false, left: false, right: false };
+    const stick = { up: false, down: false, left: false, right: false };
 
     /**
      * 合成并派发一个标准键盘事件到 document
@@ -123,14 +123,14 @@ var GP = { connected: false };
      * 防止 tetris DAS 左右移动等「按住状态」跨场景卡死）
      */
     function releaseAll() {
-        for (var code in held) release(code);
+        for (const code in held) release(code);
         stick.up = stick.down = stick.left = stick.right = false;
     }
 
     // ---------- 连接提示 toast：样式由本库动态注入（对齐 audio.js 面板模式，页面侧零改动） ----------
-    var REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    var toastEl = null;
-    var toastTimer = 0;
+    const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let toastEl = null;
+    let toastTimer = 0;
 
     /**
      * 显示手柄连接 / 断开提示条（顶部居中，约 2.6 秒后淡出）
@@ -140,7 +140,7 @@ var GP = { connected: false };
         // 样式一次性注入：霓虹描边对齐街机厅视觉；独立内联样式不依赖页面 CSS 变量；
         // 减少动态效果：不加淡出过渡（prefers-reduced-motion 豁免，到点直接隐没）
         if (!toastEl) {
-            var style = document.createElement('style');
+            const style = document.createElement('style');
             style.textContent =
                 '#gpToast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;' +
                 'padding:10px 18px;background:rgba(18,18,42,.92);border:2px solid #39ff6a;border-radius:6px;' +
@@ -164,23 +164,23 @@ var GP = { connected: false };
      * @returns {string} 截断至 24 字符的识别名
      */
     function padName(pad) {
-        var id = (pad && pad.id) ? String(pad.id).replace(/\(.*?\)/g, '').trim() : '手柄';
+        const id = (pad && pad.id) ? String(pad.id).replace(/\(.*?\)/g, '').trim() : '手柄';
         return id.length > 24 ? id.slice(0, 24) + '…' : (id || '手柄');
     }
 
     // ---------- 主轮询：rAF 循环逐帧读取手柄状态并做边沿判定 ----------
-    var hadPad = false; // 上一帧是否存在可用手柄（检测轮询侧的掉线兜底）
+    let hadPad = false; // 上一帧是否存在可用手柄（检测轮询侧的掉线兜底）
 
     function poll() {
         requestAnimationFrame(poll);
         // 页面隐藏时跳过轮询（rAF 本身会被浏览器暂停，此处双保险）；恢复可见由 visibilitychange 统一释放
         if (document.hidden) return;
-        var pads;
+        let pads;
         try { pads = navigator.getGamepads(); } catch (e) { pads = null; }
         if (!pads) { if (hadPad) { hadPad = false; releaseAll(); } return; }
         // 取第一个已连接的手柄（多手柄场景取索引最小者，与「插第一个玩第一个」直觉一致）
-        var pad = null;
-        for (var i = 0; i < pads.length; i++) {
+        let pad = null;
+        for (let i = 0; i < pads.length; i++) {
             if (pads[i] && pads[i].connected) { pad = pads[i]; break; }
         }
         if (!pad) {
@@ -192,27 +192,27 @@ var GP = { connected: false };
         GP.connected = true;
 
         // ----- 功能按钮边沿判定：buttons[i].pressed（部分手柄为模拟量，value>0.5 视为按下） -----
-        for (var idx in BUTTON_MAP) {
-            var btn = pad.buttons[idx];
-            var isDown = !!(btn && (btn.pressed || btn.value > AXIS_ON));
-            var map = BUTTON_MAP[idx];
+        for (const idx in BUTTON_MAP) {
+            const btn = pad.buttons[idx];
+            const isDown = !!(btn && (btn.pressed || btn.value > AXIS_ON));
+            const map = BUTTON_MAP[idx];
             if (isDown) press(map[0], map[1]);
             else release(map[1]);
         }
 
         // ----- 十字键边沿判定（与功能按钮同规则） -----
-        for (var d in DPAD_MAP) {
-            var dpad = pad.buttons[d];
-            var dDown = !!(dpad && (dpad.pressed || dpad.value > AXIS_ON));
+        for (const d in DPAD_MAP) {
+            const dpad = pad.buttons[d];
+            const dDown = !!(dpad && (dpad.pressed || dpad.value > AXIS_ON));
             if (dDown) press(DPAD_MAP[d], DPAD_MAP[d]);
             else release(DPAD_MAP[d]);
         }
 
         // ----- 左摇杆滞回判定：axes[0] 水平（右正）axes[1] 垂直（下正），触发/释放双阈值 -----
-        var ax = pad.axes;
+        const ax = pad.axes;
         if (ax && ax.length >= 2) {
-            var x = ax[0] || 0;
-            var y = ax[1] || 0;
+            const x = ax[0] || 0;
+            const y = ax[1] || 0;
             // 右推：越过 +0.5 按下，回落到 +0.35 以内松开（其余三向对称）
             if (!stick.right && x > AXIS_ON) { stick.right = true; press('ArrowRight', 'ArrowRight'); }
             else if (stick.right && x < AXIS_OFF) { stick.right = false; release('ArrowRight'); }

@@ -1635,3 +1635,80 @@ setInterval(() => {
 // API 形状不符）时静默跳过，绝不因尾部装饰调用抛错中断初始化收尾（KeyLight 不再注册）
 try { FX.playtime.init('snake'); } catch (e) { /* 时长统计不可用：静默跳过 */ }
 try { FX.KeyLight.init(); } catch (e) { /* 键帽高亮不可用：静默跳过 */ }
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+window.__ARCADE_TESTS__ = [
+    // 撞墙与撞自身：越界格必碰撞、身体占据格必碰撞、空格不碰撞
+    { name: 'isCollision 撞墙/撞身/空格', fn: () => {
+        const old = snake;
+        snake = [{ x: 3, y: 2 }, { x: 2, y: 2 }, { x: 1, y: 2 }];
+        try {
+            if (isCollision({ x: -1, y: 0 }) !== true) throw new Error('左侧越界未判定碰撞');
+            if (isCollision({ x: boardCols, y: 0 }) !== true) throw new Error('右侧越界未判定碰撞');
+            if (isCollision({ x: 0, y: -1 }) !== true) throw new Error('上方越界未判定碰撞');
+            if (isCollision({ x: 2, y: 2 }) !== true) throw new Error('身体占据格未判定碰撞');
+            if (isCollision({ x: 8, y: 8 }) !== false) throw new Error('空格被误判碰撞');
+        } finally { snake = old; }
+    } },
+    // 禁掉头与同向去重：对当前方向与队尾意图分别忽略 180° 反向与同向重复
+    { name: 'queueDirection 禁掉头/同向忽略', fn: () => {
+        const oldDir = direction, oldQueue = dirQueue;
+        direction = 'right';
+        dirQueue = [];
+        try {
+            queueDirection('left');
+            if (dirQueue.length !== 0) throw new Error('180° 掉头未被忽略');
+            queueDirection('right');
+            if (dirQueue.length !== 0) throw new Error('同向重复未被忽略');
+            queueDirection('up');
+            if (dirQueue.length !== 1 || dirQueue[0] !== 'up') throw new Error('合法转向未入队');
+            queueDirection('down');
+            if (dirQueue.length !== 1) throw new Error('对队尾意图的 180° 掉头未被忽略');
+        } finally { direction = oldDir; dirQueue = oldQueue; }
+    } },
+    // 队满淘汰：队列达 DIR_QUEUE_MAX 后再入队，最旧意图被 shift 淘汰
+    { name: 'queueDirection 队满淘汰最旧', fn: () => {
+        const oldDir = direction, oldQueue = dirQueue;
+        direction = 'right';
+        dirQueue = [];
+        try {
+            queueDirection('up');
+            queueDirection('left');
+            queueDirection('down');
+            if (dirQueue.length !== 2 || dirQueue[0] !== 'left' || dirQueue[1] !== 'down') {
+                throw new Error('队满后未淘汰最旧意图: ' + dirQueue.join(','));
+            }
+        } finally { direction = oldDir; dirQueue = oldQueue; }
+    } },
+    // 连击加成：连击 <2 原分，2/3 连击按 1+0.5*(n-1) 倍取整
+    { name: 'comboScore 连击加成', fn: () => {
+        const old = comboCount;
+        try {
+            comboCount = 1;
+            if (comboScore(100) !== 100) throw new Error('低连击应返回原分');
+            comboCount = 2;
+            if (comboScore(100) !== 150) throw new Error('2 连击应为 1.5 倍');
+            comboCount = 3;
+            if (comboScore(100) !== 200) throw new Error('3 连击应为 2 倍');
+        } finally { comboCount = old; }
+    } },
+    // initGame 复位：蛇长/方向/转向队列/分数/吃豆数/速度基准全部回到初始值
+    { name: 'initGame 全量复位', fn: () => {
+        snake = [{ x: 0, y: 0 }];
+        direction = 'up';
+        dirQueue = ['down', 'left'];
+        score = 999;
+        eatenCount = 99;
+        gameSpeed = baseSpeed + 100;
+        initGame();
+        if (snake.length !== 3) throw new Error('蛇长未复位: ' + snake.length);
+        if (direction !== 'right') throw new Error('方向未复位');
+        if (dirQueue.length !== 0) throw new Error('转向队列未清空');
+        if (score !== 0) throw new Error('分数未复位');
+        if (eatenCount !== 0) throw new Error('吃豆数未复位');
+        if (gameSpeed !== baseSpeed) throw new Error('速度未复位');
+    } },
+];
+try { FX.behavior('snake', window.__ARCADE_TESTS__); } catch (e) { /* 测试钩子不可用：静默跳过 */ }

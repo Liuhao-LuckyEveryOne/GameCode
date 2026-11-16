@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>行为测试进行中</title>
+</head>
+<body>
+<pre id="detail"></pre>
+<script>
+'use strict';
+
+/* 行为冒烟测试汇总页（tests/behavior.html）
+ * 离屏 iframe 加载七个游戏页（?behavior=1 激活各页 FX.behavior 测试钩子），
+ * 收集 arcade:behavior 报文按名归账；全部到齐（或 9 秒超时兜底）后：
+ *   - document.title 输出结论（headless --dump-dom 直接读标题判定）
+ *   - window.BEHAVIOR_RESULTS 暴露完整明细
+ *   - 恢复测试前的 localStorage 快照（游戏页加载/测试会写入存档，防污染真实进度）
+ */
+
+/** 参测游戏名单（与各游戏 js 尾部钩子的 FX.behavior 名称一一对应） */
+const GAMES = ['snake', 'tetris', '1024', 'klotski', 'pac', 'bee', 'pinball'];
+/** 结果归账表：游戏名 → 上报报文 { pass, total, fails } */
+const results = {};
+/** 是否已收尾（全到齐或超时只执行一次） */
+let finished = false;
+/** 测试前的存档快照：[key, value] 对数组 */
+const storageBackup = [];
+
+// 快照现有存档（存储不可用时静默跳过，恢复步骤同样跳过）
+try {
+    for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        storageBackup.push([k, localStorage.getItem(k)]);
+    }
+} catch (e) { /* 存储不可用：跳过备份 */ }
+
+/** 恢复存档：清掉测试期间各游戏页写入的键，再还原快照 */
+function restoreStorage() {
+    try {
+        localStorage.clear();
+        for (const pair of storageBackup) localStorage.setItem(pair[0], pair[1]);
+    } catch (e) { /* 存储不可用：跳过恢复 */ }
+}
+
+/** 收尾：统计归账结果、改写标题、暴露明细、恢复存档 */
+function finish() {
+    if (finished) return;
+    finished = true;
+    const missing = GAMES.filter((g) => !results[g]);
+    let pass = 0;
+    let total = 0;
+    for (const g of GAMES) {
+        const r = results[g];
+        if (!r) continue;
+        pass += r.pass;
+        total += r.total;
+    }
+    const ok = missing.length === 0 && total > 0 && pass === total;
+    window.BEHAVIOR_RESULTS = { ok: ok, pass: pass, total: total, missing: missing, detail: results };
+    document.title = ok
+        ? '行为通过 ' + pass + '/' + total
+        : '行为失败 ' + pass + '/' + total + (missing.length > 0 ? '（未上报: ' + missing.join(',') + '）' : '');
+    // 失败明细写入页面（headless dump-dom 与手工排查均可直接读取）
+    const lines = [];
+    for (const g of GAMES) {
+        const r = results[g];
+        if (!r) continue;
+        for (const f of r.fails) lines.push('[' + g + '] ' + f);
+    }
+    if (missing.length > 0) lines.push('未上报游戏: ' + missing.join(','));
+    document.getElementById('detail').textContent = lines.length > 0 ? lines.join('\n') : '（无失败明细）';
+    restoreStorage();
+}
+
+// 接收各游戏 iframe 的 arcade:behavior 报文按名归账，全部到齐即收尾
+window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.type !== 'arcade:behavior') return;
+    results[d.name] = d;
+    if (GAMES.every((g) => results[g])) finish();
+});
+
+// 超时兜底：任一游戏页加载/上报失败也给出结论（9s，须小于 headless 虚拟时间预算）
+setTimeout(finish, 9000);
+
+// 离页兜底恢复存档（finish 未能执行时尽力还原）
+window.addEventListener('pagehide', restoreStorage);
+
+// 依次创建 7 个离屏 iframe 加载真实游戏页（?behavior=1 激活各页测试钩子）
+for (const g of GAMES) {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'absolute';
+    frame.style.left = '-9999px';
+    frame.style.width = '1px';
+    frame.style.height = '1px';
+    frame.src = '../' + g + '.html?behavior=1';
+    document.body.appendChild(frame);
+}
+</script>
+</body>
+</html>

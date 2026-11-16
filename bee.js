@@ -2942,3 +2942,44 @@ requestAnimationFrame(loop);
 // 游玩时长统计上报（返回大厅/关页时结算）+ 键帽实时高亮（按住时点亮说明面板键帽）
 FX.playtime.init('bee');
 FX.KeyLight.init();
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+window.__ARCADE_TESTS__ = [
+    // 碰撞盒判定：区域重叠命中、仅边缘相贴不命中、完全分离不命中（严格不等式边界）
+    { name: 'isHit 重叠/相贴/分离', fn: () => {
+        if (isHit(0, 0, 10, 10, 5, 5, 5, 5) !== true) throw new Error('重叠区域未判命中');
+        if (isHit(0, 0, 10, 10, 10, 0, 5, 5) !== false) throw new Error('边缘相贴被误判命中');
+        if (isHit(0, 0, 10, 10, 20, 20, 5, 5) !== false) throw new Error('完全分离被误判命中');
+    } },
+    // 连击倍率：起步 1、每 COMBO_STEP 升一级、COMBO_MAX_MULT 封顶
+    { name: 'calcMult 起步/升级/封顶', fn: () => {
+        const old = comboCount;
+        try {
+            comboCount = 0;
+            if (calcMult() !== 1) throw new Error('零连击倍率非 1');
+            comboCount = COMBO_STEP - 1;
+            if (calcMult() !== 1) throw new Error('升级前倍率非 1');
+            comboCount = COMBO_STEP;
+            if (calcMult() !== 2) throw new Error('升级阈值倍率非 2');
+            comboCount = COMBO_STEP * (COMBO_MAX_MULT - 1) + 99;
+            if (calcMult() !== COMBO_MAX_MULT) throw new Error('封顶倍率非 ' + COMBO_MAX_MULT);
+        } finally { comboCount = old; }
+    } },
+    // 结算段位：分数/波数双阈值按 S/A/B/C 逐级判定
+    { name: 'computeBeeRank 段位阈值', fn: () => {
+        const oldScore = score, oldWave = wave;
+        try {
+            const probes = [[13000, 1, 'S'], [7000, 1, 'A'], [3000, 1, 'B'], [100, 1, 'C'], [100, 10, 'S']];
+            const got = [];
+            for (const p of probes) {
+                score = p[0];
+                wave = p[1];
+                got.push(computeBeeRank());
+            }
+            if (got.join('') !== 'SABCS') throw new Error('段位序列不符: ' + got.join(''));
+        } finally { score = oldScore; wave = oldWave; }
+    } },
+];
+FX.behavior('bee', window.__ARCADE_TESTS__);

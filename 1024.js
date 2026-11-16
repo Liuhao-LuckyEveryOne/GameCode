@@ -1885,3 +1885,83 @@ window.addEventListener('message', (e) => {
 window.addEventListener('pagehide', () => {
     saveSnapshot();
 });
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+
+/** 按 (r+c) 奇偶交错生成 2/4 满盘矩阵（天然无任何相邻同值，可合并性为 false） */
+function behaviorFullBoard() {
+    const board = [];
+    for (let r = 0; r < SIZE; r++) {
+        const row = [];
+        for (let c = 0; c < SIZE; c++) row.push((r + c) % 2 === 0 ? 2 : 4);
+        board.push(row);
+    }
+    return board;
+}
+
+window.__ARCADE_TESTS__ = [
+    // mulberry32 确定性：同种子两实例产出完全一致的伪随机序列
+    { name: 'mulberry32 同种子同序列', fn: () => {
+        const g1 = mulberry32(42);
+        const g2 = mulberry32(42);
+        for (let i = 0; i < 8; i++) {
+            if (g1() !== g2()) throw new Error('第 ' + i + ' 次抽样两实例不一致');
+        }
+    } },
+    // dateSeed 确定性与值域：同串同值、异串异值、结果为 uint32 非负整数
+    { name: 'dateSeed 确定性/值域', fn: () => {
+        const a = dateSeed('20261116');
+        if (a !== dateSeed('20261116')) throw new Error('同串两次散列不一致');
+        if (a === dateSeed('20261115')) throw new Error('异串散列意外同值');
+        if (!Number.isInteger(a) || a < 0 || a > 4294967295) throw new Error('散列值越出 uint32 值域');
+    } },
+    // 棋盘合法性：全 2 的幂合法；3 / 1 等非法值拒绝；行列数不符拒绝
+    { name: 'isValidBoard 值域/尺寸', fn: () => {
+        if (isValidBoard(behaviorFullBoard()) !== true) throw new Error('全 2 的幂棋盘被误判非法');
+        const badVal = behaviorFullBoard();
+        badVal[0][0] = 3;
+        if (isValidBoard(badVal) !== false) throw new Error('非法值 3 未被拒绝');
+        const badOne = behaviorFullBoard();
+        badOne[0][0] = 1;
+        if (isValidBoard(badOne) !== false) throw new Error('非法值 1 未被拒绝');
+        if (isValidBoard([[2]]) !== false) throw new Error('尺寸不符棋盘未被拒绝');
+    } },
+    // 可合并性：交错满盘无相邻同值 → false；改出相邻同值 → true
+    { name: 'canMergeAnywhere 满/邻同值', fn: () => {
+        const old = grid, oldScore = score, oldCombo = combo;
+        restoreBoard({ board: behaviorFullBoard(), score: 0, combo: 0 });
+        try {
+            if (canMergeAnywhere() !== false) throw new Error('交错满盘被误判可合并');
+            grid[0][1].value = 2;
+            if (canMergeAnywhere() !== true) throw new Error('相邻同值未判可合并');
+        } finally {
+            grid = old; score = oldScore; combo = oldCombo;
+        }
+    } },
+    // 快照恢复：数值矩阵逐格落到 tile.value，score/combo 精确还原
+    { name: 'restoreBoard 快照还原', fn: () => {
+        const old = grid, oldScore = score, oldCombo = combo;
+        const snapBoard = [];
+        for (let r = 0; r < SIZE; r++) {
+            const row = [];
+            for (let c = 0; c < SIZE; c++) row.push([2, 4, 8, 16][(r + c) % 4]);
+            snapBoard.push(row);
+        }
+        restoreBoard({ board: snapBoard, score: 77, combo: 3 });
+        try {
+            for (let r = 0; r < SIZE; r++) {
+                for (let c = 0; c < SIZE; c++) {
+                    if (!grid[r][c] || grid[r][c].value !== snapBoard[r][c]) {
+                        throw new Error('格 (' + r + ',' + c + ') 未按快照还原');
+                    }
+                }
+            }
+            if (score !== 77) throw new Error('分数未还原: ' + score);
+            if (combo !== 3) throw new Error('连击未还原: ' + combo);
+            if (tiles.size !== SIZE * SIZE) throw new Error('tile 实体数不符: ' + tiles.size);
+        } finally { grid = old; score = oldScore; combo = oldCombo; }
+    } },
+];
+FX.behavior('1024', window.__ARCADE_TESTS__);

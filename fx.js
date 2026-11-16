@@ -579,7 +579,34 @@ const FX = (() => {
         return { init };
     })();
 
-    return { prefersReduced, setupCanvas, dims, hitstop, frozen, Pool, recordBurst, shake, tweenNumber, KeyLight, playtime, getFxLevel, getFxMode, setFxLevel, FX_LEVEL_NAMES, _autoFrame: autoFrame };
+    /* ===================== 行为冒烟测试钩子（?behavior=1 激活，tests/behavior.html 汇总上报） ===================== */
+
+    /**
+     * 行为冒烟测试入口：同步逐用例执行并向父页 iframe 汇报结果
+     * 各游戏 js 尾部的钩子块传入用例数组（[{ name, fn }]，fn 抛错即失败）；
+     * 仅当 URL 查询串携带 behavior=1 时激活，正常游玩零开销；
+     * 单个用例抛错只记入失败明细，不阻断其余用例
+     * @param {string} name 游戏名（父页按名归账，须与 tests/behavior.html 的名单一致）
+     * @param {Array<{name: string, fn: Function}>} cases 用例数组
+     */
+    function behavior(name, cases) {
+        // 激活判定：behavior=1 出现在查询串任意参数位且其后是参数分隔符或串尾
+        if (!/(?:\?|&)behavior=1(?=&|$)/.test(location.search)) return;
+        const fails = []; // 失败明细：用例名 + 错误消息
+        for (let i = 0; i < cases.length; i++) {
+            try {
+                cases[i].fn();
+            } catch (e) {
+                fails.push(cases[i].name + '：' + (e && e.message ? e.message : String(e)));
+            }
+        }
+        // 向父页汇报（arcade:behavior 报文）；file:// 协议下 targetOrigin 必须放宽为 '*'
+        try {
+            window.parent.postMessage({ type: 'arcade:behavior', name: name, pass: cases.length - fails.length, total: cases.length, fails: fails }, POST_MSG_TARGET);
+        } catch (e) { /* 上报失败不影响页面本体 */ }
+    }
+
+    return { prefersReduced, setupCanvas, dims, hitstop, frozen, Pool, recordBurst, shake, tweenNumber, KeyLight, playtime, behavior, getFxLevel, getFxMode, setFxLevel, FX_LEVEL_NAMES, _autoFrame: autoFrame };
 })();
 
 // 顶层 const 是词法绑定不自动挂 window：显式挂载以满足跨框架访问（audio.js 面板 window.FX 引用、

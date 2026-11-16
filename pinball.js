@@ -2281,3 +2281,43 @@ requestAnimationFrame(loop);
 // 游玩时长统计上报（返回大厅/关页时结算）+ 键帽实时高亮（按住时点亮说明面板键帽）
 FX.playtime.init('pinball');
 FX.KeyLight.init();
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：纯函数断言，无全局污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+window.__ARCADE_TESTS__ = [
+    // 造球工厂：默认零速、可带初速、拖尾数组逐球独立
+    { name: 'makeBall 默认值/独立拖尾', fn: () => {
+        const b1 = makeBall(10, 20);
+        if (b1.x !== 10 || b1.y !== 20 || b1.vx !== 0 || b1.vy !== 0) throw new Error('默认速度非零');
+        if (b1.trail.length !== 0) throw new Error('初始拖尾非空');
+        const b2 = makeBall(1, 2, 3, 4);
+        if (b2.vx !== 3 || b2.vy !== 4) throw new Error('初速传入失效');
+        if (b1.trail === b2.trail) throw new Error('拖尾数组被共享');
+    } },
+    // 透视投影：台面远/近端中点落点精确，近端缩放大于远端，左右缘分投中线两侧
+    { name: 'project 中点/近大远小', fn: () => {
+        const top = project(WORLD_W / 2, 0);
+        if (top.x !== VIEW_CX || top.y !== VIEW_TOP) throw new Error('远端中点投影错');
+        const bottom = project(WORLD_W / 2, WORLD_H);
+        if (bottom.y !== VIEW_BOTTOM) throw new Error('近端中点投影错');
+        if (bottom.s <= top.s) throw new Error('近端缩放未大于远端');
+        if (project(0, WORLD_H / 2).x >= VIEW_CX) throw new Error('世界左缘应投到中线左侧');
+        if (project(WORLD_W, WORLD_H / 2).x <= VIEW_CX) throw new Error('世界右缘应投到中线右侧');
+    } },
+    // 挡板尖端：angle=0 收拢位时尖端 = 轴点 ± 侧向长度
+    { name: 'flipperTip 收拢位尖端', fn: () => {
+        const tipL = flipperTip({ ax: 80, ay: 100, side: -1, angle: 0, len: 60 });
+        if (tipL.x !== 20 || tipL.y !== 100) throw new Error('左挡板尖端错: ' + tipL.x + ',' + tipL.y);
+        const tipR = flipperTip({ ax: 80, ay: 100, side: 1, angle: 0, len: 60 });
+        if (tipR.x !== 140 || tipR.y !== 100) throw new Error('右挡板尖端错: ' + tipR.x + ',' + tipR.y);
+    } },
+    // 触控分区：中线分左右，弹射器区按 PLUNGER_ZONE_Y 分界
+    { name: 'zoneAt 左/右/弹射区', fn: () => {
+        if (zoneAt(100, 0) !== 'left') throw new Error('中线左侧分区错');
+        if (zoneAt(400, 0) !== 'right') throw new Error('中线右侧分区错');
+        if (zoneAt(100, PLUNGER_ZONE_Y) !== 'plunger') throw new Error('弹射区下界未命中');
+        if (zoneAt(100, PLUNGER_ZONE_Y - 1) !== 'left') throw new Error('弹射区上沿被误判');
+    } },
+];
+FX.behavior('pinball', window.__ARCADE_TESTS__);

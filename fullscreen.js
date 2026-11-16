@@ -30,11 +30,21 @@ const FS = (() => {
      *  游戏页为 h1.title，游戏厅大厅为 h1.arcade-title */
     const TITLE_SELECTORS = ['h1.title', 'h1.arcade-title'];
 
-    /** 顶部安全高度（px）：右上角固定的音效/全屏按钮实际占到约 88px
-     *  （FULLSCREEN 按钮底缘 = top 60 + 高约 28），取 104px 留出缓冲；
-     *  全屏缩放与居中均限制在按钮下方的剩余视口内，
-     *  保证任何分辨率下游戏区/说明区都不会覆盖这两个固定按钮 */
-    const TOP_SAFE = 104;
+    /** 顶部安全高度兜底值（px）：右上角固定按钮区测不到时使用
+     *  （FULLSCREEN 按钮底缘 = top 60 + 高约 28 ≈ 88px） */
+    const TOP_SAFE_FALLBACK = 88;
+
+    /**
+     * 运行时测量顶部安全高度（px）：全屏缩放与居中均限制在该线下方的剩余视口内，
+     * 保证任何分辨率下游戏区/说明区都不会覆盖右上角固定的音效/全屏按钮；
+     * 直接读全屏按钮矩形底缘 + 16px 缓冲，按钮 CSS 位置调整时无需再人工同步常量
+     * @returns {number} 顶部安全高度（px）
+     */
+    function topSafe() {
+        const btn = document.getElementById('fullscreenToggle');
+        const bottom = btn ? btn.getBoundingClientRect().bottom : 0;
+        return (bottom > 0 ? bottom : TOP_SAFE_FALLBACK) + 16;
+    }
 
     /** 嵌入模式标记：URL 携带 ?embed=1 且确实运行于 iframe 之中 */
     const EMBED = new URLSearchParams(location.search).has('embed') && window.parent !== window;
@@ -197,6 +207,9 @@ const FS = (() => {
             target.style.filter = ''; // 同步清除"聚焦提亮"内联残留
             target.style.willChange = ''; // 移除合成层预提升标记，交还浏览器自行管理
             fsBusy = false; // 过渡结束：解除 resize 重算抑制
+            // 补算过渡期间被抑制丢弃的 resize：视口尺寸若在过渡中变化，
+            // 此处按当前状态立即重算落位，避免停留在过期尺寸上（与 resize 事件同一重算路径）
+            applyFsScale(lastFs, false);
         }
         function onEnd(e) {
             // 只认缩放容器自身的 transform 过渡结束（transitionend 会冒泡，子元素过渡不误清）
@@ -240,13 +253,13 @@ const FS = (() => {
         // 最终展示布局的真实尺寸（offset 系列不受 transform 影响，规避动画竞态）
         title.style.position = 'fixed';
         title.style.left = '50%';
-        title.style.top = (TOP_SAFE / 2) + 'px';
+        title.style.top = (topSafe() / 2) + 'px';
         title.style.margin = '0';
         title.style.whiteSpace = 'nowrap'; // fixed 收缩宽度后防止长标题折行
         // 标题自身布局高（offsetHeight 不受祖先 transform 影响，规避测量竞态）
         const h = title.offsetHeight || 40;
         // 缩放比：与游戏区同比（视觉统一），但以"安全区高度留 16px 上下缓冲"封顶
-        let titleScale = Math.max(0.1, Math.min(gameScale || Infinity, (TOP_SAFE - 16) / h));
+        let titleScale = Math.max(0.1, Math.min(gameScale || Infinity, (topSafe() - 16) / h));
         // 宽度约束：缩放后标题右缘不得进入右上角固定按钮区（按钮左缘再留 8px 间隙），
         // 防止窄视口下放大后的长标题（如大厅"像素街机厅"）与音效/全屏按钮相互覆盖
         const fsBtn = document.getElementById('fullscreenToggle');
@@ -332,7 +345,7 @@ const FS = (() => {
         // 标题随缩放容器一起展示，顶部无需为放大标题预留安全区，
         // 缩放与居中覆盖整个视口高度，使可视展示区域在屏幕高度正中
         const keepTitle = keepTitleInFlow();
-        const topOffset = keepTitle ? 0 : TOP_SAFE;
+        const topOffset = keepTitle ? 0 : topSafe();
         // 游戏区等比缩放比（无游戏区页面保持 0，标题仅受安全区高度约束）
         let scale = 0;
         if (target) {
@@ -347,7 +360,7 @@ const FS = (() => {
             target.style.transform = '';
             const rect = target.getBoundingClientRect();
             // 等比缩放比取宽、高两个约束中较小者，保证完整显示；预留 4% 边距避免贴边
-            // 高度约束使用扣除顶部预留（TOP_SAFE 或 keep-title 模式的 0）后的可用高度，
+            // 高度约束使用扣除顶部预留（topSafe() 或 keep-title 模式的 0）后的可用高度，
             // 缩放后游戏区/展示区整体落在预留区下方，不与右上角音效/全屏按钮重叠
             // 允许小于 1：容器高于视口时缩小，保证游戏区高度不超过屏幕
             // 嵌入模式下 iframe 全屏时其视口即屏幕尺寸，计算方式不变
@@ -437,8 +450,19 @@ const FS = (() => {
             return;
         }
         const req = isFullscreen() ? exit() : request(document.documentElement);
-        // 拒绝全屏（如非用户手势触发）时静默忽略，避免未处理 rejection
-        if (req && req.catch) req.catch(() => {});
+        // 全屏请求被拒绝（如非用户手势触发、浏览器不支持）：按钮横晃给「无效」反馈，
+        // 同时吞掉 rejection 避免控制台未处理错误；减少动态效果偏好下跳过晃动
+        if (req && req.catch) req.catch(() => {
+            if (!btn || REDUCED || !btn.animate) return;
+            btn.animate([
+                { transform: 'translateX(0)' },
+                { transform: 'translateX(-5px)', offset: 0.2 },
+                { transform: 'translateX(5px)', offset: 0.4 },
+                { transform: 'translateX(-3px)', offset: 0.6 },
+                { transform: 'translateX(3px)', offset: 0.8 },
+                { transform: 'translateX(0)' }
+            ], { duration: 320, easing: 'ease-in-out' });
+        });
     }
 
     /**

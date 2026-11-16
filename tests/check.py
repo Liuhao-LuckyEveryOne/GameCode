@@ -13,6 +13,10 @@
   6. 游戏入口完整 —— 大厅七张卡片入口与各游戏 html/js 文件一一对应齐全
   7. 兼容性前缀   —— CSS 前缀敏感属性必须 -webkit- 成对（Safari 兼容），AudioContext 必须带
                      webkitAudioContext 回退（文件级粗检；Firefox/Safari 手测清单见技术文档 §9.4）
+  8. 风格红线     —— 松散相等 ==、var 声明、console.log 调试残留零容忍（去噪后行级匹配，
+                     注释/字符串里的「提及」不误判）
+  9. 分享包一致   —— .trae-html-share-packages 下分享包与源文件逐条目字节一致
+                     （缺失/过期/多余/越根均报错；重建命令 tools/sync_packages.py）
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
@@ -21,6 +25,7 @@
 """
 import re
 import sys
+import zipfile
 from pathlib import Path
 
 # ---------- 路径基准：项目根 = 本脚本目录的上一级 ----------
@@ -58,6 +63,14 @@ CSS_PREFIX_PAIRS = [
 # Web Audio 构造回退：出现 AudioContext 构造的文件必须含 webkitAudioContext 回退
 # （Safari 14.1 之前仅暴露带前缀的构造器；audio.js 为「window.AudioContext || window.webkitAudioContext」写法）
 AUDIO_FALLBACK_REQUIRED = "webkitAudioContext"
+
+# 风格红线目标模式（检查项 8，在去噪代码骨架上匹配）：
+#   松散相等 ==：负向断言排除 ===（后随 =）、!==（前置 !）、<=/>=（前置 < >）等合法形态
+#   var 声明：\b 词边界避免误伤标识符子串；应使用 const/let
+#   console.log：调试残留零容忍（用户可见输出仅允许 warn/error）
+LOOSE_EQ_RE = re.compile(r"(?<![=!<>])==(?!=)")
+VAR_DECL_RE = re.compile(r"\bvar\s")
+DEBUG_LOG_RE = re.compile(r"\bconsole\.log\s*\(")
 
 # 大厅七卡片对应的游戏入口（html, js）
 GAMES = [
@@ -274,6 +287,25 @@ def strip_js_noise(line, state):
     return "".join(out), state
 
 
+def strip_js_code(text):
+    """全文去噪：逐行剥离注释与字符串/模板串内容，返回拼接后的纯代码骨架。
+
+    复用 strip_js_noise 的行级状态机（块注释与模板串允许跨行），供风格红线等
+    全文正则扫描使用；输出按原行序以换行拼接，行号与原文一一对应。
+
+    参数:
+        text: JS 全文，或 HTML 内联脚本块拼接文本
+    返回:
+        去噪后的代码骨架文本
+    """
+    state = {"block": False, "tmpl": False}
+    lines = []
+    for raw in text.split("\n"):
+        code, state = strip_js_noise(raw, state)
+        lines.append(code)
+    return "\n".join(lines)
+
+
 def storage_line_problems(name, text):
     """行级存储兜底检测：每一处 localStorage 直接读写都必须位于 try 块内。
 
@@ -385,8 +417,79 @@ def check_compat_problems():
     return problems
 
 
+def check_style_problems():
+    """检查项 8：风格红线——松散相等 / var 声明 / console.log 调试残留零容忍。
+
+    对全部 js 文件与 HTML 内联脚本做行级扫描（在去噪骨架上匹配，注释与字符串
+    字面量中的「提及」不误判）。本项目不引入 ESLint/Node 工具链（2026-11 方案 B
+    决策），由本检查承担其最有价值的三条正确性/风格规则。
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    problems = []
+    targets = [(js.name, js.read_text(encoding="utf-8")) for js in js_files()]
+    targets += [
+        (f"{page.name}（内联脚本）", script_chunks(page.read_text(encoding="utf-8")))
+        for page in html_files()
+    ]
+    for name, text in targets:
+        for lineno, line in enumerate(strip_js_code(text).split("\n"), 1):
+            if LOOSE_EQ_RE.search(line):
+                problems.append(f"{name}:L{lineno} 松散相等 ==（应使用 ===/!==）")
+            if VAR_DECL_RE.search(line):
+                problems.append(f"{name}:L{lineno} var 声明（应使用 const/let）")
+            if DEBUG_LOG_RE.search(line):
+                problems.append(f"{name}:L{lineno} console.log 调试残留（仅允许 warn/error）")
+    return problems
+
+
+def check_packages_problems():
+    """检查项 9：HTML 分享包与源文件逐条目字节一致。
+
+    约定：.trae-html-share-packages 下每个根页面一个 <page>.html.zip（全站快照）、
+    每个 tests 页面一个 tests/<page>.zip。判定规则与 tools/sync_packages.py 的
+    产出形态对齐（但不耦合其打包细节）：
+      a. 期望包必须存在（新游戏 / 新 tests 页面漏打包即红）
+      b. 包内条目必须逐个映射到仓库真实源文件且字节一致（源码改后忘同步即红）
+      c. 条目不得越出仓库根（防临时产物 / 绝对路径混入）
+      d. 不得存在期望之外的孤儿 zip（页面删除后遗留即红）
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    pkg = ROOT / ".trae-html-share-packages"
+    if not pkg.is_dir():
+        return [".trae-html-share-packages 目录缺失（运行 tools/sync_packages.py 生成）"]
+    # 期望包集合：根页面 × 1 + tests 页面 × 1
+    expected = {f"{p.name}.zip" for p in ROOT.glob("*.html")}
+    expected |= {f"tests/{p.name}.zip" for p in (ROOT / "tests").glob("*.html")}
+    # 实际包集合（含 tests/ 子目录，zip 内路径统一正斜杠）
+    actual = {str(z.relative_to(pkg)).replace("\\", "/") for z in pkg.rglob("*.zip")}
+    problems = []
+    for miss in sorted(expected - actual):
+        problems.append(f"缺少分享包 {miss}（运行 tools/sync_packages.py 生成）")
+    for orphan in sorted(actual - expected):
+        problems.append(f"多余分享包 {orphan}（对应页面已不存在，请删除后重跑 tools/sync_packages.py）")
+    for rel in sorted(actual & expected):
+        with zipfile.ZipFile(pkg / rel) as zf:
+            for name in zf.namelist():
+                # 规则 c：越根条目（绝对路径 / 上跳）直接拒绝
+                if name.startswith(("/", "\\")) or ".." in Path(name).parts:
+                    problems.append(f"{rel} 条目越出仓库根: {name}")
+                    continue
+                src = ROOT / name
+                # 规则 b：源文件已不存在 = 包内容过期
+                if not src.is_file():
+                    problems.append(f"{rel} 条目无对应源文件: {name}")
+                    continue
+                if zf.read(name) != src.read_bytes():
+                    problems.append(f"{rel} 条目与源文件不一致: {name}")
+    return problems
+
+
 def main():
-    """主流程：依次运行七项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行九项检查，汇总结果并按退出码约定返回。"""
     checks = [
         ("引用完整性", check_refs_problems),
         ("缓存指纹(?v=)", check_version_problems),
@@ -395,6 +498,8 @@ def main():
         ("存储兜底", check_storage_problems),
         ("游戏入口完整", check_games_problems),
         ("兼容性前缀", check_compat_problems),
+        ("风格红线", check_style_problems),
+        ("分享包一致", check_packages_problems),
     ]
     all_ok = True
     for label, fn in checks:

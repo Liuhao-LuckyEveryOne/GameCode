@@ -1896,3 +1896,78 @@ requestAnimationFrame(loop);
 // 中带 data-code 的键帽（window 级捕获委托，零侵入，reduced-motion 下无过渡）
 FX.playtime.init('tetris');
 FX.KeyLight.init();
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+window.__ARCADE_TESTS__ = [
+    // 旋转互逆：任意矩阵先 CW 后 CCW 应精确还原，且旋转不改变占格数
+    { name: 'rotate/rotateCCW 互逆还原', fn: () => {
+        const probe = [[1, 0, 0], [1, 1, 1], [0, 0, 0]]; // 非对称 J 形矩阵
+        const back = rotateCCW(rotate(probe));
+        if (JSON.stringify(back) !== JSON.stringify(probe)) throw new Error('CW→CCW 未还原原矩阵');
+        const t = PIECES[2].matrix;
+        const cells = (m) => m.reduce((s, row) => s + row.reduce((a, v) => a + (v ? 1 : 0), 0), 0);
+        if (cells(rotate(t)) !== cells(t)) throw new Error('CW 旋转丢失/增多占格');
+        if (cells(rotateCCW(t)) !== cells(t)) throw new Error('CCW 旋转丢失/增多占格');
+    } },
+    // SRS 踢墙表完整性：JLSTZ/I 两表均为 8 个转向键 × 5 组 [dx,dy] 整数偏移
+    { name: 'SRS 踢墙表完整性', fn: () => {
+        const expectedKeys = '0>1,0>3,1>0,1>2,2>1,2>3,3>0,3>2';
+        for (const table of [SRS_KICKS_JLSTZ, SRS_KICKS_I]) {
+            const keys = Object.keys(table).sort().join(',');
+            if (keys !== expectedKeys) throw new Error('踢墙键集不符: ' + keys);
+            for (const k of Object.keys(table)) {
+                if (table[k].length !== 5) throw new Error(k + ' 偏移组数非 5');
+                for (const off of table[k]) {
+                    if (!Array.isArray(off) || off.length !== 2 || !Number.isInteger(off[0]) || !Number.isInteger(off[1])) {
+                        throw new Error(k + ' 存在非法偏移');
+                    }
+                }
+            }
+        }
+    } },
+    // 碰撞判定：左右/底部越界为碰撞，顶部界外允许入场，堆叠占格为碰撞
+    { name: 'collide 越界/界外入场/堆叠', fn: () => {
+        const old = board;
+        board = createBoard();
+        try {
+            if (collide(-1, 0, [[1]]) !== true) throw new Error('左侧越界未判碰撞');
+            if (collide(COLS, 0, [[1]]) !== true) throw new Error('右侧越界未判碰撞');
+            if (collide(0, ROWS, [[1]]) !== true) throw new Error('底部越界未判碰撞');
+            if (collide(0, -1, [[1]]) !== false) throw new Error('顶部界外入场被误判碰撞');
+            board[18][5] = 1;
+            if (collide(5, 18, [[1]]) !== true) throw new Error('堆叠占格未判碰撞');
+            if (collide(3, 18, [[1]]) !== false) throw new Error('相邻空格被误判碰撞');
+        } finally { board = old; }
+    } },
+    // 合行探测：merge 落格写入 board，findFullRows 精确识别唯一满行
+    { name: 'merge+findFullRows 满行识别', fn: () => {
+        const oldBoard = board, oldPiece = piece;
+        board = createBoard();
+        for (let c = 1; c < COLS; c++) board[19][c] = 1;
+        piece = { x: 0, y: 19, rot: 0, typeIndex: 0, matrix: [[1]] };
+        try {
+            merge();
+            if (board[19][0] !== 1) throw new Error('merge 未写入落点格');
+            const full = findFullRows();
+            if (full.length !== 1 || full[0] !== 19) throw new Error('满行识别错误: ' + full.join(','));
+        } finally { board = oldBoard; piece = oldPiece; }
+    } },
+    // 顺序生成：spawnPiece() 消耗 nextQueue 队首并回填；定型生成不消耗队列且复用 PIECES 矩阵
+    { name: 'spawnPiece 定型不耗队', fn: () => {
+        const oldBoard = board, oldPiece = piece, oldQueue = nextQueue;
+        board = createBoard(); // 清空棋盘避免出生点被占触发误判死亡
+        nextQueue = [2, 4, 6];
+        try {
+            spawnPiece(0);
+            if (piece.typeIndex !== 0) throw new Error('定型生成类型不符');
+            if (piece.matrix !== PIECES[0].matrix) throw new Error('定型生成未复用 PIECES 矩阵');
+            if (nextQueue.join(',') !== '2,4,6') throw new Error('定型生成误耗 nextQueue: ' + nextQueue.join(','));
+            spawnPiece();
+            if (piece.typeIndex !== 2) throw new Error('顺序生成未取队首');
+            if (nextQueue[0] !== 4 || nextQueue[1] !== 6) throw new Error('顺序生成队列错位: ' + nextQueue.join(','));
+        } finally { board = oldBoard; piece = oldPiece; nextQueue = oldQueue; }
+    } },
+];
+FX.behavior('tetris', window.__ARCADE_TESTS__);

@@ -3409,3 +3409,93 @@ requestAnimationFrame(renderLoop);
 // 游玩时长统计上报（返回大厅/关页时结算）+ 键帽实时高亮（按住时点亮说明面板键帽）
 FX.playtime.init('klotski');
 FX.KeyLight.init();
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+window.__ARCADE_TESTS__ = [
+    // FNV-1a 哈希：同串同值、异串异值、结果为 uint32 非负整数
+    { name: 'hashStr 确定性/值域', fn: () => {
+        const a = hashStr('hengdao');
+        if (a !== hashStr('hengdao')) throw new Error('同串两次散列不一致');
+        if (a === hashStr('zhihui')) throw new Error('异串散列意外同值');
+        if (!Number.isInteger(a) || a < 0 || a > 4294967295) throw new Error('散列值越出 uint32 值域');
+    } },
+    // 占位网格：棋子格标记、空格不标记；排除参数不计自身
+    { name: 'buildGrid 占位/排除', fn: () => {
+        const old = pieces;
+        pieces = [
+            { n: '曹', t: 'cao', x: 1, y: 0, w: 2, h: 2 },
+            { n: '卒', t: 'sol', x: 0, y: 3, w: 1, h: 1 }
+        ];
+        try {
+            const full = buildGrid();
+            let filled = 0;
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (full[r][c]) filled++;
+                }
+            }
+            if (filled !== 5) throw new Error('占位格数不符: ' + filled);
+            if (!full[1][1] || !full[3][0]) throw new Error('棋子格未标记');
+            if (full[4][3]) throw new Error('空格被误标记');
+            const exclude = buildGrid(pieces[0]);
+            if (exclude[1][1]) throw new Error('排除参数未生效');
+            if (!exclude[3][0]) throw new Error('排除后其余棋子丢失');
+        } finally { pieces = old; }
+    } },
+    // 滑动测距：向右遇阻挡 1 步、向下空场到底、向左/上出界 0 步
+    { name: 'slideRange 阻挡/到底/出界', fn: () => {
+        const old = pieces;
+        const p = { n: '卒', t: 'sol', x: 0, y: 0, w: 1, h: 1 };
+        pieces = [p, { n: '卒', t: 'sol', x: 2, y: 0, w: 1, h: 1 }];
+        try {
+            if (slideRange(p, 1, 0) !== 1) throw new Error('右侧阻挡测距错误');
+            if (slideRange(p, 0, 1) !== ROWS - 1) throw new Error('下方空场未到底');
+            if (slideRange(p, -1, 0) !== 0) throw new Error('左出界未截停');
+            if (slideRange(p, 0, -1) !== 0) throw new Error('上出界未截停');
+        } finally { pieces = old; }
+    } },
+    // 局面编码：横刀立马按 HINT_CHAR 编码为 20 格串，C/G/V/S/空 计数精确
+    { name: 'encodeBoard 横刀立马编码', fn: () => {
+        const old = pieces;
+        pieces = LAYOUTS[0].pieces.map((p) => ({ n: p.n, t: p.t, x: p.x, y: p.y, w: p.w, h: p.h }));
+        try {
+            const enc = encodeBoard();
+            if (enc.length !== COLS * ROWS) throw new Error('编码长度不符: ' + enc.length);
+            const count = (ch) => enc.split(ch).length - 1;
+            if (count('C') !== 4) throw new Error('曹操格数非 4');
+            if (count('G') !== 2) throw new Error('关羽格数非 2');
+            if (count('V') !== 8) throw new Error('武将格数非 8');
+            if (count('S') !== 4) throw new Error('卒格数非 4');
+            if (count('.') !== 2) throw new Error('空格数非 2');
+        } finally { pieces = old; }
+    } },
+    // 布局库完整性：id 唯一、唯一 2×2 曹操、棋子不越界不重叠、类型均可编码
+    { name: 'LAYOUTS 全布局完整性', fn: () => {
+        const ids = new Set();
+        for (const layout of LAYOUTS) {
+            if (ids.has(layout.id)) throw new Error('布局 id 重复: ' + layout.id);
+            ids.add(layout.id);
+            let caoCount = 0;
+            const seen = new Set();
+            for (const p of layout.pieces) {
+                if (!HINT_CHAR[p.t]) throw new Error(layout.id + ' 含未知棋子类型 ' + p.t);
+                if (p.t === 'cao') {
+                    caoCount++;
+                    if (p.w !== 2 || p.h !== 2) throw new Error(layout.id + ' 曹操非 2×2');
+                }
+                for (let y = p.y; y < p.y + p.h; y++) {
+                    for (let x = p.x; x < p.x + p.w; x++) {
+                        if (x < 0 || y < 0 || x >= COLS || y >= ROWS) throw new Error(layout.id + ' 棋子越界');
+                        const key = x + ',' + y;
+                        if (seen.has(key)) throw new Error(layout.id + ' 棋子重叠');
+                        seen.add(key);
+                    }
+                }
+            }
+            if (caoCount !== 1) throw new Error(layout.id + ' 曹操数量非 1');
+        }
+    } },
+];
+FX.behavior('klotski', window.__ARCADE_TESTS__);

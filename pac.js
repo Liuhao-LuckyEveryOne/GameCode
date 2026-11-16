@@ -2086,3 +2086,73 @@ requestAnimationFrame(loop);
 // 游玩时长统计上报（返回大厅/关页时结算）+ 键帽实时高亮（按住时点亮说明面板键帽）
 FX.playtime.init('pac');
 FX.KeyLight.init();
+
+/* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
+// 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；
+// 失败以抛错表达，由 FX.behavior 统一捕获汇总后 postMessage 上报父页
+window.__ARCADE_TESTS__ = [
+    // 通行判定：墙/幽灵门不可通行，隧道列环绕可通行，走廊与越界行判定正确
+    { name: 'canPass 墙/门/隧道/走廊', fn: () => {
+        buildGrid(); // 重解码迷宫，排除快照恢复对豆子布局的干扰（墙体/门不受影响）
+        if (canPass(0, 0) !== false) throw new Error('墙格被误判可通行');
+        if (canPass(9, 8) !== false) throw new Error('幽灵门被误判可通行');
+        if (canPass(-1, 10) !== true) throw new Error('隧道列环绕未放行');
+        if (canPass(1, 1) !== true) throw new Error('走廊格被误判不可通行');
+        if (canPass(0, -1) !== false) throw new Error('越界行未拦截');
+    } },
+    // 追踪目标：blinky 直指吃豆人、pinky 前方四格、exit/eyes 定点、scatter 回散开角
+    { name: 'ghostTarget 四模式目标点', fn: () => {
+        const oldPac = pac, oldPhase = phaseIndex;
+        pac = { cell: { x: 4, y: 10 }, dir: 'left' };
+        phaseIndex = 1; // chase 相位
+        try {
+            const blinky = { name: 'blinky', mode: 'roam', cell: { x: 1, y: 1 }, scatter: { x: 17, y: 1 }, dir: 'up', frightened: false };
+            let t = ghostTarget(blinky);
+            if (t.x !== 4 || t.y !== 10) throw new Error('blinky 未锁定吃豆人格');
+            const pinky = { name: 'pinky', mode: 'roam', cell: { x: 1, y: 1 }, scatter: { x: 1, y: 1 }, dir: 'up', frightened: false };
+            t = ghostTarget(pinky);
+            if (t.x !== 0 || t.y !== 10) throw new Error('pinky 前方四格目标错: ' + t.x + ',' + t.y);
+            const exitG = { name: 'blinky', mode: 'exit', cell: { x: 9, y: 9 }, scatter: { x: 17, y: 1 }, dir: 'up', frightened: false };
+            t = ghostTarget(exitG);
+            if (t.x !== 9 || t.y !== 7) throw new Error('exit 模式未指向幽灵门口');
+            const eyesG = { name: 'blinky', mode: 'eyes', cell: { x: 1, y: 1 }, scatter: { x: 17, y: 1 }, dir: 'up', frightened: false };
+            t = ghostTarget(eyesG);
+            if (t.x !== 9 || t.y !== 9) throw new Error('eyes 模式未指向幽灵屋');
+            phaseIndex = 0; // scatter 相位
+            t = ghostTarget(blinky);
+            if (t.x !== 17 || t.y !== 1) throw new Error('scatter 模式未指向散开角');
+        } finally { pac = oldPac; phaseIndex = oldPhase; }
+    } },
+    // 选路策略：掉头被禁（down 距离 2 严格最近却被排除，剩余候选中 left 距离 √10 最近胜出）；
+    // 非反向候选按欧氏距离最小择优（up 距离 5 > down 距离 3，纯距离胜出）
+    { name: 'ghostChooseDir 禁掉头/距离择优', fn: () => {
+        const oldPac = pac, oldPhase = phaseIndex;
+        pac = { cell: { x: 4, y: 8 }, dir: 'left' };
+        phaseIndex = 1;
+        try {
+            const g = { name: 'blinky', mode: 'roam', cell: { x: 4, y: 5 }, dir: 'up', frightened: false, scatter: { x: 17, y: 19 } };
+            ghostChooseDir(g);
+            if (g.dir !== 'left') throw new Error('掉头未被禁止（选到 ' + g.dir + '）');
+            pac.cell = { x: 4, y: 9 };
+            g.dir = 'left';
+            ghostChooseDir(g);
+            if (g.dir !== 'down') throw new Error('距离择优选错（选到 ' + g.dir + '）');
+        } finally { pac = oldPac; phaseIndex = oldPhase; }
+    } },
+    // 速度分级：eyes 最快、exit 缓行、惊惧减速，倍率与常量精确一致
+    { name: 'ghostSpeed 三档倍率', fn: () => {
+        const oldBase = ghBase, oldLevel = level;
+        ghBase = 95;
+        level = 1;
+        try {
+            const base = { name: 'blinky', mode: 'roam', cell: { x: 1, y: 1 }, dir: 'up', frightened: false };
+            const eyes = { name: 'blinky', mode: 'eyes', cell: { x: 1, y: 1 }, dir: 'up', frightened: false };
+            const exit = { name: 'blinky', mode: 'exit', cell: { x: 1, y: 1 }, dir: 'up', frightened: false };
+            const fright = { name: 'blinky', mode: 'roam', cell: { x: 1, y: 1 }, dir: 'up', frightened: true };
+            if (ghostSpeed(eyes) !== ghBase * 2.4) throw new Error('eyes 倍率不符');
+            if (ghostSpeed(exit) !== ghBase * 0.7) throw new Error('exit 倍率不符');
+            if (ghostSpeed(fright) !== ghostSpeed(base) * 0.55) throw new Error('惊惧倍率不符');
+        } finally { ghBase = oldBase; level = oldLevel; }
+    } },
+];
+FX.behavior('pac', window.__ARCADE_TESTS__);
