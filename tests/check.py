@@ -17,12 +17,14 @@
                      注释/字符串里的「提及」不误判）
   9. 分享包一致   —— .trae-html-share-packages 下分享包与源文件逐条目字节一致
                      （缺失/过期/多余/越根均报错；重建命令 tools/sync_packages.py）
+  10. 去噪自检    —— strip_js_noise 行级状态机 doctest 回归（转义引号/跨行注释/模板串）
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
 
 退出码：0 = 全部通过；1 = 存在失败项（逐条打印明细）。
 """
+import doctest
 import re
 import sys
 import zipfile
@@ -202,30 +204,46 @@ def check_lib_order_problems():
     return problems
 
 
-def check_dangerous_problems():
+def scan_targets():
+    """统一扫描目标收集：每个文件只读一次原文并去噪一次生成骨架。
+
+    供危险模式扫描（用原文 raw）、存储兜底（用骨架 skel，二次去噪幂等）、
+    风格红线（用骨架 skel）三项检查复用，替代各自重复读盘与重复去噪。
+
+    返回:
+        [(name, raw, skel)] 列表——name 为报告用文件名（HTML 内联脚本带
+        「（内联脚本）」后缀），raw 为 js 全文或 HTML 内联脚本块拼接原文，
+        skel 为 raw 经 strip_js_code 去噪后的代码骨架
+    """
+    targets = []
+    for js in js_files():
+        raw = js.read_text(encoding="utf-8")
+        targets.append((js.name, raw, strip_js_code(raw)))
+    for page in html_files():
+        raw = script_chunks(page.read_text(encoding="utf-8"))
+        targets.append((f"{page.name}（内联脚本）", raw, strip_js_code(raw)))
+    return targets
+
+
+def check_dangerous_problems(targets):
     """检查项 4：全站 js 与 HTML 内联脚本扫描危险模式，要求零命中。
 
+    参数:
+        targets: scan_targets() 产出的 (name, raw, skel) 列表（本项按原文扫描，
+                 注释/字符串里的「提及」也计入——保守策略，与历史口径一致）
     返回:
         失败明细列表（空列表 = 通过）
     """
     problems = []
-    # 独立 js 文件全文扫描
-    for js in js_files():
-        text = js.read_text(encoding="utf-8")
+    for name, raw, _skel in targets:
         for pat, label in DANGEROUS_PATTERNS:
-            if pat in text:
-                problems.append(f"{js.name} 命中危险模式: {label}")
-    # HTML 内联脚本块扫描（外置后当前各页应为空，防止未来回退）
-    for page in html_files():
-        chunk = script_chunks(page.read_text(encoding="utf-8"))
-        for pat, label in DANGEROUS_PATTERNS:
-            if pat in chunk:
-                problems.append(f"{page.name} 内联脚本命中危险模式: {label}")
+            if pat in raw:
+                problems.append(f"{name} 命中危险模式: {label}")
     return problems
 
 
 def strip_js_noise(line, state):
-    """剥离一行 JS 中的注释与字符串/模板串内容，仅保留代码骨架。
+    r"""剥离一行 JS 中的注释与字符串/模板串内容，仅保留代码骨架。
 
     行级 try 追踪的前置去噪：注释里「提及」的 localStorage / try、字符串字面量里的
     花括号等噪声不得干扰大括号深度与 try 状态机。块注释（/* */）与模板串（`）允许
@@ -236,6 +254,18 @@ def strip_js_noise(line, state):
         state: 跨行扫描状态字典 {"block": 是否处于块注释内, "tmpl": 是否处于模板串内}
     返回:
         (清理后的代码文本, state)——state 原地更新并原样返回
+
+    示例（doctest 自检，第 10 项检查运行）：
+    >>> strip_js_noise("const s = 'a\\'b'; f()", {"block": False, "tmpl": False})
+    ('const s = ; f()', {'block': False, 'tmpl': False})
+    >>> strip_js_noise("x(`a{b}c`)", {"block": False, "tmpl": False})
+    ('x()', {'block': False, 'tmpl': False})
+    >>> strip_js_noise("a /* c", {"block": False, "tmpl": False})
+    ('a ', {'block': True, 'tmpl': False})
+    >>> strip_js_noise("b */ c", {"block": True, "tmpl": False})
+    (' c', {'block': False, 'tmpl': False})
+    >>> strip_js_noise("f() // { localStorage", {"block": False, "tmpl": False})
+    ('f() ', {'block': False, 'tmpl': False})
     """
     out = []
     i, n = 0, len(line)
@@ -316,7 +346,8 @@ def storage_line_problems(name, text):
 
     参数:
         name: 文件名（报告用，形如 bee.js 或 index.html（内联脚本））
-        text: JS 全文，或 HTML 内联脚本块拼接文本
+        text: JS 全文，或 HTML 内联脚本块拼接文本；也可传入已去噪骨架
+              （strip_js_noise 幂等——骨架无引号/注释标记，重复剥离无副作用）
     返回:
         问题明细列表（空列表 = 通过），每条带行号
     """
@@ -347,22 +378,22 @@ def storage_line_problems(name, text):
     return problems
 
 
-def check_storage_problems():
+def check_storage_problems(targets):
     """检查项 5：直接调用 localStorage 读写的每一处必须逐处位于 try 块内（行级检测）。
 
     本站约定为「直接调用 + try-catch 逐处包裹」（技术文档 §5）。原文件级粗检
     （同文件存在任意 catch 即放行）曾放过单处裸调用（bee.js 顶层读取，2026-11-05
     审查修复），故升级为行级：仅当调用点本身处于未闭合 try 块体内才视为有兜底。
 
+    参数:
+        targets: scan_targets() 产出的 (name, raw, skel) 列表（本项用骨架 skel，
+                 storage_line_problems 内部二次去噪幂等，结果与传原文一致）
     返回:
         失败明细列表（空列表 = 通过）
     """
     problems = []
-    for js in js_files():
-        problems.extend(storage_line_problems(js.name, js.read_text(encoding="utf-8")))
-    for page in html_files():
-        chunk = script_chunks(page.read_text(encoding="utf-8"))
-        problems.extend(storage_line_problems(f"{page.name}（内联脚本）", chunk))
+    for name, _raw, skel in targets:
+        problems.extend(storage_line_problems(name, skel))
     return problems
 
 
@@ -417,24 +448,21 @@ def check_compat_problems():
     return problems
 
 
-def check_style_problems():
+def check_style_problems(targets):
     """检查项 8：风格红线——松散相等 / var 声明 / console.log 调试残留零容忍。
 
     对全部 js 文件与 HTML 内联脚本做行级扫描（在去噪骨架上匹配，注释与字符串
     字面量中的「提及」不误判）。本项目不引入 ESLint/Node 工具链（2026-11 方案 B
     决策），由本检查承担其最有价值的三条正确性/风格规则。
 
+    参数:
+        targets: scan_targets() 产出的 (name, raw, skel) 列表（本项直接枚举骨架行）
     返回:
         失败明细列表（空列表 = 通过）
     """
     problems = []
-    targets = [(js.name, js.read_text(encoding="utf-8")) for js in js_files()]
-    targets += [
-        (f"{page.name}（内联脚本）", script_chunks(page.read_text(encoding="utf-8")))
-        for page in html_files()
-    ]
-    for name, text in targets:
-        for lineno, line in enumerate(strip_js_code(text).split("\n"), 1):
+    for name, _raw, skel in targets:
+        for lineno, line in enumerate(skel.split("\n"), 1):
             if LOOSE_EQ_RE.search(line):
                 problems.append(f"{name}:L{lineno} 松散相等 ==（应使用 ===/!==）")
             if VAR_DECL_RE.search(line):
@@ -488,18 +516,36 @@ def check_packages_problems():
     return problems
 
 
+def check_doctest_problems():
+    """检查项 10：strip_js_noise 行级状态机 doctest 回归。
+
+    以 doctest 重放去噪函数 docstring 中的样例（转义引号 / 模板串花括号 /
+    跨行块注释两条 / 行注释吞噪声），守护行级检测的地基不被重构破坏；
+    失败明细由 doctest 自动打印到 stdout。
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    result = doctest.testmod()
+    if result.failed:
+        return [f"doctest 失败 {result.failed}/{result.attempted} 例（明细见上方输出）"]
+    return []
+
+
 def main():
-    """主流程：依次运行九项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十项检查，汇总结果并按退出码约定返回。"""
+    targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
         ("缓存指纹(?v=)", check_version_problems),
         ("公共库加载序", check_lib_order_problems),
-        ("危险模式扫描", check_dangerous_problems),
-        ("存储兜底", check_storage_problems),
+        ("危险模式扫描", lambda: check_dangerous_problems(targets)),
+        ("存储兜底", lambda: check_storage_problems(targets)),
         ("游戏入口完整", check_games_problems),
         ("兼容性前缀", check_compat_problems),
-        ("风格红线", check_style_problems),
+        ("风格红线", lambda: check_style_problems(targets)),
         ("分享包一致", check_packages_problems),
+        ("去噪自检", check_doctest_problems),
     ]
     all_ok = True
     for label, fn in checks:

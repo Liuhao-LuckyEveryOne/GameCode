@@ -597,7 +597,10 @@ const FX = (() => {
             try {
                 cases[i].fn();
             } catch (e) {
-                fails.push(cases[i].name + '：' + (e && e.message ? e.message : String(e)));
+                // ReferenceError 单独标注：实现重构（改名/删函数）会令直调内部符号的用例抛此错，
+                // 与真实实现缺陷区分开，避免用例过期被误读为功能回退
+                const tag = e instanceof ReferenceError ? '（疑似重构后用例失效）' : '';
+                fails.push(cases[i].name + '：' + (e && e.message ? e.message : String(e)) + tag);
             }
         }
         // 向父页汇报（arcade:behavior 报文）；file:// 协议下 targetOrigin 必须放宽为 '*'

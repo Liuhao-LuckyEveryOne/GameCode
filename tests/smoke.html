@@ -46,6 +46,8 @@
      页面自动串行执行全部场景，结果实时渲染；automation 可读
        window.SMOKE_RESULTS / document.title / #summary
      注意：file:// 直开下同源策略阻断 iframe 内部访问，必须经 http 起服运行。
+     无头运行：--virtual-time-budget ≥ 20000（本页 S17/S18 含帧泵耗时）；
+     tests/behavior.html 的 TIMEOUT_MS=9000 亦须小于该预算——两处阈值需同步调整。
 
      数据安全：启动时快照 localStorage 全部键值，结束时（含 pagehide 兜底）
      清除并原样恢复——测试写入的种子数据与成就不会污染真实存档。
@@ -81,7 +83,7 @@
 <ol id="results"></ol>
 <button id="rerun" type="button">重新运行</button>
 <div id="stage"></div>
-<script src="../fx.js?v=20261107-1"></script>
+<script src="../fx.js?v=20261116-1"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------

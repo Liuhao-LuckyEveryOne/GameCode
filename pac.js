@@ -2154,5 +2154,26 @@ window.__ARCADE_TESTS__ = [
             if (ghostSpeed(fright) !== ghostSpeed(base) * 0.55) throw new Error('惊惧倍率不符');
         } finally { ghBase = oldBase; level = oldLevel; }
     } },
+    // 泵帧用例：合成时间戳连调 loop，验证通用特效计时器按 dt 封顶步长推进并归零
+    { name: 'loop 泵帧推进 powerFlash 衰减（dt 封顶步长）', fn: () => {
+        const realRAF = window.requestAnimationFrame;
+        window.requestAnimationFrame = () => 0; // 桩化：泵帧期间不再叠加真实排程
+        const oldFlash = powerFlash, oldPaused = isPaused, oldOpen = achPanelOpen, oldLast = lastTime;
+        isPaused = false; achPanelOpen = false;
+        const t0 = performance.now();
+        lastTime = t0;                          // 对齐时钟：首帧 delta = 0
+        try {
+            powerFlash = 0.09;                  // 两帧各封顶 0.05s：0.09 → 0.04 → 0
+            loop(t0);                           // delta=0 → 不推进
+            if (powerFlash !== 0.09) throw new Error('零步长帧不应推进: ' + powerFlash);
+            loop(t0 + 50);                      // dt 封顶 0.05s → 0.04
+            if (!(powerFlash > 0 && powerFlash < 0.09)) throw new Error('单帧未按封顶步长衰减: ' + powerFlash);
+            loop(t0 + 100);                     // 0.04 → 0
+            if (powerFlash !== 0) throw new Error('两帧后未归零: ' + powerFlash);
+        } finally {
+            window.requestAnimationFrame = realRAF;
+            powerFlash = oldFlash; isPaused = oldPaused; achPanelOpen = oldOpen; lastTime = oldLast;
+        }
+    } },
 ];
 FX.behavior('pac', window.__ARCADE_TESTS__);

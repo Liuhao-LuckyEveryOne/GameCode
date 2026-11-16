@@ -81,8 +81,10 @@ window.addEventListener('message', (e) => {
     if (GAMES.every((g) => results[g])) finish();
 });
 
-// 超时兜底：任一游戏页加载/上报失败也给出结论（9s，须小于 headless 虚拟时间预算）
-setTimeout(finish, 9000);
+// 超时兜底：任一游戏页加载/上报失败也给出结论
+// （TIMEOUT_MS 须小于无头运行的 --virtual-time-budget，运行说明见 tests/smoke.html 头部注释，两处需同步调整）
+const TIMEOUT_MS = 9000;
+setTimeout(finish, TIMEOUT_MS);
 
 // 离页兜底恢复存档（finish 未能执行时尽力还原）
 window.addEventListener('pagehide', restoreStorage);

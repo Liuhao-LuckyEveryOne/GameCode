@@ -1710,5 +1710,37 @@ window.__ARCADE_TESTS__ = [
         if (eatenCount !== 0) throw new Error('吃豆数未复位');
         if (gameSpeed !== baseSpeed) throw new Error('速度未复位');
     } },
+    // 泵帧用例：合成时间戳连调 renderLoop 同步驱动帧，验证 50ms 步长封顶下的移动节拍
+    // （不真等待：rAF 临时桩化拦截前置排程，lastRender 对齐真实时钟防恢复后时间突刺）
+    { name: 'renderLoop 泵帧驱动移动 tick（步长封顶与累加器余量）', fn: () => {
+        const realRAF = window.requestAnimationFrame;
+        window.requestAnimationFrame = () => 0; // 桩化：泵帧期间不再叠加真实排程
+        const oldSnake = snake, oldDir = direction, oldQueue = dirQueue, oldAcc = moveAcc,
+              oldSpeed = gameSpeed, oldRun = isRunning, oldPause = isPaused,
+              oldOpen = achPanelOpen, oldDying = isDying, oldLast = lastRender;
+        isRunning = true; isPaused = false; achPanelOpen = false; isDying = false;
+        gameSpeed = 120;                        // 已知步距：每泵封顶 50ms，4 泵累计 150ms 触发一次 tick
+        direction = 'right'; dirQueue = [];
+        snake = [{ x: 4, y: 8 }, { x: 3, y: 8 }, { x: 2, y: 8 }];
+        moveAcc = 0;
+        const t0 = performance.now();
+        lastRender = t0;                        // 对齐时钟：首帧 delta 为 0
+        try {
+            renderLoop(t0);                     // moveAcc +0：未达步距
+            if (snake[0].x !== 4 || moveAcc !== 0) throw new Error('零步长帧不应移动/累积');
+            renderLoop(t0 + 50);                // moveAcc=50 < 120
+            if (snake[0].x !== 4 || moveAcc !== 50) throw new Error('50ms 累积异常: acc=' + moveAcc);
+            renderLoop(t0 + 100);               // moveAcc=100 < 120
+            if (snake[0].x !== 4 || moveAcc !== 100) throw new Error('100ms 累积异常: acc=' + moveAcc);
+            renderLoop(t0 + 150);               // moveAcc=150 ≥ 120 → 一次 tick，余量 30
+            if (snake[0].x !== 5) throw new Error('节拍未触发移动: x=' + snake[0].x);
+            if (moveAcc !== 30) throw new Error('tick 后累加器余量异常: ' + moveAcc);
+        } finally {
+            window.requestAnimationFrame = realRAF;
+            snake = oldSnake; direction = oldDir; dirQueue = oldQueue; moveAcc = oldAcc;
+            gameSpeed = oldSpeed; isRunning = oldRun; isPaused = oldPause;
+            achPanelOpen = oldOpen; isDying = oldDying; lastRender = oldLast;
+        }
+    } },
 ];
 try { FX.behavior('snake', window.__ARCADE_TESTS__); } catch (e) { /* 测试钩子不可用：静默跳过 */ }

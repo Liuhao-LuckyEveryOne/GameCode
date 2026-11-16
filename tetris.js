@@ -1969,5 +1969,32 @@ window.__ARCADE_TESTS__ = [
             if (nextQueue[0] !== 4 || nextQueue[1] !== 6) throw new Error('顺序生成队列错位: ' + nextQueue.join(','));
         } finally { board = oldBoard; piece = oldPiece; nextQueue = oldQueue; }
     } },
+    // 泵帧用例：合成时间戳连调 loop，验证裸 deltaMs 累积触发软降（与 dt 封顶无关）
+    { name: 'loop 泵帧驱动软降（dropCounter 累积触发 drop）', fn: () => {
+        const realRAF = window.requestAnimationFrame;
+        window.requestAnimationFrame = () => 0; // 桩化：泵帧期间不再叠加真实排程
+        const oldBoard = board, oldPiece = piece, oldQueue = nextQueue, oldCounter = dropCounter,
+              oldLast = lastTime, oldRunning = running, oldPaused = paused,
+              oldClearing = clearing, oldLock = lockTimer;
+        board = createBoard();                  // 空盘：出生安全且下方无阻挡，drop 不会误判锁定
+        nextQueue = [3];
+        try {
+            running = true; paused = false;
+            spawnPiece();                       // 经真实出生路径取队首，piece 几何完整（draw 不炸）
+            const y0 = piece.y;
+            const t0 = performance.now();
+            lastTime = t0;                      // 对齐时钟：首帧 deltaMs = 0
+            dropCounter = dropInterval - 1;
+            loop(t0);                           // deltaMs=0 → dropCounter 不变，不落
+            if (piece.y !== y0) throw new Error('未达阈值不应下落');
+            loop(t0 + 100);                     // deltaMs=100 → 累积越过 dropInterval → drop 一次
+            if (piece.y !== y0 + 1) throw new Error('软降未触发: y=' + piece.y + ' 预期 ' + (y0 + 1));
+        } finally {
+            window.requestAnimationFrame = realRAF;
+            board = oldBoard; piece = oldPiece; nextQueue = oldQueue; dropCounter = oldCounter;
+            lastTime = oldLast; running = oldRunning; paused = oldPaused;
+            clearing = oldClearing; lockTimer = oldLock;
+        }
+    } },
 ];
 FX.behavior('tetris', window.__ARCADE_TESTS__);
