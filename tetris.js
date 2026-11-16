@@ -1840,12 +1840,10 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
-// 来源校验：仅接受同源消息（大厅与机台页同源部署）；file:// 直开时父子页均为
-// 不透明源（origin 序列化为 "null"），按协议单独放行；跨源伪造的 arcade:fs /
-// arcade:save 指令在此丢弃，防止干扰全屏音效或诱导覆写存档
-const TRUSTED_ORIGIN = location.protocol === 'file:' ? 'null' : location.origin;
+// 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免；
+// 跨源伪造的 arcade:fs / arcade:save 指令在此丢弃，防止干扰全屏音效或诱导覆写存档
 window.addEventListener('message', e => {
-    if (e.origin !== TRUSTED_ORIGIN) return; // 非可信来源直接丢弃
+    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
     const d = e.data;
     if (!d || typeof d !== 'object') return;
     if (d.type === 'arcade:fs') {
