@@ -1915,6 +1915,8 @@ document.addEventListener('fullscreenchange', () => {
     else SFX.crtOff();
 });
 window.addEventListener('message', e => {
+    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
+    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
     const d = e.data;
     if (!d) return;
     if (d.type === 'arcade:fs') {

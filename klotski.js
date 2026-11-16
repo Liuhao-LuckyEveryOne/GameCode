@@ -3050,6 +3050,8 @@ document.addEventListener('webkitfullscreenchange', queueStageRectRefresh);
 window.addEventListener('load', queueStageRectRefresh);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueStageRectRefresh);
 window.addEventListener('message', (e) => {
+    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
+    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
     if (e.data && e.data.type === 'arcade:fs') queueStageRectRefresh();
 });
 
@@ -3325,6 +3327,8 @@ document.addEventListener('fullscreenchange', () => {
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
 // （saveSnapshot 内部自行区分：进行中保存，未开始 / 已通关则清除快照）
 window.addEventListener('message', e => {
+    // 来源守卫：仅接受同源消息；file:// 直开场景各帧 origin 字面量为 'null'，仅当本页也是 file:// 时豁免
+    if (e.origin !== window.location.origin && !(e.origin === 'null' && location.protocol === 'file:')) return;
     const d = e.data;
     if (d && d.type === 'arcade:fs') {
         if (d.fs) SFX.crtOn();
