@@ -177,7 +177,7 @@ const GP = { connected: false };
         if (document.hidden) return;
         let pads;
         try { pads = navigator.getGamepads(); } catch (e) { pads = null; }
-        if (!pads) { if (hadPad) { hadPad = false; releaseAll(); } return; }
+        if (!pads) { if (hadPad) { hadPad = false; releaseAll(); GP.connected = false; } return; }
         // 取第一个已连接的手柄（多手柄场景取索引最小者，与「插第一个玩第一个」直觉一致）
         let pad = null;
         for (let i = 0; i < pads.length; i++) {
