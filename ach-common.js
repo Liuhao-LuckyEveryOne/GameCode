@@ -200,9 +200,11 @@
                 const got = hasOwn(store.unlocked, a.id);
                 if (got) gotCount++;
                 const ts = got ? store.unlocked[a.id] : 0;
-                // 历史最佳截断到目标值：进度条封顶 100%，数字显示 min(best, target)/target
-                const best = Math.min(store.best[a.stat] || 0, a.target);
-                const pct = Math.min(100, Math.round((best / a.target) * 100));
+                // 事件型成就（unlock 直调，stat/target 缺失或 target≤0）无进度语义：
+                // 恒显 0 进度，进度文案以「事件达成」标注，避免 NaN/undefined 渲染
+                const hasProg = typeof a.stat === 'string' && a.stat && a.target > 0;
+                const best = hasProg ? Math.min(store.best[a.stat] || 0, a.target) : 0;
+                const pct = hasProg ? Math.min(100, Math.round((best / a.target) * 100)) : 0;
                 // 达成日期：迁移的旧解锁无时间戳（记 0），显示"已达成"兜底
                 const dateText = got ?
                     (ts ? '达成于 ' + new Date(ts).toLocaleDateString('zh-CN') : '已达成') :
@@ -216,7 +218,7 @@
                     '<div class="ach-name">' + a.name + '</div>' +
                     '<p class="ach-desc">' + a.desc + '</p>' +
                     '<div class="ach-prog"><div class="ach-prog-fill" style="width:' + pct + '%"></div></div>' +
-                    '<div class="ach-prog-meta"><span>' + best + ' / ' + a.target + '</span><span>' + dateText + '</span></div>' +
+                    '<div class="ach-prog-meta"><span>' + (hasProg ? best + ' / ' + a.target : '事件达成') + '</span><span>' + dateText + '</span></div>' +
                     '</div></div>';
             }
             opts.mount.grid.innerHTML = html;

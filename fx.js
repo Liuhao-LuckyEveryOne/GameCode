@@ -109,8 +109,9 @@ const FX = (() => {
      * 子页（嵌入模式）不持久化，仅转发原始请求给父页，由父页广播回执统一生效（大厅是唯一持久化方，音控协议同款）
      * @param {number} idx 目标档位或模式（0/1/2 固定档，3=自动；越界/非法自动钳位为完整档）
      * @param {boolean} [fromRemote] 是否来自父页广播（true 时静默应用不转发，子页不写存储）
+     * @param {number} [remoteMode] 父页广播携带的模式值（3=自动档，引擎裁决时随实际档位下发）
      */
-    function setFxLevel(idx, fromRemote) {
+    function setFxLevel(idx, fromRemote, remoteMode) {
         graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
         // 子页角色：状态权威在大厅，不持久化、不本地广播
         if (window.parent !== window) {
@@ -119,9 +120,11 @@ const FX = (() => {
                 try { window.parent.postMessage({ type: Arcade.MSG.FXLEVEL, act: 'set', idx }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
                 return;
             }
-            // 广播静默应用：新版报文带 mode 字段可表达自动档（fxMode=3 + 实际档位 idx）；
+            // 广播静默应用：新版报文带 mode 字段——mode=3 表示父页自动档引擎裁决的实际档位，
+            // 子页保持自动档记忆（fxMode=3）只跟随实际档位，面板「自动」高亮不失真；
             // 旧版仅 idx 无 mode 字段，按固定档应用，两版兼容
-            if (idx === 3) { fxMode = 3; fxLevel = 2; }
+            if (remoteMode === 3) { fxMode = 3; fxLevel = (idx === 0 || idx === 1) ? idx : 2; }
+            else if (idx === 3) { fxMode = 3; fxLevel = 2; }
             else { fxMode = fxLevel = (idx === 0 || idx === 1) ? idx : 2; }
             return;
         }
@@ -196,7 +199,7 @@ const FX = (() => {
         Arcade.onTrustedMessage((e) => {
             if (e.source !== window.parent) return; // 仅信任直接父页
             const d = e.data;
-            if (d && d.type === Arcade.MSG.FXLEVEL && d.act === undefined) setFxLevel(d.idx, true);
+            if (d && d.type === Arcade.MSG.FXLEVEL && d.act === undefined) setFxLevel(d.idx, true, d.mode);
         });
     } else {
         // 父页（大厅）角色：来源守卫收口至 arcade-common.js（仅同源，或 file:// 直开时豁免 origin 'null'）

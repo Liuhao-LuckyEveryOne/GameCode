@@ -1,17 +1,17 @@
 {
-  "1024.js": "3ab97ec3c90afbc87b6b6e308ca7f01b9a081428",
+  "1024.js": "559d1c04c11a400595caf1338401fb882694fcbb",
   "ach-trigger.js": "122105f33eb4bf3c157a0061d1a8a5dc94d3955d",
   "audio.js": "49ae115a6ec3653101c0bf2677a44f3e2176b907",
   "bee.js": "acfb9a903922eb0396b52002f6a3d7098789b9a7",
   "fullscreen.js": "f044093d6f9f534511f740c00352730ac5554f23",
-  "fx.js": "28fcc9ee153d382a53b5a43c2a7c39f9893465e3",
+  "fx.js": "acc5117b21876ad71de9a2c72ca2f5bbc9483a97",
   "gamepad.js": "604a8821c6e3fc8fd2955b22f7ea95ebc61f7f10",
   "index.js": "1b8fc9b242a6e371014c4e894c5fa7dabf48ed71",
   "klotski.js": "5dcfd0cf56fbbfdfd0e57f67ca268c81a8b77009",
-  "pac.js": "b4280e54d681753893e859dffbb3c111b03bd531",
+  "pac.js": "8db5544d1b7b102cd16f33e846be0020a82ac406",
   "pinball.js": "85b5ab3629dc3c0fdb592fc6b9efda4c993cf933",
   "snake.js": "1c25846da86f67c9da9e499ac3f0c324355b2183",
   "tetris.js": "511a0280f37bc2a3d724c0f0f7c20af909b6fad5",
   "arcade-common.js": "1e923b2df5d002e689b8579ede2fd4a7db02be4c",
-  "ach-common.js": "e502a9af7f4fd53b7b1c8a46416c022e789996f7"
+  "ach-common.js": "495a70542c592dd8c6762bf052fa7a64a191b428"
 }

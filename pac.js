@@ -138,14 +138,14 @@ const ACH_BEST_DEFAULTS = { score: 0, level: 1, dotsTotal: 0, ghostCombo: 0 };
 /** 成就定义表（8 条，四档稀有度 普通3/稀有2/史诗2/传说1，顺序即成就墙展示顺序）：
  *  stat/target 驱动进度条；stat 为 null 的事件型成就（allDots/combo4）无进度条，达标瞬间直接解锁 */
 const ACHIEVEMENTS_PAC = [
-    { id: 'dots500',    name: '豆豆大胃王', icon: '🍒', rarity: 'common',    desc: '跨局累计吃豆 500 颗',     stat: 'dotsTotal',  target: 500 },
-    { id: 'score5000',  name: '街机新秀',   icon: '🎯', rarity: 'common',    desc: '单局得分达到 5000',       stat: 'score',      target: 5000 },
-    { id: 'ghost2',     name: '连环反杀',   icon: '👻', rarity: 'common',    desc: '单次能量期吃掉 2 只幽灵', stat: 'ghostCombo', target: 2 },
-    { id: 'allDots',    name: '颗粒归仓',   icon: '🧹', rarity: 'rare',      desc: '单关吃光全部豆子',        stat: null,         target: null },
-    { id: 'level3',     name: '深入迷宫',   icon: '🗺️', rarity: 'rare',      desc: '单局推进到第 3 关',       stat: 'level',      target: 3 },
-    { id: 'score20000', name: '高分传说',   icon: '🏆', rarity: 'epic',      desc: '单局得分达到 20000',      stat: 'score',      target: 20000 },
-    { id: 'dots2000',   name: '千豆百炼',   icon: '💠', rarity: 'epic',      desc: '跨局累计吃豆 2000 颗',    stat: 'dotsTotal',  target: 2000 },
-    { id: 'combo4',     name: '四连反杀',   icon: '⚡', rarity: 'legendary', desc: '单次能量期吃掉 4 只幽灵', stat: null,         target: null },
+    { id: 'dots500',    name: '豆豆大胃王', icon: '🍒', rarity: 'common',    cat: '收集', desc: '跨局累计吃豆 500 颗',     stat: 'dotsTotal',  target: 500 },
+    { id: 'score5000',  name: '街机新秀',   icon: '🎯', rarity: 'common',    cat: '得分', desc: '单局得分达到 5000',       stat: 'score',      target: 5000 },
+    { id: 'ghost2',     name: '连环反杀',   icon: '👻', rarity: 'common',    cat: '技巧', desc: '单次能量期吃掉 2 只幽灵', stat: 'ghostCombo', target: 2 },
+    { id: 'allDots',    name: '颗粒归仓',   icon: '🧹', rarity: 'rare',      cat: '收集', desc: '单关吃光全部豆子',        stat: null,         target: null },
+    { id: 'level3',     name: '深入迷宫',   icon: '🗺️', rarity: 'rare',      cat: '成长', desc: '单局推进到第 3 关',       stat: 'level',      target: 3 },
+    { id: 'score20000', name: '高分传说',   icon: '🏆', rarity: 'epic',      cat: '得分', desc: '单局得分达到 20000',      stat: 'score',      target: 20000 },
+    { id: 'dots2000',   name: '千豆百炼',   icon: '💠', rarity: 'epic',      cat: '收集', desc: '跨局累计吃豆 2000 颗',    stat: 'dotsTotal',  target: 2000 },
+    { id: 'combo4',     name: '四连反杀',   icon: '⚡', rarity: 'legendary', cat: '技巧', desc: '单次能量期吃掉 4 只幽灵', stat: null,         target: null },
 ];
 
 /* ===================== DOM 引用 ===================== */

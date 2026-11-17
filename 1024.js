@@ -221,14 +221,14 @@ const ACH_BEST_DEFAULTS = { score: 0, maxTile: 0, merges: 0, mergesTotal: 0, mov
 /** 成就定义表（8 条，四档稀有度 普通3/稀有2/史诗2/传说1，顺序即成就墙展示顺序）：
  *  stat/target 驱动进度条（mergesTotal 为跨局累计值，以 best 持久化） */
 const ACHIEVEMENTS_1024 = [
-    { id: 'merge256',   name: '初窥门径',   icon: '🌱', rarity: 'common',    desc: '合成出 256 方块',          stat: 'maxTile',     target: 256 },
-    { id: 'max512',     name: '更上层楼',   icon: '🔢', rarity: 'rare',      desc: '单局合成出 512 方块',      stat: 'maxTile',     target: 512 },
-    { id: 'merge1024',  name: '巅峰达成',   icon: '👑', rarity: 'legendary', desc: '合成出 1024 方块',         stat: 'maxTile',     target: 1024 },
-    { id: 'score3000',  name: '小有所成',   icon: '🎯', rarity: 'common',    desc: '单局得分达到 3000',        stat: 'score',       target: 3000 },
-    { id: 'score10000', name: '万分俱乐部', icon: '🏆', rarity: 'epic',      desc: '单局得分达到 10000',       stat: 'score',       target: 10000 },
-    { id: 'merges100',  name: '百合并',     icon: '✨', rarity: 'rare',      desc: '单局合并次数达到 100 次',  stat: 'merges',      target: 100 },
-    { id: 'merges1000', name: '千锤百炼',   icon: '⚒️', rarity: 'epic',      desc: '累计合并次数达到 1000 次', stat: 'mergesTotal', target: 1000 },
-    { id: 'moves2000',  name: '步步为营',   icon: '👣', rarity: 'common',    desc: '单局滑动步数达到 2000 步', stat: 'moves',       target: 2000 },
+    { id: 'merge256',   name: '初窥门径',   icon: '🌱', rarity: 'common',    cat: '合成', desc: '合成出 256 方块',          stat: 'maxTile',     target: 256 },
+    { id: 'max512',     name: '更上层楼',   icon: '🔢', rarity: 'rare',      cat: '合成', desc: '单局合成出 512 方块',      stat: 'maxTile',     target: 512 },
+    { id: 'merge1024',  name: '巅峰达成',   icon: '👑', rarity: 'legendary', cat: '合成', desc: '合成出 1024 方块',         stat: 'maxTile',     target: 1024 },
+    { id: 'score3000',  name: '小有所成',   icon: '🎯', rarity: 'common',    cat: '得分', desc: '单局得分达到 3000',        stat: 'score',       target: 3000 },
+    { id: 'score10000', name: '万分俱乐部', icon: '🏆', rarity: 'epic',      cat: '得分', desc: '单局得分达到 10000',       stat: 'score',       target: 10000 },
+    { id: 'merges100',  name: '百合并',     icon: '✨', rarity: 'rare',      cat: '合成', desc: '单局合并次数达到 100 次',  stat: 'merges',      target: 100 },
+    { id: 'merges1000', name: '千锤百炼',   icon: '⚒️', rarity: 'epic',      cat: '合成', desc: '累计合并次数达到 1000 次', stat: 'mergesTotal', target: 1000 },
+    { id: 'moves2000',  name: '步步为营',   icon: '👣', rarity: 'common',    cat: '技巧', desc: '单局滑动步数达到 2000 步', stat: 'moves',       target: 2000 },
 ];
 
 /* ---------- 状态变量 ---------- */
