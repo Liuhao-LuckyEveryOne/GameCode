@@ -73,7 +73,7 @@ const LINE_SCORES = [0, 100, 300, 500, 800];
 const TSPIN_SCORES = [400, 800, 1200, 1600];
 // Mini T-Spin 得分表（下标为同时消除的行数：0 行 100 / 单消 200 / 双消 400；三消在 Mini 判定下实际不可能出现，补 0 占位）
 const MINI_TSPIN_SCORES = [100, 200, 400, 0];
-// All Clear 全消奖励表（下标为触发全消的行数：单消 800 / 双消 1200 / 三消 1800 / 四消 2000）
+// All Clear 全消奖励表（下标为触发全消的行数减一：单消 800 / 双消 1200 / 三消 1800 / 四消 2000）
 const PC_SCORES = [800, 1200, 1800, 2000];
 
 // ---------- 游戏状态 ----------
@@ -139,7 +139,7 @@ const particlePool = new FX.Pool(240, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0
 let trails = [];            // 硬降残影 { matrix, x, y0, typeIndex, t }
 let shakeTime = 0;          // 台面震动剩余时间（秒）
 let flashTime = 0;          // 全屏白闪剩余时间（秒）
-let bigText = null;         // 中央大字 { text, t }（TETRIS! / LEVEL UP）
+let bigText = null;         // 中央大字 { text, t }（TETRIS! / LEVEL UP / ALL CLEAR）
 const DANGER_ROWS = 4;      // 堆叠最高点进入顶部该行数范围内即触发危险警报
 const COMBO_TIME = 0.9;     // COMBO 连消飘字存活时长（秒）
 let comboCount = 0;         // 连续消行计数（落块未消行即断连清零）
@@ -611,7 +611,7 @@ const SRS_KICKS_I = {
 /**
  * 旋转当前方块（标准 SRS 踢墙，支持顺/逆时针）：
  * O 型不旋转；I 型用独立踢墙表，JLSTZ 共用一套；按「起始态>目标态」依次尝试 5 组偏移，
- * 每组先平移再旋转，全部失败则保持原状；
+ * 每组在旋转后的姿态上按偏移平移尝试，全部失败则保持原状；
  * 成功后记录 lastActionRotate / lastKickIndex（T-Spin 判定依据，逆时针旋转同样计入）
  * @param {number} [dir=1] 旋转方向（1 顺时针 / -1 逆时针）
  */
@@ -960,7 +960,7 @@ function stackTopRow() {
 /**
  * 绘制整帧（含全部特效，自底向上分层）：
  * 震动 → 背景/网格 → 固定块 → 消行闪白 → 硬降残影 → 粒子 → 当前方块（含幽灵投影）→
- * 中央大字 → COMBO 飘字 → 消行得分飘字 → 全屏白闪 → 堆顶死亡灰暗渐隐 → 危险警报红光
+ * 中央大字 → T-SPIN 飘字 → COMBO 飘字 → 消行得分飘字 → 全屏白闪 → 堆顶死亡灰暗渐隐 → 危险警报红光
  */
 function draw() {
     ctx.save();
@@ -1017,7 +1017,7 @@ function draw() {
         // 当前方块
         drawMatrix(piece.matrix, piece.x, piece.y, color);
     }
-    // 中央大字（TETRIS! / LEVEL UP）：向上漂浮 + 尾段渐隐 + 青色霓虹光晕
+    // 中央大字（TETRIS! / LEVEL UP / ALL CLEAR）：向上漂浮 + 尾段渐隐 + 青色霓虹光晕
     if (bigText) {
         const k = bigText.t / BIGTEXT_TIME; // 1 → 0
         ctx.globalAlpha = Math.min(1, k * 2); // 前 50% 全亮，尾段渐隐
@@ -1714,7 +1714,7 @@ function saveSnapshot() {
             level: level,                                                // 等级
             totalLines: totalLines                                       // 累计消行数
         };
-        Arcade.saveJSON(SAVE_KEY, snapshot); // 存储失败由 saveJSON 静默降级
+        Arcade.saveJSON(SAVE_KEY, snapshot); // 存储失败由 saveJSON 降级跳过（同键仅首次控制台告警），不中断游戏
     } catch (e) { /* 快照组装异常：静默跳过，不影响游戏 */ }
 }
 
@@ -1840,7 +1840,7 @@ Arcade.onTrustedMessage(e => {
     if (!d || typeof d !== 'object') return;
     if (d.type === 'arcade:fs') {
         const fs = !!d.fs;
-        // 沿检测：仅状态翻转时发声；首条消息（embedFsLast 为 null）仅静默同步状态
+        // 边沿检测：仅状态翻转时发声；首条消息（embedFsLast 为 null）仅静默同步状态
         if (embedFsLast !== null && fs !== embedFsLast) {
             if (fs) SFX.crtOn();
             else SFX.crtOff();
@@ -1962,7 +1962,7 @@ window.__ARCADE_TESTS__ = [
         } finally { board = oldBoard; piece = oldPiece; nextQueue = oldQueue; }
     } },
     // 泵帧用例：合成时间戳连调 loop，验证 deltaMs 累积触发自然下落（封顶 50ms 不影响越阈判定）
-    { name: 'loop 泵帧驱动软降（dropCounter 累积触发 drop）', fn: () => {
+    { name: 'loop 泵帧驱动自然下落（dropCounter 累积触发 drop）', fn: () => {
         const realRAF = window.requestAnimationFrame;
         window.requestAnimationFrame = () => 0; // 桩化：泵帧期间不再叠加真实排程
         const oldBoard = board, oldPiece = piece, oldQueue = nextQueue, oldCounter = dropCounter,
@@ -1980,7 +1980,7 @@ window.__ARCADE_TESTS__ = [
             loop(t0);                           // deltaMs=0 → dropCounter 不变，不落
             if (piece.y !== y0) throw new Error('未达阈值不应下落');
             loop(t0 + 100);                     // deltaMs=100 → 封顶取 50，dropInterval-1+50 仍越阈 → drop 一次
-            if (piece.y !== y0 + 1) throw new Error('软降未触发: y=' + piece.y + ' 预期 ' + (y0 + 1));
+            if (piece.y !== y0 + 1) throw new Error('自然下落未触发: y=' + piece.y + ' 预期 ' + (y0 + 1));
         } finally {
             window.requestAnimationFrame = realRAF;
             board = oldBoard; piece = oldPiece; nextQueue = oldQueue; dropCounter = oldCounter;

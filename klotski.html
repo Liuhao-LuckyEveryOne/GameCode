@@ -961,13 +961,13 @@
     <div id="achToastStack" class="ach-toast-stack"></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js(手柄→合成键盘) ach-trigger.js(成就墙触发器) → klotski.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="arcade-common.js?v=20261116-5"></script>
-    <script src="audio.js?v=20261116-6"></script>
+    <script src="audio.js?v=20261117-1"></script>
     <script src="fx.js?v=20261116-3"></script>
-    <script src="fullscreen.js?v=20261116-3"></script>
+    <script src="fullscreen.js?v=20261117-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
-    <script src="gamepad.js?v=20261105-2"></script>
+    <script src="gamepad.js?v=20261117-1"></script>
     <script src="ach-trigger.js?v=20261105-4"></script>
-    <script src="klotski.js?v=20261116-5"></script>
+    <script src="klotski.js?v=20261117-2"></script>
     <!-- 非全屏视口适配：整体内容（标题+主布局）高约 690px，小视口下出现页面滚动条；
          fitStage 将 #stage 等比缩放至完整落入视口并隐藏文档滚动条（只缩不放，大屏保持原貌）。
          全屏态由 fullscreen.js 负责（其缩放 .layout）：此处以 .layout 是否带内联 transform

@@ -18,7 +18,7 @@
  *          重开/换局/演示零重复计算；Worker 不可用时降级为拒绝求解，不卡游戏）
  * 演示系统：P 键自动复现当前布局的 BFS 最佳解（格步口径，各布局均可完整通关）：
  *          从初始棋面起按固定节奏逐步自动执行，通关走完整庆祝演出但不写
- *          纪录与评级（非玩家成绩）；演示中玩家输入被屏蔽，P 中断 / R 重开
+ *          纪录与评级（非玩家成绩）；演示中玩家输入被屏蔽，仅 P 可中断（重开须先退出演示）
  * 评级系统：通关按 步数/BFS最优步数 的比率评 S/A/B/C，使用 H 提示会封顶
  *          等级（1~2 次最高 A、≥3 次最高 B）；最佳评级按 难度+布局 分键记录
  * 每日一题：本地日期经 FNV-1a 哈希对布局池取模，确定性选出当日布局
@@ -119,12 +119,12 @@ const RANK_HINT_CAPS = [
 /** 评级优先级序（下标越小越优），用于封顶与最佳评级比较 */
 const RANK_ORDER = ['S', 'A', 'B', 'C'];
 
-/** 棋子类型外观表：渐变顶/底色、描边色、文字色与发光 RGB（供 rgba 拼接） */
+/** 棋子类型外观表：渐变顶/底色、文字色与发光 RGB（供 rgba 拼接；内侧描边为固定白色高光，不随类型变化） */
 const PIECE_STYLE = {
-    cao:  { top: '#ffe9a8', bottom: '#e8a80c', border: '#ffd23e', text: '#5a3a00', glow: '255,210,62' },
-    guan: { top: '#9dffc4', bottom: '#1fae52', border: '#39ff6a', text: '#03300f', glow: '57,255,106' },
-    gen:  { top: '#9adfff', bottom: '#1f7ae0', border: '#35e0ff', text: '#04263f', glow: '53,224,255' },
-    sol:  { top: '#eef1ff', bottom: '#97a0cf', border: '#cfd6ff', text: '#2a2f55', glow: '207,214,255' }
+    cao:  { top: '#ffe9a8', bottom: '#e8a80c', text: '#5a3a00', glow: '255,210,62' },
+    guan: { top: '#9dffc4', bottom: '#1fae52', text: '#03300f', glow: '57,255,106' },
+    gen:  { top: '#9adfff', bottom: '#1f7ae0', text: '#04263f', glow: '53,224,255' },
+    sol:  { top: '#eef1ff', bottom: '#97a0cf', text: '#2a2f55', glow: '207,214,255' }
 };
 
 /**
@@ -274,7 +274,7 @@ let isNewRecord = false;
 let shake = 0;
 /** 胜利结算面板延迟显示的倒计时（秒），给纸屑演出留时间 */
 let winRevealTimer = 0;
-/** 演示模式进行中：true 时按最佳解逐步自动执行，玩家输入被屏蔽（P 中断 / R 重开） */
+/** 演示模式进行中：true 时按最佳解逐步自动执行，玩家输入被屏蔽（仅 P 可中断） */
 let demoActive = false;
 /** 演示剩余步序（startDemo 时求解的完整路径快照，逐步弹出）：[{ t, x, y, dx, dy }, ...] */
 let demoPath = null;
@@ -1409,7 +1409,7 @@ function startGame() {
     startScreen.style.display = 'none';
     state = 'playing';
     SFX.start();
-    SFX.bgm.start('klotski'); // 进入对局：起华容道专属古风 BGM（通关/重开时停止）
+    SFX.bgm.start('klotski'); // 进入对局：起华容道专属古风 BGM（通关时停止；中局重开时同名续播无缝衔接）
     goText = { t: 0 }; // 启动"开 演"金字开演字幕：本局的开幕仪式感
     SFX.klGo(); // 古风号角三连音：延迟起奏与通用 start 琶音错峰
 }
@@ -1423,7 +1423,7 @@ function restartLayout() {
     winScreen.style.display = 'none';
     clearSnapshot(); // 主动重开：放弃当前进度并清除快照
     loadLayout(layoutIndex);
-    SFX.bgm.start('klotski'); // 再来一局：重新起 BGM（上一局结束时已停止）
+    SFX.bgm.start('klotski'); // 再来一局：起 BGM（同名在播则幂等续播，通关后的重开则从头新起）
 }
 
 /**
@@ -2026,7 +2026,7 @@ function updateEffects(dt) {
     if (state === 'playing') {
         let fp = 0;
         // 累积全部棋子坐标为单一指纹：每子取 x*5+y+1（值域 1~20 唯一编码一格位置），
-        // 10 次乘 31 后约 8.2e14，处于双精度 53 位安全整数范围内，无碰撞风险
+        // 10 子布局指纹上界约 5.5e14（8 子布局更小），仍处于双精度 53 位安全整数范围内，无碰撞风险
         for (const p of pieces) fp = fp * 31 + p.x * 5 + p.y + 1;
         if (fp !== nearExitFp) {
             nearExitFp = fp;
@@ -2347,7 +2347,7 @@ function pieceDrawPos(p) {
 
 /* ===================== 棋子渐变缓存 ===================== */
 
-/** 棋子渐变对象缓存：键为「类别|类型|尺寸」（创建参数一律使用 translate 后的棋子局部坐标系），值为可复用的 CanvasGradient */
+/** 棋子渐变对象缓存：键为渐变类别名起头、按需附加棋子类型/尺寸段的字符串（仅 body 渐变含类型段；创建参数一律使用 translate 后的棋子局部坐标系），值为可复用的 CanvasGradient */
 const pieceGradCache = new Map();
 /** 渐变缓存容量上限：溢出时整体清空，防止挤压/入场动画的瞬态尺寸使缓存无限膨胀 */
 const PIECE_GRAD_CACHE_MAX = 256;
@@ -2358,7 +2358,7 @@ const PIECE_GRAD_CACHE_MAX = 256;
  * 坐标仅取决于棋子类型与尺寸、与屏上位置无关，故实例可跨帧/跨棋子复用，
  * 消除每棋子每帧多次 createLinearGradient/createRadialGradient 的分配
  * （渲染结果与每次新建逐像素等价：绘制时 CTM 把局部坐标还原为同一直线坐标）
- * @param {string} key 缓存键：渐变类别 + 棋子类型 + 尺寸参数
+ * @param {string} key 缓存键：渐变类别名起头，按需附加棋子类型/尺寸段
  * @param {function(): CanvasGradient} make 未命中时执行一次的渐变创建工厂
  * @returns {CanvasGradient} 可复用的渐变对象
  */
@@ -3009,7 +3009,7 @@ function drawAmbientDust() {
 
 /* ===================== 拖拽输入 ===================== */
 
-/** 当前拖拽手势状态：{ p, sx, sy, dir, k, off, locked }，null 表示无手势 */
+/** 当前拖拽手势状态：{ id, p, sx, sy, dir, k, off, locked }，null 表示无手势 */
 let drag = null;
 
 /* ---------- 舞台几何缓存：避免每次指针事件（含悬停 pointermove）都强制布局读取 ---------- */
@@ -3187,7 +3187,7 @@ canvas.addEventListener('pointerup', e => {
 });
 
 /**
- * 指针离开画布（捕获中触发取消）：按抬起逻辑结算，防止手势悬挂
+ * 指针离开画布（捕获中触发取消）：按取消逻辑处理，已偏移棋子回弹归位，防止手势悬挂
  */
 canvas.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.id) endDrag(); });
 
@@ -3221,7 +3221,7 @@ function endDrag() {
 /**
  * 全局键盘控制：空格暂停/继续 / 方向键 / WASD 推动选中棋子（默认曹操）/ U 撤销 /
  * R 重开 / H 提示 / P 演示最佳解 / 数字键 1~6 切换布局，并阻止方向键滚动页面；
- * 暂停中仅空格（恢复）与 R（重开）可用；演示进行中屏蔽其余全部输入（P 中断 / R 重开仍可用）
+ * 暂停中仅空格（恢复）与 R（重开）可用；演示进行中屏蔽除 P 外的全部输入（含 R/U/H/方向键/数字键）
  * @param {KeyboardEvent} e 键盘事件
  */
 document.addEventListener('keydown', e => {
@@ -3259,7 +3259,7 @@ document.addEventListener('keydown', e => {
         startDemo();
         return;
     }
-    if (demoActive) return; // 演示进行中：方向键/WASD/U/H/数字键一律忽略，防误触干扰自动走子
+    if (demoActive) return; // 演示进行中：方向键/WASD/R/U/H/数字键一律忽略，防误触干扰自动走子
     const dirMap = {
         // 方向键与 WASD 双通道支持（左手操作），大小写均匹配以兼容大写锁定
         ArrowUp: [0, -1], ArrowDown: [0, 1],
@@ -3360,7 +3360,7 @@ function renderLoop(now) {
 moveElement.style.display = 'inline-block';
 
 // 布局恢复：按上次持久化的选择装载棋盘（默认横刀立马，序号 0；
-// ready 状态下仅作遮罩背后的静态展示，不计时不受输入）
+// ready 状态下仅作遮罩背后的静态展示，不计时、不响应走子操作（重开/演示/切布局等系统键仍可用））
 const savedLayoutIndex = parseInt(safeGet(LAYOUT_KEY), 10); // 隐私模式读失败得 NaN，走默认布局
 if (!Number.isNaN(savedLayoutIndex) && savedLayoutIndex >= 0 && savedLayoutIndex < LAYOUTS.length) {
     layoutIndex = savedLayoutIndex;

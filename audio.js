@@ -413,7 +413,7 @@ const SFX = (() => {
         klotski: { bpm: 84, bassType: 'triangle', leadType: 'triangle',
             bass: [131, 0, 0, 0, 98, 0, 0, 0, 110, 0, 0, 0, 98, 0, 0, 0],
             lead: [330, 0, 392, 0, 440, 0, 523, 0, 440, 0, 392, 0, 330, 0, 294, 0] },
-        /** 2048：温暖沉思的合成冥想 */
+        /** 1024：温暖沉思的合成冥想 */
         n1024: { bpm: 92, bassType: 'triangle', leadType: 'sine',
             bass: [87, 0, 131, 0, 147, 0, 117, 0, 87, 0, 131, 0, 110, 0, 98, 0],
             lead: [349, 0, 440, 0, 523, 0, 440, 0, 466, 0, 440, 0, 349, 0, 262, 0] },
@@ -600,7 +600,7 @@ const SFX = (() => {
                 // 演出强度档位：面板仅作入口，状态权威在 fx.js（须先于 .sfx-step 分支——本行按钮同挂 sfx-step 类）
                 const idx = Number(t.dataset.fx);
                 if (EMBED) window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx }, POST_MSG_TARGET); // 嵌入模式转发父页，由 fx.js 持久化并广播
-                else if (window.FX) window.FX.setFxLevel(idx); // 本地运行直接调 FX（fx.js 先于本文件加载，恒存在）
+                else if (window.FX) window.FX.setFxLevel(idx); // 本地运行直接调 FX（fx.js 为同步脚本，DOMContentLoaded 前已加载完毕，恒存在）
                 return;
             }
             if (t.classList.contains('sfx-step')) {
@@ -1055,7 +1055,7 @@ const SFX = (() => {
         newRecord: () => arpeggio([523, 659, 784, 1047, 1319], 0.09, 'square', 0.12),
         /** 弹珠蓄力：音高随蓄力进度上滑的短哔 @param {number} [p] 蓄力进度 0~1 */
         pinCharge: (p = 0) => tone(180 + Math.min(Math.max(p, 0), 1) * 560, 0.05, 'square', 0.06),
-        /** CRT 开机：低频嗡鸣 + 高频扫过 + 静电噪声（需 ctx 已运行，页面加载时静默跳过） */
+        /** CRT 开机：低频嗡鸣 + 高频扫过 + 静电噪声（无手势时 ctx 为 suspended，声音排队至首次手势 resume 后播出） */
         crtOn: () => { tone(52, 0.5, 'sawtooth', 0.12, 220); tone(1200, 0.14, 'sine', 0.05, 2400, 0.32); noise(0.25, 0.03, 900); },
         /** CRT 关机：下滑余晖 + 偏转弛断 + 断电噪声（有关手势，必可出声） */
         crtOff: () => { tone(320, 0.45, 'sawtooth', 0.12, 40); tone(1600, 0.07, 'sine', 0.05, 180, 0.02); noise(0.1, 0.04, 260); },

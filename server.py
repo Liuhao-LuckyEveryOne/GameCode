@@ -47,7 +47,7 @@ class DualStackServer(ThreadingHTTPServer):
 def run_startup_check():
     """启动期自动运行 tests/check.py 静态一致性检查器（一次性，毫秒级，不进请求路径）。
 
-    消除「检查器需手动触发」的遗漏：日常 python server.py 起服即检七项站点约定。
+    消除「检查器需手动触发」的遗漏：日常 python server.py 起服即检十项站点约定。
     检查失败仅打印醒目警告、不阻断起服——服务器仍需起来供修复调试；
     tests 目录不在位时（import 失败）静默降级，不影响服务器本身。
 
@@ -67,7 +67,7 @@ def run_startup_check():
 
 
 if __name__ == "__main__":
-    # 起服前先跑一遍静态一致性检查（引用/指纹/加载序/危险模式/存储兜底/入口/兼容前缀）
+    # 起服前先跑一遍静态一致性检查（十项，检查项明细见 tests/check.py 头部说明）
     run_startup_check()
     # ThreadingHTTPServer 系：多线程并发响应页面/脚本/图片等并行请求；
     # 双栈绑定空主机名（'' = :: 全接口）优先，无 IPv6 栈的环境回退纯 IPv4 全接口

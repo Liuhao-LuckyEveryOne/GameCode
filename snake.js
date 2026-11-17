@@ -1239,7 +1239,7 @@ function restoreSnapshot() {
             }
             seen.add(key);
         }
-        // 方向：当前方向须为合法枚举；预输入队列（v2 数组）或 v1 单字段 nextDir 亦须合法
+        // 方向：当前方向须为合法枚举；预输入队列为数组时逐项校验，旧档缺该字段时回退校验单字段 nextDir
         const dirs = ['up', 'down', 'left', 'right'];
         if (!dirs.includes(snap.dir) ||
             !(Array.isArray(snap.dirQueue)
@@ -1268,7 +1268,7 @@ function restoreSnapshot() {
         snake = snap.snake.map(s => ({ x: s.x, y: s.y })); // 逐节拷贝，与快照对象隔离
         prevSnake = snake.slice(); // 插值基准与当前位置重合，恢复首帧不做插值滑动
         direction = snap.dir;
-        // 预输入队列恢复：v2 为数组，v1 旧快照单字段 nextDir 包装为单元素队列；
+        // 预输入队列恢复：有 dirQueue 数组字段直接采用，旧档缺该字段时将单字段 nextDir 包装为单元素队列；
         // 过滤与当前方向相反的意图（异常存档），防止续玩第一步 180° 掉头即死
         dirQueue = (Array.isArray(snap.dirQueue) ? snap.dirQueue : [snap.nextDir])
             .filter(d => d !== opposites[direction]);
@@ -1628,7 +1628,7 @@ setInterval(() => {
 // （键 arcade_playtime_snake），独立运行时由 fx.js 直写同一键；FX.KeyLight：点亮 KEYS 面板
 // 中带 data-code 的键帽（window 级捕获委托，零侵入，reduced-motion 下无过渡）
 // 二者均为装饰性公共库能力：分别 try/catch 兜底，浏览器持有旧缓存 fx.js（缺能力或
-// API 形状不符）时静默跳过，绝不因尾部装饰调用抛错中断初始化收尾（KeyLight 不再注册）
+// API 形状不符）时静默跳过，绝不因尾部装饰调用抛错中断初始化收尾
 try { FX.playtime.init('snake'); } catch (e) { /* 时长统计不可用：静默跳过 */ }
 try { FX.KeyLight.init(); } catch (e) { /* 键帽高亮不可用：静默跳过 */ }
 

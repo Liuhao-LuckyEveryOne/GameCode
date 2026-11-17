@@ -191,7 +191,7 @@ const GP = { connected: false };
         hadPad = true;
         GP.connected = true;
 
-        // ----- 功能按钮边沿判定：buttons[i].pressed（部分手柄为模拟量，value>0.5 视为按下） -----
+        // ----- 功能按钮边沿判定：buttons[i].pressed（部分手柄为模拟量，value>0.4 视为按下） -----
         for (const idx in BUTTON_MAP) {
             const btn = pad.buttons[idx];
             const isDown = !!(btn && (btn.pressed || btn.value > AXIS_ON));
@@ -213,7 +213,7 @@ const GP = { connected: false };
         if (ax && ax.length >= 2) {
             const x = ax[0] || 0;
             const y = ax[1] || 0;
-            // 右推：越过 +0.5 按下，回落到 +0.35 以内松开（其余三向对称）
+            // 右推：越过 +0.4 按下，回落到 +0.25 以内松开（其余三向对称）
             if (!stick.right && x > AXIS_ON) { stick.right = true; press('ArrowRight', 'ArrowRight'); }
             else if (stick.right && x < AXIS_OFF) { stick.right = false; release('ArrowRight'); }
             if (!stick.left && x < -AXIS_ON) { stick.left = true; press('ArrowLeft', 'ArrowLeft'); }

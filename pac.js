@@ -225,7 +225,7 @@ const DIFFICULTY_KEY = 'pacDifficulty';
 let ghostCombo = 0;
 /** waka 音交替标志（吃豆音高低交替，模拟经典 waka-waka） */
 let wakaAlt = false;
-/** 本局累计吃豆数（含能量豆，驱动水果 70/170 触发） */
+/** 本局累计吃豆数（不含能量豆，驱动水果 70/170 触发） */
 let pacDotsEaten = 0;
 /** 水果已触发次数索引（对应 FRUIT_DOT_GOALS，取值 0/1/2，2 表示本关两次均已出过） */
 let fruitSpawned = 0;
@@ -569,7 +569,7 @@ function ghostTarget(g) {
 
 /**
  * 幽灵在格心选择下一步方向：
- * 排除反向；惊惧时随机；否则选距目标最近的选项（经典平局序）；死路才允许掉头
+ * 排除反向；惊惧且处于 roam 时随机；否则选距目标最近的选项（经典平局序）；死路才允许掉头
  * @param {object} g 幽灵实体
  */
 function ghostChooseDir(g) {
@@ -685,7 +685,7 @@ function gameOver() {
 
 /**
  * 保存当前局进度镜像快照到 localStorage（键 arcade_save_pac）。
- * 触发点：父页 arcade:save 消息 / 左上角返回链接 click / window pagehide。
+ * 触发点：父页 arcade:save 消息 / window pagehide。
  * 仅"进行中(play)或就绪(ready，含恢复后暂停中)"可镜像；未开始(start)、
  * 死亡(dying)/清版(clear)过场、已结束(over)等状态一律清除残留快照，保证下次进入不会恢复到非法局面。
  * 组装纯数据快照（数值/字符串/布尔/数组，不含函数与 DOM 引用），整体 try/catch 异常静默。
@@ -2019,8 +2019,8 @@ window.addEventListener('blur', endSwipe); // 切窗后系统不会补发 pointe
 
 // 暂停遮罩点击恢复：面板悬浮于画布之上会拦截 pointerdown（不再落到画布滑动手势监听），
 // 点击面板空白处即恢复（空格/失焦自动暂停弹出的遮罩共用同一 DOM，同样适用）；
-// 点在遮罩内按钮/链接上（如返回大厅）只操作 UI 不恢复——与 bee.js 先例一致，
-// 防止暂停中点链接先误恢复运行、快照存成运行态再退出
+// 点在遮罩内按钮/链接上只操作 UI 不恢复——本页遮罩现无按钮/链接，防御性保留（与 bee.js 先例一致），
+// 防止未来加入口后暂停中先误恢复运行、快照存成运行态再退出
 pauseScreen.addEventListener('pointerdown', e => {
     if (e.target.closest('button, a')) return; // 按钮/链接交给自身逻辑，不作为恢复输入
     togglePause(); // 恢复并撤下遮罩（BGM 续播、恢复音、提示行清理均走 togglePause 分支）

@@ -9,7 +9,7 @@
  *   连续滑动均有合并则连击递增，×2 起按合并值的 10%×(连击-1) 追加奖励分；
  *   每局限次撤销（简单 5 / 普通 3 / 困难 1），误滑或死局可回退上一步；
  *   本局首次合并出 128 / 256 / 512 / 2048 / 4096 时触发强化爆发反馈（双冲击波 + 全屏闪光 + 微震，≥2048 追加烟花秀）；
- *   一步多重合并触发 DOUBLE!/TRIPLE!/QUAD! 中央大字演出，连击 ×5 棋盘金色炽燃泛光；
+ *   一步多重合并触发 DOUBLE!/TRIPLE!/QUAD! 等中央大字演出，连击 ×5 棋盘金色炽燃泛光；
  *   空格告急时棋盘红色脉冲预警并播警报音，死局瞬间全盘"熄灭"渐暗演出再结算；
  *   超越历史最高的瞬间金色闪光庆祝 + 全屏烟花彩带，撤销带青色回溯闪光；
  *   ≥64 的合并触发瞬时卡帧（hitstop），无效滑动棋盘摇头提示；
@@ -29,7 +29,7 @@
  *
  * 架构：
  *   tiles Map（id → 方块对象）为唯一方块实体表，grid[r][c] 存其引用；
- *   ghosts / particles / floatTexts 为纯表现层数组，到时自动清理；
+ *   ghosts / floatTexts 为纯表现层数组，particles 为 FX.Pool 对象池，到时自动清理；
  *   单一 requestAnimationFrame 循环驱动 update + draw，回合制无需逻辑 tick。
  * ================================================================== */
 
@@ -183,7 +183,7 @@ const KEY_DIRS = {
 const UNDO_LIMITS = { easy: 5, normal: 3, hard: 1 };
 /** 里程碑数值：本局首次合并出时触发强化反馈（≥2048 追加全屏烟花秀） */
 const MILESTONE_VALUES = [128, 256, 512, 2048, 4096];
-/** 触屏滑动生效的最小位移（px），低于阈值视为点击 */
+/** 滑动手势生效的最小位移（px），低于阈值不触发（触屏与鼠标拖拽共用） */
 const SWIPE_THRESHOLD = 26;
 /** 按住方向键后开始连滑的延迟（秒）：远短于系统按键重复约 0.5s 的初始延迟，长按更跟手 */
 const REPEAT_DELAY = 0.16;
@@ -284,7 +284,7 @@ let tiles = new Map();
 let ghosts = [];
 /** 合并爆裂像素粒子池 { x, y, vx, vy, life, maxLife, color, size }：预分配零分配复用，满员自动征用最旧粒子 */
 const particlePool = new FX.Pool(200, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, color: '#fff', size: 2 }));
-/** 得分飘字：{ x, y, text, t, color } */
+/** 得分飘字：{ x, y, text, t, color, size } */
 let floatTexts = [];
 /** 冲击波圆环：{ x, y, t, dur, color }，合并点向外扩散的描边圆（t<0 为延迟未启动） */
 let rings = [];
@@ -485,7 +485,7 @@ function spawnTile(playSound) {
 }
 
 /** 增加分数并实时刷新 HUD 与最高分
- *  @param {number} points 本次得分（合并结果值） */
+ *  @param {number} points 本次得分（合并结果值或连击奖励） */
 function addScore(points) {
     const prevBest = best; // 记录旧最高分，用于捕捉"首次超越"的庆祝时机
     score += points;
@@ -1444,7 +1444,7 @@ function clearProgress() {
  * 剩余撤销次数范围、撤销栈逐条结构（超长截断至最近 32 步）、里程碑档位合法性；
  * 任一校验失败即清除存档并返回 false，调用方回退默认新开局流程。
  * 全部通过则按快照重建棋面 / 分数 / 连击 / 撤销栈并收起开始面板直接续玩
- * （回合制游戏无需暂停遮罩），并在操作提示行展示「已恢复上次进度」标记。
+ * （恢复后直接可操作，无需等待确认），并在操作提示行展示「已恢复上次进度」标记。
  * @returns {boolean} 快照合法并已恢复返回 true；无快照或快照非法返回 false
  */
 function restoreSnapshot() {
@@ -1568,7 +1568,7 @@ function resetBoard() {
     achWall.hidden = true;                       // DOM 成就墙随新局一并收起
     spawnTile(false);
     spawnTile(false);
-    refreshMaxTile();                            // 同步本局最大方块统计（起步两块 2）
+    refreshMaxTile();                            // 同步本局最大方块统计（起步两块为 2 或 4）
     updateHud();
     updateComboHud();
     updateUndoHud();

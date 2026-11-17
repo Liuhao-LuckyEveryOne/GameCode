@@ -1225,7 +1225,7 @@ function restoreSnapshot() {
         pauseScreen.style.display = 'block';
         pauseRestoreTip.style.display = 'block';
         // 预置 BGM 曲目并保持暂停态：玩家按 P 继续时由 togglePause 的 resume 正常响起
-        //（音频尚未解锁时由公共库在首次手势后自动补启，pause 标记保证静默待命）
+        //（音频尚未解锁时保持静默待命，待玩家按 P 恢复时随手势解锁照常响起）
         SFX.bgm.start('pinball');
         SFX.bgm.pause();
         return true;
@@ -1863,7 +1863,7 @@ function draw(now) {
     if (state === 'lost') drawLoseFx();
     drawFloatTexts();
     // 连击倍率 HUD：倍率 >1 时在画布顶部留白带常驻显示 ×N 与窗口剩余进度条
-    // （震动复位后绘制，不跟随抖动；窗口将尽时文字变亮、进度条缩短提示即将断连）
+    // （震动复位后绘制，不跟随抖动；窗口将尽时文字变淡、进度条缩短提示即将断连）
     if (comboMult > 1 && state === 'play') {
         const ratio = Math.max(0, comboTimer / COMBO_WINDOW);
         const full = comboMult >= COMBO_MAX_MULT; // 满级转红色示警"已封顶"
@@ -2171,7 +2171,7 @@ function handleZoneUp(event) {
         if (!zoneHeld('right')) flippers[1].pressed = false;
     } else {
         // 与空格 keyup 分支一致：按蓄力力度发射，守卫不满足则仅复位蓄力标记
-        if (charging && state === 'ready' && !isPaused) launch(charge);
+        if (charging && state === 'ready' && !isPaused && !achPanelOpen) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
         charging = false;
         charge = 0;
     }

@@ -345,7 +345,7 @@ function refreshLastBadge() {
     refreshBest();
     refreshLastBadge();
     refreshTimeBadges();
-    // 存在「上次游玩」记录：把初始键盘焦点放到对应卡片，进场即可回车续玩
+    // 存在「上次游玩」记录：把初始键盘焦点放到对应卡片，进场即可空格续玩
     let lastId = null;
     try { lastId = localStorage.getItem(LAST_PLAYED_KEY); } catch (e) { /* 隐私模式：读失败按无记录处理 */ }
     if (lastId) {
@@ -1523,7 +1523,7 @@ document.addEventListener('keydown', e => {
      * 关闭游戏覆盖层并还原页面滚动
      * 关闭不再直接淡出，而是播放 CRT 关机演出：游戏画面坍缩为过曝亮线（crtShrink）→
      * 白热余辉收束熄灭（crtDie）→ 黑底末段淡出露出大厅（overlayOut），0.55s 与开机
-     * 白幕的仪式感形成"断电 → 通电"闭环；覆盖层左下角 ✕ 按钮经此路径
+     * 白幕的仪式感形成"断电 → 通电"闭环；覆盖层左下角返回按钮（像素小房子图标）经此路径
      */
     function closeGame() {
         if (!overlay) return;
@@ -1569,7 +1569,7 @@ document.addEventListener('keydown', e => {
             if ((totalBeforeOpen || 0) < (totalNow || 0)) SFX.newRecord();
             totalBeforeOpen = null; // 快照用后即清，防止异常路径误触发
         };
-        // 演出结束后再移除节点；只认覆盖层自身的 animationend——✕ 按钮 0.15s 快速隐去、
+        // 演出结束后再移除节点；只认覆盖层自身的 animationend——返回按钮 0.15s 快速隐去、
         // iframe 坍缩等子元素动画的 animationend 会冒泡上来，按 target 过滤避免提前摘层
         el.addEventListener('animationend', e => { if (e.target === el) remove(); });
         // 兜底：系统禁用动画、后台标签暂停等极端场景下超时强制移除
@@ -1697,7 +1697,7 @@ document.addEventListener('keydown', e => {
         setTimeout(reveal, LOADING_TIMEOUT_MS);
         const close = document.createElement('button');
         close.className = 'overlay-close';
-        // 返回按钮图案化：像素小房子图标示意（样式见 index.html .close-ico，宽 72px 同左上角金杯入口），
+        // 返回按钮图案化：像素小房子图标示意（样式见 index.html .close-ico，18×16px；所在按钮宽 72px 同左上角金杯入口），
         // 去文字后语义由 aria-label / title 承载，读屏与悬停提示仍为「返回游戏厅」
         close.innerHTML = '<i class="close-ico" aria-hidden="true"></i>';
         close.setAttribute('aria-label', '返回游戏厅');
@@ -2080,7 +2080,7 @@ document.addEventListener('keydown', e => {
             if (k === 'Escape' && hall && (!hall.hidden || performance.now() - trophyClosedAt < 400)) return;
             // V 键是成就殿堂开关（document 级监听已先行开合），与鼠标点入口同理不触发投币
             if (e.code === 'KeyV') return;
-            // 焦点在音效/全屏/音量控件上时放行回车/空格：应激活控件本身而非投币
+            // 焦点在音效/全屏/音量控件或成就殿堂入口按钮上时放行回车/空格：应激活控件本身而非投币
             if ((k === 'Enter' || k === ' ') && e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #trophyToggle')) return;
             // 关键修复：阻断按键派发结束后的默认动作——投币会同步摘除 pre-coin 门禁，
             // 若放行默认动作，回车激活聚焦卡片合成的 click 会立刻打开游戏、盖住金币演出

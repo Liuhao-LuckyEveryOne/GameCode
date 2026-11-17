@@ -111,7 +111,7 @@ const TIDE_DIVE_MULT = 0.4;
 const MAX_LIVES = 5;
 /** 玩家被击中后的无敌时长（秒），期间闪烁且免疫伤害 */
 const RESPAWN_INVINCIBLE = 2;
-/** 蜂群两次投放子弹的基准间隔（秒），实际间隔在其一半到一点五倍间随机 */
+/** 蜂群两次投放子弹的基准间隔（秒），随机系数在其一半到一点五倍间，整体另随波次与难度缩短 */
 const ENEMY_FIRE_INTERVAL = 1.4;
 /** 俯冲触发基准间隔（秒），实际间隔随波次缩短 */
 const DIVE_INTERVAL = 3.4;
@@ -284,7 +284,7 @@ let blurPaused = false;
 let paused = false;
 /** 玩家飞船左上角坐标 { x, y } */
 let player = { x: 0, y: 0 };
-/** 玩家子弹数组 { x, y, vx }（x/y 为子弹顶部中心，vx 为水平分速度） */
+/** 玩家子弹数组 { x, y, vx }（x/y 为子弹底部中心即弹尾，vx 为水平分速度） */
 const bullets = [];
 /** 敌方子弹数组 { x, y, vx, vy }（俯冲投弹直落、Boss 弹带角度） */
 const enemyBullets = [];
@@ -2019,7 +2019,7 @@ function addFloatText(x, y, text, color, life = FLOAT_LIFE) {
  * 推进特效计时：粒子受重力下落、飘字上浮，超时移除；
  * 屏幕震动/炸弹白闪/受击红闪/金色脉冲随时间衰减，
  * 波次横幅播毕移除，Boss 连环殉爆倒计时归零即爆开，
- * 落地冲击环扩散淡出，成就横幅到时撤下
+ * 落地冲击环扩散淡出（成就 toast 由 DOM 定时器自理，不经本函数）
  * @param {number} dt 帧间隔秒数
  */
 function updateEffects(dt) {
