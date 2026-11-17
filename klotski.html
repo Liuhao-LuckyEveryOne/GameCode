@@ -14,7 +14,7 @@
           （格步口径，各布局均可完整通关），通关走庆祝演出但不写纪录与评级）
      暂停体系：空格手动暂停 + 窗口失焦自动暂停（回合制但用时参与评级，暂停冻结计时）
      脚本：audio.js 公共音效库 / fx.js 公共特效库 FX（画布适配/粒子池/烟花/时长统计/键帽高亮） /
-          fullscreen.js 全屏控制 / gamepad.js 手柄支持 / klotski.js 游戏逻辑
+          fullscreen.js 全屏控制 / ach-common.js 共享成就系统 Ach / gamepad.js 手柄支持 / klotski.js 游戏逻辑
      触发器：ach-trigger.css + ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      视听增强：棋子精细纹理（确定性木纹线 / 曹操锦缎菱格+鎏金双线框+渐变铆钉+
           描边王冠+鎏金文字 / 关羽绦带纹 / 武将束带扣 / 兵卒圆环徽章 / 边缘光影 /
@@ -615,6 +615,13 @@
             border-radius: 10px;
             overflow: hidden;
             transition: border-color 0.2s, box-shadow 0.2s;
+            /* 瀑布入场：ach-common 渲染时逐卡写入 --i 序号，按序延迟淡入上移 */
+            animation: achCardIn 0.45s ease-out backwards;
+            animation-delay: calc(var(--i, 0) * 40ms);
+        }
+        @keyframes achCardIn {
+            from { opacity: 0; transform: translateY(14px) scale(0.96); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
         }
         /* 玻璃光泽扫过：悬停时斜向高光带掠过（achShine 独立命名，避开大厅卡片 shine） */
         .ach-card::after {
@@ -632,51 +639,51 @@
         @keyframes achShine {
             to { transform: translateX(430%) skewX(-16deg); }
         }
-        /* 未解锁：图标置灰、名字减淡，暗示"待解锁" */
+        /* 未解锁：图标置灰、名字减淡、右下角叠小锁，暗示"待解锁" */
         .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
         .ach-card.locked .ach-name { color: rgba(255, 236, 232, 0.5); }
-        .ach-icon { font-size: 24px; line-height: 1.2; }
-        .ach-info { flex: 1; min-width: 0; }
-        .ach-name-row {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
+        .ach-icon { position: relative; font-size: 24px; line-height: 1.2; }
+        /* 锁形角标：钉在图标座右下（canonical 标记 .ach-lock，未解锁卡片由渲染端生成） */
+        .ach-lock {
+            position: absolute;
+            right: -3px;
+            bottom: -3px;
+            font-size: 12px;
         }
+        .ach-info { flex: 1; min-width: 0; }
         .ach-name {
+            margin-right: 52px; /* 为右上角稀有度徽章让位，防止长名称压住徽章 */
             font-size: 13px;
             font-weight: bold;
             color: var(--text);
         }
-        /* 稀有度小徽章：四档配色（普通灰 / 稀有青 / 史诗粉 / 传说金） */
-        .ach-rarity {
-            padding: 1px 6px;
+        /* 稀有度徽章：卡片右上角小标签（canonical 标记，四档配色与卡片边框同源） */
+        .ach-rarity-chip {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            padding: 2px 7px;
             font-size: 9px;
             letter-spacing: 1px;
             border-radius: 999px;
-            border: 1px solid currentColor;
+            border: 1px solid;
         }
-        .r-common { color: #b9a8a8; }
-        .r-rare { color: #35e0ff; }
-        .r-epic { color: #ff62d8; }
-        .r-legendary { color: var(--neon-gold); }
+        .ach-rarity-chip.rarity-common { color: #b9a8a8; border-color: rgba(185, 168, 168, 0.5); background: rgba(185, 168, 168, 0.08); }
+        .ach-rarity-chip.rarity-rare { color: #35e0ff; border-color: rgba(53, 224, 255, 0.5); background: rgba(53, 224, 255, 0.08); }
+        .ach-rarity-chip.rarity-epic { color: #ff62d8; border-color: rgba(255, 98, 216, 0.5); background: rgba(255, 98, 216, 0.1); }
+        .ach-rarity-chip.rarity-legendary { color: var(--neon-gold); border-color: rgba(255, 210, 62, 0.55); background: rgba(255, 210, 62, 0.1); }
+        /* 卡片描述：canonical 用 <p> 承载，显式重置浏览器默认外边距 */
         .ach-desc {
-            margin-top: 4px;
+            margin: 4px 0 0;
             font-size: 11px;
             line-height: 1.5;
             color: rgba(255, 236, 232, 0.55);
         }
-        .ach-cat {
-            margin-top: 3px;
-            font-size: 10px;
-            letter-spacing: 1px;
-            color: rgba(216, 184, 184, 0.5);
-        }
-        /* 卡片进度条：当前值/目标值（解锁后拉满） */
-        .ach-prog { margin-top: 6px; }
-        .ach-prog-bar {
+        /* 卡片进度条：canonical 将轨道直接作为 .ach-prog（当前值/目标值，解锁后拉满） */
+        .ach-prog {
             height: 4px;
             overflow: hidden;
+            margin-top: 6px;
             background: rgba(255, 255, 255, 0.08);
             border-radius: 2px;
         }
@@ -686,23 +693,26 @@
             background: linear-gradient(90deg, #35e0ff, #39ff6a);
             transition: width 0.3s ease-out;
         }
-        .ach-prog-text {
+        /* 进度元信息：左「当前/目标」、右「分类 · 尚未达成 / 达成日期」 */
+        .ach-prog-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 6px;
             margin-top: 2px;
             font-size: 9px;
-            text-align: right;
             color: rgba(255, 236, 232, 0.45);
         }
         /* 已解锁卡片：边框/辉光按稀有度点亮 */
-        .ach-card.unlocked.r-common { border-color: rgba(185, 168, 168, 0.55); box-shadow: 0 0 8px rgba(185, 168, 168, 0.18); }
-        .ach-card.unlocked.r-rare { border-color: rgba(53, 224, 255, 0.55); box-shadow: 0 0 10px rgba(53, 224, 255, 0.22); }
-        .ach-card.unlocked.r-epic { border-color: rgba(255, 98, 216, 0.55); box-shadow: 0 0 12px rgba(255, 98, 216, 0.25); }
-        .ach-card.unlocked.r-legendary { border-color: rgba(255, 210, 62, 0.6); }
+        .ach-card.unlocked.rarity-common { border-color: rgba(185, 168, 168, 0.55); box-shadow: 0 0 8px rgba(185, 168, 168, 0.18); }
+        .ach-card.unlocked.rarity-rare { border-color: rgba(53, 224, 255, 0.55); box-shadow: 0 0 10px rgba(53, 224, 255, 0.22); }
+        .ach-card.unlocked.rarity-epic { border-color: rgba(255, 98, 216, 0.55); box-shadow: 0 0 12px rgba(255, 98, 216, 0.25); }
+        .ach-card.unlocked.rarity-legendary { border-color: rgba(255, 210, 62, 0.6); }
         /* 传说卡片：金色光晕呼吸（全站最高荣誉感） */
         @keyframes achLegendPulse {
             0%, 100% { box-shadow: 0 0 10px rgba(255, 210, 62, 0.25); }
             50% { box-shadow: 0 0 20px rgba(255, 210, 62, 0.5); }
         }
-        .ach-card.unlocked.r-legendary { animation: achLegendPulse 2.2s ease-in-out infinite; }
+        .ach-card.unlocked.rarity-legendary { animation: achLegendPulse 2.2s ease-in-out infinite; }
         /* 成就 toast 容器：右上角悬浮队列，pointer-events 放行避免挡操作 */
         .ach-toast-stack {
             position: fixed;
@@ -714,7 +724,8 @@
             gap: 8px;
             pointer-events: none;
         }
-        /* 单条 toast：解锁瞬间从右侧滑入，停留后滑出（动画由 CSS 延迟接力） */
+        /* 单条 toast：解锁瞬间从右侧滑入，停留约 2.2s 后滑出（单循环动画 toastCycle 共 3.2s，
+           结束时触发 animationend，由共享成就引擎据此移除节点，另有 6s 兜底） */
         .ach-toast {
             display: flex;
             gap: 10px;
@@ -726,25 +737,27 @@
             border: 1px solid rgba(255, 210, 62, 0.5);
             border-radius: 10px;
             box-shadow: 0 0 18px rgba(255, 210, 62, 0.3);
-            animation: achToastIn 0.3s ease-out, achToastOut 0.3s ease-in 2.8s forwards;
+            animation: toastCycle 3.2s ease forwards;
         }
-        .ach-toast.r-epic { border-color: rgba(255, 98, 216, 0.6); box-shadow: 0 0 18px rgba(255, 98, 216, 0.35); }
-        .ach-toast.r-legendary { border-color: rgba(255, 210, 62, 0.7); box-shadow: 0 0 22px rgba(255, 210, 62, 0.45); }
-        .ach-toast .t-icon { font-size: 22px; line-height: 1; }
-        .ach-toast .t-title {
+        /* 稀有度描边：普通灰 / 稀有蓝 / 史诗粉 / 传说金（与成就墙卡片同调色板） */
+        .ach-toast.rarity-common { border-color: rgba(185, 168, 168, 0.5); box-shadow: 0 0 18px rgba(185, 168, 168, 0.25); }
+        .ach-toast.rarity-rare { border-color: rgba(53, 224, 255, 0.55); box-shadow: 0 0 18px rgba(53, 224, 255, 0.3); }
+        .ach-toast.rarity-epic { border-color: rgba(255, 98, 216, 0.6); box-shadow: 0 0 18px rgba(255, 98, 216, 0.35); }
+        .ach-toast.rarity-legendary { border-color: rgba(255, 210, 62, 0.7); box-shadow: 0 0 22px rgba(255, 210, 62, 0.45); }
+        .ach-toast .toast-icon { font-size: 22px; line-height: 1; }
+        .ach-toast .toast-body { display: flex; flex-direction: column; gap: 2px; }
+        .ach-toast .toast-cap {
             font-size: 10px;
             letter-spacing: 2px;
             color: var(--neon-gold);
             text-shadow: 0 0 8px rgba(255, 210, 62, 0.5);
         }
-        .ach-toast .t-name { font-size: 13px; font-weight: bold; color: var(--text); }
-        @keyframes achToastIn {
-            from { opacity: 0; transform: translateX(120%); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes achToastOut {
-            from { opacity: 1; transform: translateX(0); }
-            to { opacity: 0; transform: translateX(120%); }
+        .ach-toast .toast-name { font-size: 13px; font-weight: bold; color: var(--text); }
+        /* 单循环三段式：0~10% 滑入 → 10%~80% 停留 → 80%~100% 滑出（结束触发 animationend） */
+        @keyframes toastCycle {
+            0% { opacity: 0; transform: translateX(120%); }
+            10%, 80% { opacity: 1; transform: translateX(0); }
+            100% { opacity: 0; transform: translateX(120%); }
         }
         /* 窄屏：面板铺满视口、网格降为窄列、toast 贴顶收窄 */
         @media (max-width: 640px) {
@@ -756,12 +769,9 @@
             .ach-toast-stack { top: 90px; right: 10px; left: 10px; }
             .ach-toast { max-width: none; }
         }
-        /* 减弱动态效果：系统开启时跳过入场/出场/呼吸动画，直接静态展示 */
+        /* 减弱动态效果：系统开启时跳过入场/出场/呼吸动画直接静态展示（toast 无动画时保持可见，由共享引擎 6s 兜底移除节点） */
         @media (prefers-reduced-motion: reduce) {
-            .ach-panel, .ach-toast, .ach-card.unlocked.r-legendary, .ach-card::after { animation: none; }
-            .ach-toast { opacity: 0; animation: none; }
-            /* 保留可读性：toast 改为无动画直接显示（2.8s 后由 JS 移除节点） */
-            .ach-toast.show-reduced { opacity: 1; }
+            .ach-panel, .ach-card, .ach-card.unlocked.rarity-legendary, .ach-card::after, .ach-toast { animation: none; }
             .ach-bar-fill, .ach-prog-fill { transition: none; }
         }
         /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
@@ -947,8 +957,8 @@
             <div class="ach-head">
                 <div class="ach-title">成就墙</div>
                 <div class="ach-head-right">
-                    <span id="achCount" class="ach-count">0/8</span>
-                    <button id="achClose" class="ach-close" type="button" aria-label="关闭成就墙">×</button>
+                    <span id="achCount" class="ach-count">0</span>/<span id="achTotal" class="ach-count">8</span>
+                    <button id="achClose" class="ach-close" type="button" aria-label="关闭成就墙" onclick="Ach.toggle()">×</button>
                 </div>
             </div>
             <div class="ach-progress">
@@ -959,15 +969,16 @@
     </div>
     <!-- 成就解锁 toast 容器：右上角悬浮队列，解锁瞬间滑入展示后自动移除 -->
     <div id="achToastStack" class="ach-toast-stack"></div>
-    <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js(手柄→合成键盘) ach-trigger.js(成就墙触发器) → klotski.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261116-5"></script>
-    <script src="audio.js?v=20261117-1"></script>
-    <script src="fx.js?v=20261116-3"></script>
-    <script src="fullscreen.js?v=20261117-1"></script>
+    <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统 Ach，V/Esc/遮罩/关闭按钮开合与成就墙渲染均在库内) → gamepad.js(手柄→合成键盘) ach-trigger.js(成就墙触发器) → klotski.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
+    <script src="arcade-common.js?v=20261117-2"></script>
+    <script src="audio.js?v=20261117-3"></script>
+    <script src="fx.js?v=20261117-2"></script>
+    <script src="fullscreen.js?v=20261117-2"></script>
+    <script src="ach-common.js?v=20261117-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
-    <script src="gamepad.js?v=20261117-1"></script>
+    <script src="gamepad.js?v=20261117-2"></script>
     <script src="ach-trigger.js?v=20261105-4"></script>
-    <script src="klotski.js?v=20261117-2"></script>
+    <script src="klotski.js?v=20261117-6"></script>
     <!-- 非全屏视口适配：整体内容（标题+主布局）高约 690px，小视口下出现页面滚动条；
          fitStage 将 #stage 等比缩放至完整落入视口并隐藏文档滚动条（只缩不放，大屏保持原貌）。
          全屏态由 fullscreen.js 负责（其缩放 .layout）：此处以 .layout 是否带内联 transform
@@ -1027,9 +1038,10 @@
         document.addEventListener('fullscreenchange', fitStage);
         document.addEventListener('webkitfullscreenchange', fitStage);
         // 嵌入模式（?embed=1）下全屏由大厅持有，fullscreenchange 不在 iframe 内触发；
-        // 与 fullscreen.js 同听 arcade:fs 广播，延迟一拍等其 sync 先行完成，再行适配
-        window.addEventListener('message', e => {
-            if (e.data && e.data.type === 'arcade:fs') setTimeout(fitStage, 0);
+        // 与 fullscreen.js 同听 arcade:fs 广播（经 Arcade.onTrustedMessage 统一来源守卫，
+        // 跨源伪造的 fs 指令在守卫处静默丢弃），延迟一拍等其 sync 先行完成，再行适配
+        Arcade.onTrustedMessage(e => {
+            if (e.data && e.data.type === Arcade.MSG.FS) setTimeout(fitStage, 0);
         });
         // 页面装配完成立即做首次适配
         fitStage();

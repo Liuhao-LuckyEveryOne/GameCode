@@ -184,8 +184,9 @@ const GP = { connected: false };
             if (pads[i] && pads[i].connected) { pad = pads[i]; break; }
         }
         if (!pad) {
-            // 轮询侧掉线兜底（gamepaddisconnected 事件未触发的异常场景）：静默释放全部按键
-            if (hadPad) { hadPad = false; releaseAll(); }
+            // 轮询侧掉线兜底（gamepaddisconnected 事件未触发的异常场景）：静默释放全部按键，
+            // 并同步复位 connected 状态（与事件侧断开分支对齐，避免页面查询得到过期在线态）
+            if (hadPad) { hadPad = false; releaseAll(); GP.connected = false; }
             return;
         }
         hadPad = true;

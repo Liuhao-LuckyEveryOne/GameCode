@@ -1,0 +1,300 @@
+/* ============================================================================
+ * 像素街机厅 · 共享成就系统 ach-common.js
+ * ----------------------------------------------------------------------------
+ * 全站七游戏成就逻辑的唯一实现（v3.0 起由各游戏 js 内的七份同构实现下沉而来）：
+ *   存档装载与三代格式迁移（v1 数组 → v2 { unlocked, best }）
+ *   → trackRunStat 历史最佳追踪（只增不减，超越即落盘并连带扫描挂靠成就）
+ *   → unlockAchievement 幂等解锁（toast + 解锁音 + 史诗/传说金色烟花）
+ *   → 成就墙渲染（卡片网格 canonical 标记 + 完成度补间）
+ *   → 开合控制（V 开 / Esc 关 / 遮罩与关闭按钮 / 主循环查询 isOpen）
+ *
+ * 分层：依赖 arcade-common.js（Arcade 安全存储） audio.js（SFX） fx.js（FX 补间/烟花），
+ *       位于业务 js 之前加载（加载序由 tests/check.py 检查项 3 守护）。
+ *       皮肤（墙/toast 的 CSS）与成就定义表仍归各游戏所有——本库只认类名契约
+ *       （.ach-panel/.ach-head/.ach-grid/.ach-card/.ach-toast 等，见 docs/技术文档.md）。
+ *
+ * 挂载到 window：与 fx.js / arcade-common.js 导出风格一致；
+ * Ach.init(opts) 完成后实例方法上提合并到 window.Ach（toggle/isOpen/trackRunStat 等），
+ * 各游戏与页面 inline 处理器（如关闭按钮 onclick="Ach.toggle()"）直接调用。
+ * ==========================================================================*/
+
+(function () {
+    'use strict';
+
+    /* ---------------------------- 共享常量 ---------------------------- */
+
+    // 稀有度 → 中文标签（卡片左上角徽章文案；七游戏原实现逐字一致，故收编入共享层）
+    const RARITY_LABEL = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' };
+
+    // toast 兜底清理时限：动画事件丢失（标签页隐藏时 animationend 不触发）导致节点残留的保险
+    const TOAST_FALLBACK_MS = 6000;
+
+    // toast 堆叠上限：连续解锁时最旧的先出（原七游戏各自为 3/4/无上限，统一取中值）
+    const TOAST_STACK_MAX = 4;
+
+    // 完成度计数滚动补间时长（FX.tweenNumber 在 prefers-reduced-motion 下自动降级直写）
+    const COUNT_TWEEN_MS = 320;
+
+    /* ---------------------------- 内部工具 ---------------------------- */
+
+    /**
+     * 判定对象是否含有自有属性（与原实现一致走 hasOwnProperty.call，
+     * 避免 id 恰为 'toString' 等原型键时的误判）
+     * @param {Object<string, *>} obj 待查询对象
+     * @param {string} key 属性键
+     * @returns {boolean} 是否自有属性
+     */
+    function hasOwn(obj, key) {
+        return Object.prototype.hasOwnProperty.call(obj, key);
+    }
+
+    /* ---------------------------- 存档装载 ---------------------------- */
+
+    /**
+     * 装载成就存档并归一到 v2 格式（兼容三代历史数据，迁移结果立即落盘固化）：
+     *   null/损坏     → 全新空档（历史最佳取 bestDefaults）
+     *   v1 数组       → 逐 id 迁移为解锁时间戳 0（"已达成"兜底文案，与原实现一致）
+     *   v2 对象       → 直接使用，并补齐 bestDefaults 新增统计键（前向兼容新版本定义）
+     * 游戏如有自有迁移需求（如 pac 旧键 pacDotsTotal 并入、bee 双代旧键），
+     * 经 opts.migrate(raw) 钩子优先处理，返回 null 时回退本默认迁移。
+     * @param {{storageKey: string, bestDefaults: Object<string, number>, migrate?: Function}} opts 初始化选项
+     * @returns {{unlocked: Object<string, number>, best: Object<string, number>}} v2 成就存档
+     */
+    function loadStore(opts) {
+        const raw = Arcade.loadJSON(opts.storageKey, null);
+        // 游戏自有迁移钩子优先（传入即调用，返回合法 v2 形状则直接采用并落盘）
+        if (typeof opts.migrate === 'function') {
+            const migrated = opts.migrate(raw);
+            if (migrated && migrated.unlocked && migrated.best) {
+                Arcade.saveJSON(opts.storageKey, migrated); // 迁移即固化，避免每次装载重复迁移
+                return migrated;
+            }
+            // 钩子未接手（返回 null/形状非法）：落入下方默认迁移
+        }
+        if (raw && !Array.isArray(raw) && raw.unlocked && raw.best) {
+            // v2 现役格式：浅拷贝防御外部误改，并补齐新版定义新增的统计键
+            const best = Object.assign({}, opts.bestDefaults, raw.best);
+            return { unlocked: Object.assign({}, raw.unlocked), best: best };
+        }
+        // v1 数组 → v2：旧解锁无时间戳统一记 0（成就墙显示"已达成"而非具体日期）
+        const unlocked = {};
+        if (Array.isArray(raw)) {
+            for (const id of raw) unlocked[id] = 0;
+        }
+        Arcade.saveJSON(opts.storageKey, { unlocked: unlocked, best: Object.assign({}, opts.bestDefaults) });
+        return { unlocked: unlocked, best: Object.assign({}, opts.bestDefaults) };
+    }
+
+    /* ---------------------------- 初始化入口 ---------------------------- */
+
+    /**
+     * 为当前游戏初始化成就系统（每页一实例；重复调用以上一次为准并 console.warn 提示）
+     * 完成后实例方法合并到 window.Ach，页面 inline 处理器可直接 Ach.toggle()。
+     * @param {{
+     *   defs: Array<{id: string, name: string, icon: string, desc: string, cat: string,
+     *               rarity: 'common'|'rare'|'epic'|'legendary', stat: string, target: number}>,
+     *   storageKey: string,
+     *   bestDefaults: Object<string, number>,
+     *   mount: {wall: HTMLElement, grid: HTMLElement, count: HTMLElement,
+     *           total: HTMLElement, barFill: HTMLElement, toasts: HTMLElement},
+     *   sfx?: {unlock?: Function, ui?: Function},
+     *   canOpen?: Function,
+     *   onToggle?: Function,
+     *   migrate?: Function
+     * }} opts 初始化选项：defs 定义表 / storageKey 存档键 / bestDefaults 统计默认值 /
+     *   mount 六个挂载节点（各游戏 html 现有 DOM） / sfx 音效钩子（默认 newRecord 与 uiClick） /
+     *   canOpen V 键开墙前置守卫（如「仅游戏进行中可开」） / onToggle 开合回调（挂起/恢复 BGM 等
+     *   游戏副作用，参数 open 布尔） / migrate 自有迁移钩子（见 loadStore）
+     * @returns {{toggle: Function, open: Function, close: Function, isOpen: Function,
+     *            trackRunStat: Function, unlock: Function, getStore: Function, renderWall: Function}}
+     *   实例 API（同时已合并到 window.Ach）
+     */
+    function init(opts) {
+        if (!opts || !Array.isArray(opts.defs) || !opts.storageKey || !opts.bestDefaults ||
+            !opts.mount || !opts.mount.wall || !opts.mount.grid) {
+            throw new Error('Ach.init 参数缺失（defs/storageKey/bestDefaults/mount.wall/mount.grid 必传）');
+        }
+        const defs = opts.defs;
+        const store = loadStore(opts);
+
+        const state = { open: false };
+
+        /* ---- 存档持久化：存储不可用时静默放弃，不影响游戏（Arcade 内部已兜底） ---- */
+        function saveStore() {
+            Arcade.saveJSON(opts.storageKey, store);
+        }
+
+        /* ---- 成就解锁 toast ---- */
+        /**
+         * 弹出一条解锁 toast（canonical 标记写入 mount.toasts）：播放完
+         * 入场-停留-退场全周期动画（toastCycle，各游戏 CSS 自定时长，约定 3.2s）
+         * 命中 animationend 自动移除；另设 6s 兜底清理防动画事件丢失；堆叠超限挤掉最旧
+         * @param {{name: string, icon: string, rarity: string}} meta 成就定义
+         */
+        function showToast(meta) {
+            const stack = opts.mount.toasts;
+            if (!stack) return;
+            // 堆叠上限：连续解锁时移除最旧一条，避免长时间连爆刷屏遮挡
+            while (stack.childElementCount >= TOAST_STACK_MAX) {
+                stack.firstElementChild.remove();
+            }
+            const el = document.createElement('div');
+            el.className = 'ach-toast rarity-' + meta.rarity;
+            el.innerHTML = '<span class="toast-icon">' + meta.icon + '</span>' +
+                '<div class="toast-body"><span class="toast-cap">成就解锁</span>' +
+                '<span class="toast-name">' + meta.name + '</span></div>';
+            stack.appendChild(el);
+            el.addEventListener('animationend', (ev) => {
+                if (ev.animationName === 'toastCycle') el.remove();
+            });
+            setTimeout(() => { if (el.parentNode) el.remove(); }, TOAST_FALLBACK_MS);
+        }
+
+        /* ---- 解锁 ---- */
+        /**
+         * 解锁成就（幂等：已解锁直接短路返回 false，时间戳不被覆盖）
+         * 新解锁 → 持久化时间戳 → toast → 解锁音 → 史诗/传说级全屏金色烟花
+         * @param {string} id 成就 id（见游戏定义表）
+         * @returns {boolean} 是否发生了新解锁（klotski 结算面板据其收集本局新达成分支）
+         */
+        function unlock(id) {
+            if (hasOwn(store.unlocked, id)) return false;
+            store.unlocked[id] = Date.now();
+            saveStore();
+            const meta = defs.find((a) => a.id === id);
+            if (!meta) return false;
+            showToast(meta);
+            (opts.sfx && opts.sfx.unlock ? opts.sfx.unlock : SFX.newRecord)(); // 复用破纪录号角（bee 等可经 sfx 钩子换音）
+            if (meta.rarity === 'epic' || meta.rarity === 'legendary') FX.recordBurst();
+            return true;
+        }
+
+        /* ---- 历史最佳追踪 ---- */
+        /**
+         * 追踪一项历史最佳（只增不减）：超越旧值时立即落盘，并连带检查挂靠在该
+         * 统计项上的全部成就（如 score 同时驱动百分俱乐部/得分大师两档）
+         * @param {string} stat 统计项键（见游戏 bestDefaults）
+         * @param {number} value 本局当前值
+         */
+        function trackRunStat(stat, value) {
+            if (!(value > store.best[stat])) return;
+            store.best[stat] = value;
+            saveStore();
+            // 最佳值更新后扫描定义表：目标达成者逐个解锁（unlock 幂等，跨档重扫安全）
+            for (const a of defs) {
+                if (a.stat === stat && value >= a.target) unlock(a.id);
+            }
+        }
+
+        /* ---- 成就墙渲染 ---- */
+        /**
+         * 渲染墙内容：按定义表 × 最新存档生成卡片网格（canonical 标记，七游戏皮肤共用类名契约）。
+         * 已解锁按稀有度点亮并流光扫过 / 未解锁灰暗锁定态；进度条截断封顶 100%；
+         * 头部完成度计数滚动补间、总进度条宽度过渡；卡片瀑布入场由 CSS 按 --i 序号延迟驱动
+         */
+        function renderWall() {
+            let html = '';
+            let gotCount = 0;
+            for (let i = 0; i < defs.length; i++) {
+                const a = defs[i];
+                const got = hasOwn(store.unlocked, a.id);
+                if (got) gotCount++;
+                const ts = got ? store.unlocked[a.id] : 0;
+                // 历史最佳截断到目标值：进度条封顶 100%，数字显示 min(best, target)/target
+                const best = Math.min(store.best[a.stat] || 0, a.target);
+                const pct = Math.min(100, Math.round((best / a.target) * 100));
+                // 达成日期：迁移的旧解锁无时间戳（记 0），显示"已达成"兜底
+                const dateText = got ?
+                    (ts ? '达成于 ' + new Date(ts).toLocaleDateString('zh-CN') : '已达成') :
+                    a.cat + ' · 尚未达成';
+                html += '<div class="ach-card ' + (got ? 'unlocked rarity-' + a.rarity : 'locked') +
+                    '" style="--i:' + i + '">' +
+                    '<span class="ach-rarity-chip rarity-' + a.rarity + '">' + RARITY_LABEL[a.rarity] + '</span>' +
+                    '<div class="ach-icon"><span class="ach-emoji">' + a.icon + '</span>' +
+                    (got ? '' : '<span class="ach-lock">🔒</span>') + '</div>' +
+                    '<div class="ach-info">' +
+                    '<div class="ach-name">' + a.name + '</div>' +
+                    '<p class="ach-desc">' + a.desc + '</p>' +
+                    '<div class="ach-prog"><div class="ach-prog-fill" style="width:' + pct + '%"></div></div>' +
+                    '<div class="ach-prog-meta"><span>' + best + ' / ' + a.target + '</span><span>' + dateText + '</span></div>' +
+                    '</div></div>';
+            }
+            opts.mount.grid.innerHTML = html;
+            // 头部完成度：已解锁计数滚动补间 + 总数 + 总进度条
+            FX.tweenNumber(opts.mount.count, gotCount, COUNT_TWEEN_MS, (v) => String(Math.round(v)));
+            opts.mount.total.textContent = String(defs.length);
+            opts.mount.barFill.style.width = Math.round((gotCount / defs.length) * 100) + '%';
+        }
+
+        /* ---- 开合控制 ---- */
+        /**
+         * 开合成就墙：打开时先按最新存档重绘内容（瀑布入场与流光自动重播），
+         * 随后经 onToggle 回调通知游戏挂起/恢复自有副作用（BGM、冻结标记、清输入等）
+         * @param {boolean} [force] 省略时翻转；传入 true/false 强制开/关（幂等）
+         */
+        function toggle(force) {
+            const next = typeof force === 'boolean' ? force : !state.open;
+            if (next === state.open) return; // 幂等守卫：重复开关不重播动画不重复播音
+            state.open = next;
+            if (state.open) {
+                renderWall();
+                opts.mount.wall.hidden = false;
+            } else {
+                opts.mount.wall.hidden = true;
+            }
+            (opts.sfx && opts.sfx.ui ? opts.sfx.ui : SFX.uiClick)();
+            if (typeof opts.onToggle === 'function') opts.onToggle(state.open);
+        }
+
+        /** 关闭墙（若未打开则空操作）；开局/读档时的防御性收墙走此入口 */
+        function close() {
+            if (state.open) toggle(false);
+        }
+
+        /* ---- 事件接线（遮罩 / 关闭按钮 / 键盘） ---- */
+
+        // 点击遮罩空白处关闭（面板区域内的点击不触发）；pointerdown 亦兼容（原 tetris/pinball 用法）
+        opts.mount.wall.addEventListener('click', (event) => {
+            if (event.target === opts.mount.wall) toggle(false);
+        });
+
+        // 关闭按钮（各游戏 html .ach-close 已存在则接线；金杯触发器派发的合成 KeyV 同样走下方键盘分支）
+        const closeBtn = opts.mount.wall.querySelector('.ach-close');
+        if (closeBtn) closeBtn.addEventListener('click', () => toggle(false));
+
+        // V 开 / Esc 关（与原各游戏分支语义一致：Esc 仅在墙打开时拦截，不影响其它 Esc 用途）
+        window.addEventListener('keydown', (ev) => {
+            const isV = ev.code === 'KeyV' || ev.key === 'v' || ev.key === 'V';
+            if (isV) {
+                // canOpen 守卫缺省恒可开；游戏以回调表达原分支条件（如仅暂停/进行中放行）
+                if (!opts.canOpen || opts.canOpen()) {
+                    ev.preventDefault();
+                    toggle();
+                }
+                return;
+            }
+            if (ev.key === 'Escape' && state.open) {
+                ev.preventDefault();
+                toggle(false);
+            }
+        });
+
+        /* ---- 实例 API（合并到 window.Ach，供游戏与 inline 处理器调用） ---- */
+        const api = {
+            toggle: toggle,
+            open: () => toggle(true),
+            close: close,
+            isOpen: () => state.open,
+            trackRunStat: trackRunStat,
+            unlock: unlock,
+            getStore: () => store,
+            renderWall: renderWall
+        };
+        Object.assign(window.Ach, api);
+        return api;
+    }
+
+    /* ---------------------------- 导出 ---------------------------- */
+
+    window.Ach = { init: init, RARITY_LABEL: RARITY_LABEL };
+})();

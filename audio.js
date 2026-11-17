@@ -49,8 +49,8 @@
 const SFX = (() => {
     /** 嵌入模式标记：URL 携带 ?embed 且确实运行于 iframe 之中（判定方式与 fullscreen.js 一致） */
     const EMBED = new URLSearchParams(location.search).has('embed') && window.parent !== window;
-    /** 消息投递目标：file:// 直开时各帧为独立 opaque origin，需回退 '*' 维持跨帧通信；http(s) 同源部署收紧为 '/'（仅同源可投） */
-    const POST_MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
+    /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
+    const POST_MSG_TARGET = Arcade.MSG_TARGET;
     let ctx = null; // AudioContext（首次使用时懒创建，规避浏览器自动播放限制）
     let noiseBuf = null; // 白噪声 AudioBuffer 缓存（随 ctx 惰性生成一次，高频碰撞路径直接复用；本库 ctx 懒创建后不会重建，无需失效逻辑）
 
@@ -72,17 +72,16 @@ const SFX = (() => {
         return { m: v.m, b: clampStep(v.b), s: clampStep(v.s) };
     }
 
-    /* ==================== 启动状态与旧键迁移（为什么只剩一个 try） ====================
+    /* ==================== 启动状态与旧键迁移（存储调用零抛点） ====================
      * 优先读新键 arcadeAudio；新键缺失（v2.2 及更早存档）时从旧键 arcadeSound/arcadeVol 一次性迁移。
-     * boot 里的存储调用分两类，防御策略因此不同：
-     * ① JSON 存取（新键 / arcadeVol）：已下沉到 Arcade.loadJSON——键缺失、JSON 损坏、存储被禁
-     *    三种失败一律在原语内部返回 null 兜底，调用侧没有任何可抛点，不再包 try；
+     * boot 里的存储调用分两类，防御均已下沉到 Arcade 原语内部，调用侧没有可抛点：
+     * ① JSON 存取（新键 / arcadeVol）：Arcade.loadJSON——键缺失、JSON 损坏、存储被禁
+     *    三种失败一律在原语内部返回 null 兜底；
      * ② 标量读取（arcadeSound）：存的是 'off' 哨兵字符串而非 JSON，刻意不经 JSON 原语，
-     *    而裸 getItem 在存储被禁（隐私模式 / 部分 file:// 场景）时本身抛错（SecurityError 等）
-     *    ——这是 boot 全链路唯一的可抛点。
-     * 这个 try 不能删：它位于 SFX IIFE 的求值路径上，异常一旦逃逸，整个音效库求值中断 →
-     * SFX 未定义 → 依赖它的各游戏脚本连锁失败 → 全站无声 + 页面报错，单点故障被放大为全站故障；
-     * 也不必更大：JSON 行已被原语兜底，扩大包裹范围只会掩盖未来的真实回归 */
+     *    改走 Arcade.loadRaw 裸读——存储被禁（隐私模式 / 部分 file:// 场景）抛出的
+     *    SecurityError 等在原语内部捕获并返回 fallback（null），无需调用侧包 try。
+     * 这层兜底必须存在：boot 位于 SFX IIFE 的求值路径上，异常一旦逃逸，整个音效库求值中断 →
+     * SFX 未定义 → 依赖它的各游戏脚本连锁失败 → 全站无声 + 页面报错，单点故障被放大为全站故障 */
     const boot = (() => {
         // 键缺失 / JSON 损坏 / 存储不可用统一 null → 走旧键迁移
         const cur = pickAudio(Arcade.loadJSON(AUDIO_KEY));
@@ -90,23 +89,19 @@ const SFX = (() => {
         let m = false, b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1; // 默认：有声 + 双通道满档
         // 旧键迁移：arcadeSound==='off' 映射为静音，arcadeVol 档位合法则原样保留
         // （旧键结构为 {b, s} 无 m，不经 pickAudio，仅校验双通道整数档位）
-        try { // 仅因首行裸 getItem 可抛（见上方块注释）；arcadeVol 行已由 loadJSON 兜底
-            m = localStorage.getItem('arcadeSound') === 'off';
-            const old = Arcade.loadJSON('arcadeVol');
-            if (old && Number.isInteger(old.b) && Number.isInteger(old.s)) { b = clampStep(old.b); s = clampStep(old.s); }
-        } catch (e) { /* 存储被禁：全部回退默认，引擎照常启动 */ }
+        // 存储被禁时 loadRaw 兜底返回 null：不等于 'off' 即视为有声，引擎照常启动
+        m = Arcade.loadRaw('arcadeSound') === 'off';
+        const old = Arcade.loadJSON('arcadeVol');
+        if (old && Number.isInteger(old.b) && Number.isInteger(old.s)) { b = clampStep(old.b); s = clampStep(old.s); }
         return { m, b, s };
     })();
     let muted = boot.m;                 // 一键静音标志（独立于档位：静音不破坏设置，恢复时档位无损还原）
     let vol = { b: boot.b, s: boot.s }; // 双通道音量档位（b=BGM 音乐，s=SFX 音效）
-    // 迁移后立即落新键并清理旧键。此处 try 与 boot 内同理：只为两行裸 removeItem 存在
-    // （saveJSON 已自带兜底告警不会抛）；不接住同样会中断 SFX IIFE 求值。
+    // 迁移后立即落新键并清理旧键。saveJSON/removeRaw 均在原语内部兜底不会抛，
     // 存储被禁时仅内存态运行，旧键清不掉、留待下次启动（存储恢复后）再清
-    try {
-        Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s });
-        localStorage.removeItem('arcadeSound');
-        localStorage.removeItem('arcadeVol');
-    } catch (e) { /* 存储被禁：忽略，旧键留待下次启动再清理 */ }
+    Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s });
+    Arcade.removeRaw('arcadeSound');
+    Arcade.removeRaw('arcadeVol');
 
     /**
      * 持久化当前音控状态到 localStorage（父页角色专用；嵌入模式子页状态由大厅统一持有）
@@ -134,7 +129,7 @@ const SFX = (() => {
     function broadcastAudio() {
         document.querySelectorAll('iframe').forEach(f => {
             // 目标 origin 取 POST_MSG_TARGET（见顶部定义）：http(s) 同源收紧为 '/'，file:// 直开回退 '*' 维持跨帧通信
-            try { f.contentWindow.postMessage({ type: 'arcade:audio', m: muted, b: vol.b, s: vol.s }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
+            try { f.contentWindow.postMessage({ type: Arcade.MSG.AUDIO, m: muted, b: vol.b, s: vol.s }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
         });
     }
 
@@ -341,15 +336,15 @@ const SFX = (() => {
         Arcade.onTrustedMessage((e) => {
             if (e.source !== window.parent) return; // 仅信任直接父页
             const d = e.data;
-            if (d && d.type === 'arcade:audio') applyAudioState(d);
+            if (d && d.type === Arcade.MSG.AUDIO) applyAudioState(d);
         });
-        window.parent.postMessage({ type: 'arcade:audio', act: 'hello' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET；指纹须与父页监听约定一致（type:arcade:audio + act:hello）
+        window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'hello' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET；指纹须与父页监听约定一致（type:arcade:audio + act:hello）
     } else {
         // 父页（大厅）角色：响应子页的切换/设档请求与报到；大厅是音控状态的唯一持久化方
         // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
         Arcade.onTrustedMessage((e) => {
             const d = e.data;
-            if (!d || d.type !== 'arcade:audio') return;
+            if (!d || d.type !== Arcade.MSG.AUDIO) return;
             if (d.act === 'toggle') {
                 muteCore();
                 broadcastAudio(); // 切换后向所有 iframe 内游戏广播最新状态
@@ -357,7 +352,7 @@ const SFX = (() => {
                 setVolCore(d.ch === 'b' ? 'b' : 's', d.idx); // 容错：未知通道按 SFX 处理
                 broadcastAudio();
             } else if (d.act === 'hello' && e.source) {
-                e.source.postMessage({ type: 'arcade:audio', m: muted, b: vol.b, s: vol.s }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET，向报到子页回发当前状态
+                e.source.postMessage({ type: Arcade.MSG.AUDIO, m: muted, b: vol.b, s: vol.s }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET，向报到子页回发当前状态
             }
         });
     }
@@ -592,20 +587,20 @@ const SFX = (() => {
             if (!t) return;
             if (t.classList.contains('sfx-close')) { panel.classList.remove('open'); return; } // ✕ 收起面板
             if (t.classList.contains('sfx-mute')) {
-                if (EMBED) window.parent.postMessage({ type: 'arcade:audio', act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
+                if (EMBED) window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
                 else muteCore();
                 return;
             }
             if (t.classList.contains('sfx-fx')) {
                 // 演出强度档位：面板仅作入口，状态权威在 fx.js（须先于 .sfx-step 分支——本行按钮同挂 sfx-step 类）
                 const idx = Number(t.dataset.fx);
-                if (EMBED) window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx }, POST_MSG_TARGET); // 嵌入模式转发父页，由 fx.js 持久化并广播
+                if (EMBED) window.parent.postMessage({ type: Arcade.MSG.FXLEVEL, act: 'set', idx }, POST_MSG_TARGET); // 嵌入模式转发父页，由 fx.js 持久化并广播
                 else if (window.FX) window.FX.setFxLevel(idx); // 本地运行直接调 FX（fx.js 为同步脚本，DOMContentLoaded 前已加载完毕，恒存在）
                 return;
             }
             if (t.classList.contains('sfx-step')) {
                 const ch = t.dataset.ch === 'b' ? 'b' : 's';
-                if (EMBED) window.parent.postMessage({ type: 'arcade:audio', act: 'vol', ch, idx: Number(t.dataset.vol) }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
+                if (EMBED) window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'vol', ch, idx: Number(t.dataset.vol) }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
                 else setVolCore(ch, Number(t.dataset.vol));
             }
         });
@@ -657,7 +652,7 @@ const SFX = (() => {
             btn.addEventListener('click', () => {
                 if (lpFired) return; // 长按已处理，吞掉本次单击
                 if (panel && panel.classList.contains('open')) { panel.classList.remove('open'); return; } // 面板展开时单击主键=收起面板（总开关走面板内按钮，避免误切静音）
-                if (EMBED) window.parent.postMessage({ type: 'arcade:audio', act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
+                if (EMBED) window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
                 else muteCore();
             });
             btn.addEventListener('contextmenu', (e) => {
@@ -676,7 +671,7 @@ const SFX = (() => {
                 if (e.code !== 'KeyM' || e.repeat) return;
                 const tag = (e.target && e.target.tagName) || '';
                 if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return; // 输入场景不拦截
-                if (EMBED) window.parent.postMessage({ type: 'arcade:audio', act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
+                if (EMBED) window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
                 else muteCore();
             }, true);
         }
@@ -784,7 +779,7 @@ const SFX = (() => {
          * 嵌入模式下状态由大厅（父页）统一持有，仅转发切换请求；父页切换后会广播回所有子页
          */
         muteToggle() {
-            if (EMBED) { window.parent.postMessage({ type: 'arcade:audio', act: 'toggle' }, POST_MSG_TARGET); return; } // 目标 origin 取 POST_MSG_TARGET
+            if (EMBED) { window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'toggle' }, POST_MSG_TARGET); return; } // 目标 origin 取 POST_MSG_TARGET
             muteCore();
         },
 
@@ -795,7 +790,7 @@ const SFX = (() => {
          * @param {number} idx 档位索引（0~3）
          */
         volSet(ch, idx) {
-            if (EMBED) { window.parent.postMessage({ type: 'arcade:audio', act: 'vol', ch: ch === 'b' ? 'b' : 's', idx }, POST_MSG_TARGET); return; } // 目标 origin 取 POST_MSG_TARGET
+            if (EMBED) { window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'vol', ch: ch === 'b' ? 'b' : 's', idx }, POST_MSG_TARGET); return; } // 目标 origin 取 POST_MSG_TARGET
             setVolCore(ch, idx);
         },
 

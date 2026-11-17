@@ -564,7 +564,7 @@ function trySlide(p, dx, dy, steps = 1) {
     p.x += dx * n;
     p.y += dy * n;
     moves += n;
-    if (!demoActive) trackRunStat('moves', moves); // 本局步数实时上报成就统计（演示复现不计入玩家成绩）
+    if (!demoActive) Ach.trackRunStat('moves', moves); // 本局步数实时上报成就统计（演示复现不计入玩家成绩）
     undoStack.push({ piece: p, dx, dy, steps: n });
     invalidateHint(); // 棋面已变：提示展示与解路径缓存作废
     if (p.t === 'cao') SFX.klMoveCao(n); // 曹操专属：低音区厚重滑音
@@ -655,7 +655,7 @@ function win() {
         isNewRecord = prev === 0 || moves < prev;
         bestMoves = isNewRecord ? moves : prev;
         if (isNewRecord) {
-            safeSet(key, String(moves)); // 隐私模式写失败静默，不影响通关结算演出
+            Arcade.saveRaw(key, String(moves)); // 隐私模式写失败静默，不影响通关结算演出
             SFX.klRecord(); // 新纪录：高音区琶音延迟接力，与通关琶音错峰形成两段式庆祝
             FX.recordBurst(); // 新纪录金色烟花：全屏覆盖层演出（系统减弱动态效果时自动跳过）
         }
@@ -663,7 +663,7 @@ function win() {
         currentRank = computeRank();
         const prevRank = readRank(LAYOUTS[layoutIndex].id, currentDiffId());
         if (!prevRank || RANK_ORDER.indexOf(currentRank) < RANK_ORDER.indexOf(prevRank)) {
-            safeSet(rankKey(LAYOUTS[layoutIndex].id, currentDiffId()), currentRank); // 隐私模式写失败静默
+            Arcade.saveRaw(rankKey(LAYOUTS[layoutIndex].id, currentDiffId()), currentRank); // 隐私模式写失败静默
         }
         bestRank = readRank(LAYOUTS[layoutIndex].id, currentDiffId());
         // 成就检查：首次通关 / S 级评级 / 十八连破（须在纪录与评级落盘后判定，
@@ -673,7 +673,7 @@ function win() {
         if (layoutIndex === dailyIndex()) {
             const prevDaily = readDailyDone();
             if (!prevDaily || moves < prevDaily) {
-                safeSet(DAILY_KEY + '_' + dailyKey(), String(moves)); // 隐私模式写失败静默
+                Arcade.saveRaw(DAILY_KEY + '_' + dailyKey(), String(moves)); // 隐私模式写失败静默
             }
         }
     }
@@ -702,24 +702,6 @@ function bestKey(layoutId, diffId) {
 }
 
 /**
- * 安全读取 localStorage：存储不可用（隐私模式等）时返回 null 按无数据处理，不向上抛错
- * @param {string} key localStorage 键名
- * @returns {string|null} 存储值（读取失败为 null）
- */
-function safeGet(key) {
-    try { return localStorage.getItem(key); } catch (e) { return null; }
-}
-
-/**
- * 安全写入 localStorage：存储不可用（隐私模式/超容量等）时静默放弃，不中断通关结算等游戏流程
- * @param {string} key localStorage 键名
- * @param {string} value 写入值
- */
-function safeSet(key, value) {
-    try { localStorage.setItem(key, value); } catch (e) { /* 写入失败静默 */ }
-}
-
-/**
  * 读取指定难度+布局的最少步纪录；
  * 进阶难度兼容回读旧版"不分难度"的纪录键，老玩家的历史纪录不丢失
  * @param {string} layoutId 布局 id
@@ -727,9 +709,9 @@ function safeSet(key, value) {
  * @returns {number} 最少步纪录（0 表示尚无纪录）
  */
 function readBest(layoutId, diffId) {
-    let v = parseInt(safeGet(bestKey(layoutId, diffId)) || '0', 10);
+    let v = parseInt(Arcade.loadRaw(bestKey(layoutId, diffId)) || '0', 10);
     if (!v && diffId === 'normal') {
-        v = parseInt(safeGet('klotskiBest_' + layoutId) || '0', 10); // 旧版纪录视为进阶档
+        v = parseInt(Arcade.loadRaw('klotskiBest_' + layoutId) || '0', 10); // 旧版纪录视为进阶档
     }
     return Number.isNaN(v) ? 0 : v;
 }
@@ -751,15 +733,11 @@ function rankKey(layoutId, diffId) {
  * @returns {string} 评级字符（S/A/B/C，尚无纪录时为空字符串）
  */
 function readRank(layoutId, diffId) {
-    return safeGet(rankKey(layoutId, diffId)) || '';
+    return Arcade.loadRaw(rankKey(layoutId, diffId)) || '';
 }
 
-/* ===================== 成就系统 v2（DOM 成就墙 + toast，与全站七游戏同构） ===================== */
+/* ===================== 成就系统（共享实现 ach-common.js：存档迁移/开合接线/卡片与 toast 渲染由库统一承担） ===================== */
 
-/** 成就解锁存档键（localStorage，跨局累计；大厅成就中心按此键聚合进度） */
-const ACHIEVEMENT_KEY = 'arcade_ach_klotski';
-/** 稀有度中文标签：卡片徽章与解锁 toast 共用 */
-const RARITY_LABEL = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' };
 /** 历史最佳统计初始值：best 缺项按此补齐（新增统计向后兼容旧档） */
 const ACH_BEST_DEFAULTS = { wins: 0, moves: 0 };
 /** 成就定义表（8 条，四档稀有度 普通2/稀有1/史诗3/传说2，顺序即成就墙展示顺序）：
@@ -775,217 +753,28 @@ const KLOTSKI_ACHIEVEMENTS = [
     { id: 'optimal', name: '一步不差', icon: '👑', rarity: 'legendary', cat: '挑战', desc: '以理论最少步数通关任意布局', target: 0 },
     { id: 'allClear', name: '十八连破', icon: '🏰', rarity: 'legendary', cat: '挑战', desc: '全部 18 个难度×布局均已通关', target: 0 }
 ];
-/** 成就存档（v2 结构）：{ unlocked:{id:解锁时间戳ms}, best:{wins,moves} }，页面载入时读档迁移 */
-let achStore = loadAchStore();
-/** 成就墙是否处于打开态：打开期间冻结逻辑计时、吞掉操作按键（拖拽由全屏遮罩天然拦截） */
-let achPanelOpen = false;
-
 /** 成就墙遮罩层（整层显隐，全屏拦截指针事件） */
 const achWall = document.getElementById('achWall');
 /** 成就墙卡片网格容器（按定义表动态重建） */
 const achGrid = document.getElementById('achGrid');
-/** 成就墙头部计数元素（「N/8」文本） */
+/** 成就墙头部计数元素（数字随开墙滚动补间，「/8」中的 8 由 achTotal 提供） */
 const achCountElement = document.getElementById('achCount');
+/** 成就墙头部总数元素（共享库按定义表长度写入） */
+const achTotalElement = document.getElementById('achTotal');
 /** 成就墙头部完成度进度条填充 */
 const achBarFill = document.getElementById('achBarFill');
 /** 成就解锁 toast 堆叠容器（右上角） */
 const achToastStack = document.getElementById('achToastStack');
 
-/**
- * 从 localStorage 读取成就存档并归一化为 v2 结构（含 v1 老数组档迁移）。
- * v2 现行格式：{ unlocked:{id:时间戳ms}, best:{统计名:历史最大值} }；
- * v1 旧格式：纯字符串数组（老版华容道存档）——旧 id 全部迁入新 unlocked（时间戳 0），
- * firstWin/rankS/allClear 三个旧 id 与新定义表同名字沿用，老玩家成就零丢失
- * @returns {{unlocked: Object<string, number>, best: Object<string, number>}} 归一化后的成就存档
- */
-function loadAchStore() {
-    let raw = null;
-    try { raw = JSON.parse(safeGet(ACHIEVEMENT_KEY) || 'null'); } catch (e) { raw = null; } // 存档损坏按无档处理
-    // v2 对象档：直接归一（unlocked 非对象一律重建空表，best 缺项补初始值）
-    if (raw && !Array.isArray(raw) && raw.unlocked && typeof raw.unlocked === 'object' && !Array.isArray(raw.unlocked)) {
-        return { unlocked: raw.unlocked, best: Object.assign({}, ACH_BEST_DEFAULTS, raw.best || {}) };
-    }
-    // v1 数组档迁移：旧 id 收编进新结构后立即落盘（safeSet 静默兜底，失败则下次解锁写盘自然补上）
-    if (Array.isArray(raw)) {
-        const migrated = { unlocked: {}, best: Object.assign({}, ACH_BEST_DEFAULTS) };
-        for (let i = 0; i < raw.length; i++) {
-            if (typeof raw[i] === 'string') migrated.unlocked[raw[i]] = 0;
-        }
-        safeSet(ACHIEVEMENT_KEY, JSON.stringify(migrated));
-        return migrated;
-    }
-    // 无档：全新存档
-    return { unlocked: {}, best: Object.assign({}, ACH_BEST_DEFAULTS) };
-}
-
-/**
- * 持久化成就存档（复用 safeSet：存储不可用时静默放弃，不影响通关结算流程）
- * @param {{unlocked: Object, best: Object}} store 成就存档
- * @returns {void}
- */
-function saveAchStore(store) {
-    safeSet(ACHIEVEMENT_KEY, JSON.stringify(store));
-}
-
-/**
- * 判断成就是否已解锁
- * @param {string} id 成就 id
- * @returns {boolean} true=已解锁
- */
-function hasAch(id) {
-    return Object.prototype.hasOwnProperty.call(achStore.unlocked, id);
-}
-
-/**
- * 取全部已解锁成就 id 列表（结算面板对比「本次新增」用）
- * @returns {string[]} 已解锁成就 id 数组
- */
-function unlockedAchIds() {
-    return Object.keys(achStore.unlocked);
-}
-
-/**
- * 单局统计上报（max 语义）：刷新历史最佳并判定挂在该统计上的进度型成就。
- * 走子结算路径实时调用；仅破纪录时写盘，稳态零开销
- * @param {string} stat 统计名（ACH_BEST_DEFAULTS 的键）
- * @param {number} value 本局当前值
- * @returns {void}
- */
-function trackRunStat(stat, value) {
-    if (!(stat in achStore.best) || value <= achStore.best[stat]) return; // 未破纪录：不写盘不判成就
-    achStore.best[stat] = value;
-    saveAchStore(achStore);
-    // 新纪录落盘后逐条比对定义表，达标即解锁（unlockAchievement 幂等）
-    for (let i = 0; i < KLOTSKI_ACHIEVEMENTS.length; i++) {
-        const a = KLOTSKI_ACHIEVEMENTS[i];
-        if (a.stat === stat && value >= a.target) unlockAchievement(a.id);
-    }
-}
-
-/**
- * 累计型统计上报（add 语义）：增量累入 best 并判定对应成就（wins 跨局累计通关次数专用）
- * @param {string} stat 统计名
- * @param {number} delta 本次增量（非正数忽略）
- * @returns {void}
- */
-function trackCumulativeStat(stat, delta) {
-    if (!(stat in achStore.best) || delta <= 0) return;
-    achStore.best[stat] += delta;
-    saveAchStore(achStore);
-    for (let i = 0; i < KLOTSKI_ACHIEVEMENTS.length; i++) {
-        const a = KLOTSKI_ACHIEVEMENTS[i];
-        if (a.stat === stat && achStore.best[stat] >= a.target) unlockAchievement(a.id);
-    }
-}
-
-/**
- * 解锁成就（幂等）：首次解锁时落盘 + 右上角 DOM toast + 解锁音；
- * 史诗/传说追加金色烟花庆祝；重复触发直接短路
- * @param {string} id 成就 id（见 KLOTSKI_ACHIEVEMENTS 定义表）
- * @returns {boolean} 本次是否为新解锁（true=新解锁并已落盘；false=此前已解锁）
- */
-function unlockAchievement(id) {
-    if (hasAch(id)) return false; // 幂等短路
-    let meta = null;
-    for (let i = 0; i < KLOTSKI_ACHIEVEMENTS.length; i++) {
-        if (KLOTSKI_ACHIEVEMENTS[i].id === id) { meta = KLOTSKI_ACHIEVEMENTS[i]; break; } // 查定义表取展示信息
-    }
-    if (!meta) return false; // 未定义的 id 忽略
-    achStore.unlocked[id] = Date.now();
-    saveAchStore(achStore);
-    showAchToast(meta); // 右上角堆叠 toast（稀有度色边，自动滑入退场）
-    SFX.newRecord(); // 成就解锁音
-    if (meta.rarity === 'epic' || meta.rarity === 'legendary') FX.recordBurst(); // 高稀有度金色烟花
-    return true;
-}
-
-/**
- * 生成一张成就解锁 toast 挂入右上角堆叠容器（CSS 动画滑入-停留-退场，3.4s 后自移除）
- * @param {{name: string, icon: string, rarity: string}} meta 成就定义
- * @returns {void}
- */
-function showAchToast(meta) {
-    const el = document.createElement('div');
-    el.className = 'ach-toast r-' + meta.rarity;
-    el.innerHTML =
-        '<div class="t-icon">' + meta.icon + '</div>' +
-        '<div class="t-body"><span class="t-title">成就解锁 · ' + RARITY_LABEL[meta.rarity] + '</span>' +
-        '<span class="t-name">' + meta.name + '</span></div>';
-    achToastStack.appendChild(el);
-    setTimeout(() => el.remove(), 3400); // 与 toast CSS 动画总时长（滑入+停留+退场）对齐
-    while (achToastStack.children.length > 4) achToastStack.firstChild.remove(); // 堆叠上限 4 条，超出移除最旧
-}
-
-/**
- * 计算进度型成就的完成百分比（0~100 取整，钳位防越界）
- * @param {{stat?: string, target?: number}} a 成就定义
- * @returns {number} 完成百分比
- */
-function achProgPct(a) {
-    if (!a.stat || !a.target) return 0;
-    return Math.min(100, Math.round((achStore.best[a.stat] || 0) / a.target * 100));
-}
-
-/**
- * 进度型成就的「当前/目标」文案
- * @param {{stat?: string, target?: number}} a 成就定义
- * @returns {string} 如「17/20」；非进度型为空串
- */
-function achProgText(a) {
-    if (!a.stat || !a.target) return '';
-    return Math.min(a.target, achStore.best[a.stat] || 0) + '/' + a.target;
-}
-
-/**
- * 重建成就墙：头部计数/完成度进度条 + 按定义表逐张重建卡片（开墙时调用）
- * @returns {void}
- */
-function renderAchWall() {
-    achGrid.innerHTML = ''; // 清空重建，保证与最新存档一致
-    let count = 0;
-    KLOTSKI_ACHIEVEMENTS.forEach((a, i) => {
-        const unlocked = hasAch(a.id);
-        if (unlocked) count++;
-        // 进度区：进度型展示进度条+当前/目标；事件型无进度条
-        const progHtml = a.stat && a.target
-            ? '<div class="ach-prog"><div class="ach-prog-bar"><div class="ach-prog-fill" style="width:' +
-              achProgPct(a) + '%"></div></div><span class="ach-prog-text">' + achProgText(a) + '</span></div>'
-            : '';
-        // 组装卡片：图标座（未解锁叠小锁）+ 名称行（名称+稀有度徽章）+ 描述 + 分类 + 进度
-        const card = document.createElement('div');
-        card.className = 'ach-card ' + (unlocked ? 'unlocked' : 'locked') + ' r-' + a.rarity;
-        card.style.setProperty('--i', i); // 逐张瀑布入场序号
-        card.innerHTML =
-            '<div class="ach-icon">' + a.icon + (unlocked ? '' : '<span class="ach-lock">🔒</span>') + '</div>' +
-            '<div class="ach-info">' +
-            '<div class="ach-name-row"><span class="ach-name">' + a.name + '</span>' +
-            '<span class="ach-rarity">' + RARITY_LABEL[a.rarity] + '</span></div>' +
-            '<div class="ach-desc">' + a.desc + '</div>' +
-            '<div class="ach-cat">' + a.cat + '</div>' + progHtml + '</div>';
-        achGrid.appendChild(card);
-    });
-    // 头部：「N/8」计数 + 完成度进度条
-    achCountElement.textContent = count + '/' + KLOTSKI_ACHIEVEMENTS.length;
-    achBarFill.style.width = Math.round(count / KLOTSKI_ACHIEVEMENTS.length * 100) + '%';
-}
-
-/**
- * 成就墙开合切换：开墙重建卡片并冻结计时（用时参与评级与纪录，看墙期间冻结保证公平）；
- * 开墙前先结算进行中的拖拽手势（endDrag），防止遮罩落下后残留半拖拽状态；
- * V 键任意状态可开合（含开始界面/通关面板），Esc 仅在开着时关闭
- * @returns {void}
- */
-function toggleAchPanel() {
-    achPanelOpen = !achPanelOpen;
-    if (achPanelOpen) {
-        endDrag(); // 结算进行中的拖拽手势，防止遮罩落下后残留半拖拽状态
-        renderAchWall();
-        achWall.hidden = false; // 移除 hidden 属性 → CSS display:flex 显示
-    } else {
-        achWall.hidden = true; // 加回 hidden 属性 → CSS display:none 隐藏
-    }
-    SFX.uiClick(); // 开合反馈音
-}
+// 接入共享成就引擎（ach-common.js）：V/Esc/遮罩/关闭按钮的开合接线、成就墙与 toast 渲染均在库内完成；
+// 存档沿用旧键名 arcade_ach_klotski，老玩家成就与历史最佳无缝延续
+Ach.init({
+    defs: KLOTSKI_ACHIEVEMENTS,
+    storageKey: 'arcade_ach_klotski',
+    bestDefaults: ACH_BEST_DEFAULTS,
+    mount: { wall: achWall, grid: achGrid, count: achCountElement, total: achTotalElement, barFill: achBarFill, toasts: achToastStack },
+    onToggle: (open) => { if (open) endDrag(); } // 开墙前结算进行中的拖拽手势，防止遮罩落下后残留半拖拽状态
+});
 
 /**
  * 通关后检查成就（在 win 的最少步纪录与评级落盘之后调用，
@@ -996,15 +785,16 @@ function toggleAchPanel() {
  * @returns {string[]} 本次新解锁的成就 id 列表（供结算面板展示，无新成就时为空数组）
  */
 function checkAchievements(rank) {
-    const before = unlockedAchIds(); // 结算前快照：用于识别「本次新增」
-    trackCumulativeStat('wins', 1); // 累计通关 +1：进度型成就（首胜/5胜/20胜）随写盘自动判定
-    trackRunStat('moves', moves); // 本局步数兜底上报（走子路径已实时上报，此处保证通关路径完整）
+    const before = Object.keys(Ach.getStore().unlocked); // 结算前快照：用于识别「本次新增」
+    // 累计通关 +1：wins 为累计型统计，借共享库 max 通道等价实现加法（旧值+1 必然破纪录）
+    Ach.trackRunStat('wins', Ach.getStore().best.wins + 1);
+    Ach.trackRunStat('moves', moves); // 本局步数兜底上报（走子路径已实时上报，此处保证通关路径完整）
     // 神机妙算：本次评级达 S 即解锁（历史 S 不重判，以本次为准保持即时性）
-    if (rank === 'S') unlockAchievement('rankS');
+    if (rank === 'S') Ach.unlock('rankS');
     // 兵贵神速：单局 5 分钟（300 秒）内通关
-    if (elapsed <= 300) unlockAchievement('speed300');
+    if (elapsed <= 300) Ach.unlock('speed300');
     // 一步不差：步数恰为理论最优解（optimalMoves>0 过滤无最优解数据的布局）
-    if (optimalMoves > 0 && moves === optimalMoves) unlockAchievement('optimal');
+    if (optimalMoves > 0 && moves === optimalMoves) Ach.unlock('optimal');
     // 十八连破：遍历全部难度×布局组合，最少步纪录均大于 0 才算全通
     let allDone = true;
     for (let d = 0; d < DIFF_IDS.length && allDone; d++) {
@@ -1012,21 +802,17 @@ function checkAchievements(rank) {
             if (readBest(LAYOUTS[i].id, DIFF_IDS[d]) <= 0) { allDone = false; break; }
         }
     }
-    if (allDone) unlockAchievement('allClear');
-    // 结算面板「成就解锁」行展示用：本次新增的 id 列表（保持定义表顺序）
+    if (allDone) Ach.unlock('allClear');
+    // 结算面板「成就解锁」行展示用：本次新增的 id 列表（保持定义表顺序）；
+    // 进度型成就经共享库 track 内部解锁拿不到返回值，统一用快照差集收集（与 unlock 仅新解锁返回 true 同语义）
+    const store = Ach.getStore();
     const fresh = [];
     for (let i = 0; i < KLOTSKI_ACHIEVEMENTS.length; i++) {
         const a = KLOTSKI_ACHIEVEMENTS[i];
-        if (hasAch(a.id) && before.indexOf(a.id) < 0) fresh.push(a.id);
+        if (Object.prototype.hasOwnProperty.call(store.unlocked, a.id) && before.indexOf(a.id) < 0) fresh.push(a.id);
     }
     return fresh;
 }
-
-// ---------- 成就墙交互接线：V 键开关由下方全局 keydown 统一分派；遮罩空白处与 × 按钮点击关闭 ----------
-achWall.addEventListener('click', e => {
-    if (e.target === achWall && achPanelOpen) toggleAchPanel();
-});
-document.getElementById('achClose').addEventListener('click', toggleAchPanel);
 
 /* ===================== 每日一题 ===================== */
 
@@ -1069,7 +855,7 @@ function dailyIndex() {
  * @returns {number} 当日已完成的最少步数（0 表示今日尚未完成）
  */
 function readDailyDone() {
-    const v = parseInt(safeGet(DAILY_KEY + '_' + dailyKey()) || '0', 10);
+    const v = parseInt(Arcade.loadRaw(DAILY_KEY + '_' + dailyKey()) || '0', 10);
     return Number.isNaN(v) ? 0 : v;
 }
 
@@ -1244,7 +1030,7 @@ function saveSnapshot() {
         Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用 / 配额满时静默放弃，不影响游戏
     } else {
         // 游戏未开始 / 已通关：不留快照
-        try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* 静默 */ }
+        Arcade.removeRaw(SAVE_KEY); // 静默
     }
 }
 
@@ -1253,9 +1039,7 @@ function saveSnapshot() {
  * 启动演示时调用，避免下次进入页面误续玩一局已被废弃的棋局；存储不可用时静默跳过
  */
 function clearSnapshot() {
-    try {
-        localStorage.removeItem(SAVE_KEY);
-    } catch (e) { /* 存储受限时同样静默跳过 */ }
+    Arcade.removeRaw(SAVE_KEY); // 存储受限时同样静默跳过
 }
 
 /**
@@ -1273,26 +1057,26 @@ function restoreSnapshot() {
         if (!snap) return false; // 无快照或已损坏：正常新开局，无需清理
         // 版本号不符（损坏或未来格式）：立即弃用并清除
         if (!snap || typeof snap !== 'object' || snap.v !== 1) {
-            localStorage.removeItem(SAVE_KEY);
+            Arcade.removeRaw(SAVE_KEY);
             return false;
         }
         // 布局标识：字符串且能在布局表中找到对应项（恢复时据此切到该布局）
         const li = typeof snap.layout === 'string'
             ? LAYOUTS.findIndex(l => l.id === snap.layout) : -1;
         if (li < 0) {
-            localStorage.removeItem(SAVE_KEY);
+            Arcade.removeRaw(SAVE_KEY);
             return false;
         }
         // 难度标识：字符串且能在难度表中找到对应项（辅助规则与存档棋面绑定）
         const di = typeof snap.diff === 'string' ? DIFF_IDS.indexOf(snap.diff) : -1;
         if (di < 0) {
-            localStorage.removeItem(SAVE_KEY);
+            Arcade.removeRaw(SAVE_KEY);
             return false;
         }
         const layout = LAYOUTS[li];
         // 棋子位置数组：数量必须与该布局的棋子表完全一致（按序一一对应）
         if (!Array.isArray(snap.pieces) || snap.pieces.length !== layout.pieces.length) {
-            localStorage.removeItem(SAVE_KEY);
+            Arcade.removeRaw(SAVE_KEY);
             return false;
         }
         // 逐棋子校验：整数坐标、按棋子自身宽高判定在棋盘界内；
@@ -1303,19 +1087,19 @@ function restoreSnapshot() {
             const pos = snap.pieces[i];
             const src = layout.pieces[i];
             if (!Array.isArray(pos) || !Number.isInteger(pos[0]) || !Number.isInteger(pos[1])) {
-                localStorage.removeItem(SAVE_KEY);
+                Arcade.removeRaw(SAVE_KEY);
                 return false;
             }
             // 界内判定：左上角非负，且按宽高推算的右 / 下边缘不超出棋盘
             if (pos[0] < 0 || pos[1] < 0 || pos[0] + src.w > COLS || pos[1] + src.h > ROWS) {
-                localStorage.removeItem(SAVE_KEY);
+                Arcade.removeRaw(SAVE_KEY);
                 return false;
             }
             // 重叠判定：占据的每个格子均不得被先前棋子占用，校验通过后标记占用
             for (let cy = pos[1]; cy < pos[1] + src.h; cy++) {
                 for (let cx = pos[0]; cx < pos[0] + src.w; cx++) {
                     if (grid[cy][cx]) {
-                        localStorage.removeItem(SAVE_KEY);
+                        Arcade.removeRaw(SAVE_KEY);
                         return false;
                     }
                     grid[cy][cx] = true;
@@ -1324,7 +1108,7 @@ function restoreSnapshot() {
         }
         // 步数：非负整数
         if (!Number.isInteger(snap.moves) || snap.moves < 0) {
-            localStorage.removeItem(SAVE_KEY);
+            Arcade.removeRaw(SAVE_KEY);
             return false;
         }
 
@@ -1332,13 +1116,13 @@ function restoreSnapshot() {
         // 切到快照布局（含按钮高亮与布局选择持久化，与侧栏 selectLayout 行为一致）
         if (li !== layoutIndex) {
             layoutIndex = li;
-            localStorage.setItem(LAYOUT_KEY, String(li));
+            Arcade.saveRaw(LAYOUT_KEY, String(li));
             document.querySelectorAll('.layout-btn').forEach((b, i) => b.classList.toggle('active', i === li));
         }
         // 切到快照难度（含按钮高亮、难度选择持久化与辅助开关刷新，与 selectDifficulty 行为一致）
         if (di !== diffIndex) {
             diffIndex = di;
-            safeSet(DIFF_KEY, String(di)); // 难度持久化：续玩恢复上次难度（隐私模式写失败静默，不影响本局恢复）
+            Arcade.saveRaw(DIFF_KEY, String(di)); // 难度持久化：续玩恢复上次难度（隐私模式写失败静默，不影响本局恢复）
             document.querySelectorAll('.diff-btn').forEach((b, i) => b.classList.toggle('active', i === di));
             applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮
         }
@@ -1363,7 +1147,7 @@ function restoreSnapshot() {
         return true;
     } catch (e) {
         // 任何异常（JSON 损坏 / 存储不可用等）：清除快照并按无存档处理，绝不向上抛错
-        try { localStorage.removeItem(SAVE_KEY); } catch (e2) { /* 静默 */ }
+        Arcade.removeRaw(SAVE_KEY); // 静默
         return false;
     }
 }
@@ -1375,7 +1159,7 @@ function restoreSnapshot() {
 function selectLayout(btn) {
     document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    safeSet(LAYOUT_KEY, btn.dataset.index); // 隐私模式写失败静默，不影响本局布局切换
+    Arcade.saveRaw(LAYOUT_KEY, btn.dataset.index); // 隐私模式写失败静默，不影响本局布局切换
     clearSnapshot(); // 切换布局：旧布局的进行中棋局被放弃，清除其进度快照
     SFX.klLayout(); // 换局专属：木质翻牌音（替代通用点击音，更具换局仪式感）
     loadLayout(parseInt(btn.dataset.index, 10));
@@ -1392,7 +1176,7 @@ function selectDifficulty(btn) {
     document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     diffIndex = idx;
-    safeSet(DIFF_KEY, String(idx)); // 隐私模式写失败静默，不影响本局难度切换
+    Arcade.saveRaw(DIFF_KEY, String(idx)); // 隐私模式写失败静默，不影响本局难度切换
     applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮
     bestMoves = readBest(LAYOUTS[layoutIndex].id, currentDiffId()); // 纪录随难度切换显示
     bestRank = readRank(LAYOUTS[layoutIndex].id, currentDiffId()); // 最佳评级随难度切换显示
@@ -2115,7 +1899,7 @@ function updateEffects(dt) {
     }
     // 用时累计（仅进行中且未暂停且成就墙未打开；rAF 后台暂停 + dt 封顶 + isPaused 门控，
     // 手动暂停/失焦暂停/切后台/看成就墙均不会虚增用时——回合制的计时同样要求公平）
-    if (state === 'playing' && !isPaused && !achPanelOpen) {
+    if (state === 'playing' && !isPaused && !Ach.isOpen()) {
         elapsed += dt;
         const sec = Math.floor(elapsed);
         if (sec !== lastShownSec) {
@@ -3048,7 +2832,7 @@ window.addEventListener('load', queueStageRectRefresh);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueStageRectRefresh);
 // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
 Arcade.onTrustedMessage((e) => {
-    if (e.data && e.data.type === 'arcade:fs') queueStageRectRefresh();
+    if (e.data && e.data.type === Arcade.MSG.FS) queueStageRectRefresh();
 });
 
 /* ---------- 画布光标：值变化才写 DOM，避免 pointermove 每次移动都赋值 ---------- */
@@ -3225,19 +3009,10 @@ function endDrag() {
  * @param {KeyboardEvent} e 键盘事件
  */
 document.addEventListener('keydown', e => {
-    // 成就墙快捷键：V 键任意状态开合 / Esc 仅在开着时关闭；墙打开期间吞掉其余全部按键，
-    // 防止墙后误走子/撤销/暂停/切布局（指针事件已由全屏遮罩拦截，键盘由此守卫兜底）
-    if ((e.key === 'v' || e.key === 'V') && !e.repeat) {
-        e.preventDefault();
-        toggleAchPanel();
-        return;
-    }
-    if (e.key === 'Escape' && achPanelOpen) {
-        e.preventDefault();
-        toggleAchPanel();
-        return;
-    }
-    if (achPanelOpen) return; // 成就墙打开期间：除 V/Esc 外一律忽略
+    // 成就墙 V/Esc 开合由 ach-common.js 统一接线（window 级监听），不再经此通道；
+    // 墙打开期间吞掉其余全部按键，防止墙后误走子/撤销/暂停/切布局
+    // （指针事件已由全屏遮罩拦截，键盘由此守卫兜底）
+    if (Ach.isOpen()) return;
     // 空格手动暂停/继续：P 键已被演示系统占用，故空格承担暂停（开始/重开/演示按钮
     // 点击后均已 blur 焦点，空格不会误触发按钮）；回合制也需要暂停——用时统计
     // 参与评级与纪录，暂停期间冻结计时保证纪录公平
@@ -3297,10 +3072,15 @@ document.addEventListener('keydown', e => {
     }
 });
 
-// 窗口失焦自动暂停：华容道虽为回合制，但用时统计（elapsed）参与评级与纪录，
+// 窗口失焦/切后台自动暂停：华容道虽为回合制，但用时统计（elapsed）参与评级与纪录，
 // 离开窗口期间必须冻结计时，防止切窗挂机虚增用时（rAF 后台标签页暂停 + dt 封顶
 // 已覆盖切标签场景，此处显式暂停额外覆盖"切换应用窗口但页面仍在前台"的情况）
-window.addEventListener('blur', () => {
+/**
+ * 失焦/切后台兜底：清理进行中的拖拽手势并自动暂停计时。
+ * blur 与 visibilitychange 双通道共用本函数（与其他游戏同一防御惯例）：
+ * visibilitychange 兜底移动端切应用不触发 blur 的场景，双触发经暂停守卫天然幂等
+ */
+function handleFocusLoss() {
     endDrag(); // 清理进行中的拖拽手势：切窗后指针按住态丢失（浏览器不会补发 pointerup），
                // 残留的 drag 会在返回后随指针移动继续更新位移，恢复点击时被误结算为走子
     if (state === 'playing' && !isPaused) {
@@ -3308,7 +3088,9 @@ window.addEventListener('blur', () => {
         pauseScreen.style.display = 'block'; // 失焦自动暂停同步显示暂停面板
         SFX.bgm.pause(); // 失焦自动暂停同步挂起 BGM（恢复走 togglePause 的 resume 分支）
     }
-});
+}
+window.addEventListener('blur', handleFocusLoss);
+document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
 
 /* ===================== CRT 全屏开关音效 ===================== */
 
@@ -3325,11 +3107,11 @@ document.addEventListener('fullscreenchange', () => {
 // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
 Arcade.onTrustedMessage(e => {
     const d = e.data;
-    if (d && d.type === 'arcade:fs') {
+    if (d && d.type === Arcade.MSG.FS) {
         if (d.fs) SFX.crtOn();
         else SFX.crtOff();
     }
-    if (d && d.type === 'arcade:save') saveSnapshot(); // 返回大厅前的进度镜像
+    if (d && d.type === Arcade.MSG.SAVE) saveSnapshot(); // 返回大厅前的进度镜像
 });
 
 // 触发点 b：页面卸载兜底（关闭标签页 / 刷新 / 父页移除 iframe 均触发）
@@ -3344,16 +3126,18 @@ window.addEventListener('pagehide', () => {
 let lastRender = performance.now();
 
 /**
- * 渲染主循环（rAF 驱动）：推进计时/动画/纸屑/震动等全部计时器后重绘画面
+ * 渲染主循环（rAF 驱动）：推进计时/动画/纸屑/震动等全部计时器后重绘画面。
+ * 下一帧排程前置于帧逻辑（先排程后执行）：updateEffects/stepDemo/draw 单帧异常
+ * 只跳过该帧，渲染链永不中断（与 tetris/snake 等同一防御惯例）
  * @param {number} now 当前帧时间戳（毫秒，由 requestAnimationFrame 传入）
  */
 function renderLoop(now) {
+    requestAnimationFrame(renderLoop); // 前置排程：单帧异常不再中断渲染循环
     const dt = Math.min((now - lastRender) / 1000, 0.05);
     lastRender = now;
     updateEffects(dt);
     stepDemo(dt); // 演示模式推进：按固定节奏执行最佳解的下一步
     draw(now);
-    requestAnimationFrame(renderLoop);
 }
 
 // 步数跳动反馈依赖 transform，而 span 默认 inline 不受 transform 影响，转为行内块
@@ -3361,7 +3145,7 @@ moveElement.style.display = 'inline-block';
 
 // 布局恢复：按上次持久化的选择装载棋盘（默认横刀立马，序号 0；
 // ready 状态下仅作遮罩背后的静态展示，不计时、不响应走子操作（重开/演示/切布局等系统键仍可用））
-const savedLayoutIndex = parseInt(safeGet(LAYOUT_KEY), 10); // 隐私模式读失败得 NaN，走默认布局
+const savedLayoutIndex = parseInt(Arcade.loadRaw(LAYOUT_KEY), 10); // 隐私模式读失败得 NaN，走默认布局
 if (!Number.isNaN(savedLayoutIndex) && savedLayoutIndex >= 0 && savedLayoutIndex < LAYOUTS.length) {
     layoutIndex = savedLayoutIndex;
 }
@@ -3376,7 +3160,7 @@ document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active
 document.querySelectorAll('.layout-btn')[layoutIndex].classList.add('active');
 updateDailyLine(); // 开始遮罩每日一题信息行：今日题目名 + 完成状态
 // 难度恢复：按上次持久化的选择点亮按钮（默认进阶，序号 1）并应用辅助开关
-const savedDiffIndex = parseInt(safeGet(DIFF_KEY), 10); // 隐私模式读失败得 NaN，走默认难度
+const savedDiffIndex = parseInt(Arcade.loadRaw(DIFF_KEY), 10); // 隐私模式读失败得 NaN，走默认难度
 if (!Number.isNaN(savedDiffIndex) && savedDiffIndex >= 0 && savedDiffIndex < DIFF_IDS.length) {
     diffIndex = savedDiffIndex;
 }
@@ -3389,7 +3173,7 @@ loadLayout(layoutIndex);
 // 恢复成功 → 已切到快照布局并摆好棋面 / 步数，直接调 startGame 进入可玩状态
 // （回合制无需暂停遮罩），并在棋盘上飘字提示"已恢复上次进度"；
 // 恢复失败（无快照 / 快照非法已清除）→ 保持原有默认新开局流程（开始遮罩等待玩家）
-try { localStorage.removeItem('klotskiProgress'); } catch (e) { /* 存储不可用时静默跳过 */ }
+Arcade.removeRaw('klotskiProgress'); // 存储不可用时静默跳过
 if (restoreSnapshot()) {
     startGame(); // 复用开局入口：隐藏开始遮罩 + 进入 playing + 起 BGM + 开演字幕
     floaters.push({ // 棋盘中央飘字：告知玩家当前局面为上次进度续玩

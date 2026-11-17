@@ -1,9 +1,12 @@
 /* ==========================================================================
  * arcade-common.js —— 街机厅公共基础库（零依赖，须在 audio/fx/fullscreen 等公共库之前加载）
  * 职责一：跨帧 postMessage 统一来源守卫（全项目 message 监听收口于此，策略改动只改本文件）
- * 职责二：localStorage 安全存取（JSON 序列化 + 降级兜底；写失败/读损坏同键仅告警一次，精细读用 loadJSONState）
+ *         + 消息类型注册表（MSG 七类型常量表 / MSG_TARGET 投递目标单点定义，业务侧禁止裸写字面量）
+ * 职责二：localStorage 安全存取（JSON 序列化族 saveJSON/loadJSON/loadJSONState + 裸值族 saveRaw/loadRaw/removeRaw，
+ *         两族均降级兜底；JSON 族写失败/读损坏同键仅告警一次，精细读用 loadJSONState；
+ *         全站 localStorage 直接调用收口于本文件，业务代码禁止绕过）
  * 职责三：指针捕获守卫（setPointerCapture 对已释放/合成指针抛 NotFoundError 的统一兜底）
- * 暴露全局：window.Arcade = { onTrustedMessage, saveJSON, loadJSON, loadJSONState, capturePointer }
+ * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer }
  * ========================================================================== */
 const Arcade = (() => {
     'use strict';
@@ -20,6 +23,29 @@ const Arcade = (() => {
             handler(e);
         });
     }
+
+    /**
+     * 消息类型注册表：全站跨帧 postMessage 协议指纹单点定义（2026-11-17 消息收口）。
+     * 发送侧与接收侧一律引用本表，禁止散落裸写字面量——发/收两侧各自硬编码易在协议
+     * 演进时静默漂移，check.py 第⑤项守护；tests 测试装置以真实报文驱动黑盒验证，
+     * 属刻意直写白名单
+     */
+    const MSG = {
+        HELLO: 'arcade:hello',       // 子页就绪报到（fullscreen.js 收发）
+        FS: 'arcade:fs',             // 全屏状态广播 / 切换请求（fullscreen.js 收发、klotski 舞台适配跟随）
+        SAVE: 'arcade:save',         // 大厅关闭覆盖层前下发进度快照指令（index.js 发、游戏页收）
+        AUDIO: 'arcade:audio',       // 音控状态同步：静音开关 + 双通道档位（audio.js 收发）
+        PLAYTIME: 'arcade:playtime', // 游玩时长增量上报（fx.js 发、index.js 收）
+        FXLEVEL: 'arcade:fxlevel',   // 演出强度档位同步（fx.js 收发、audio.js 面板转发）
+        BEHAVIOR: 'arcade:behavior'  // 行为回归测试逐页上报（fx.js 发，测试基建）
+    };
+
+    /**
+     * 跨文档 postMessage 投递目标 origin：file:// 直开时各帧为独立 opaque origin，需回退 '*'
+     * 维持跨帧通信；http(s) 同源部署收紧为 '/'（仅同源可投）。
+     * 原 audio/fullscreen/fx/index 四处同款公式的单点定义
+     */
+    const MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
 
     const warnedWriteKeys = new Set(); // 已告警过的写失败键：存储被禁时同键反复失败，仅首次告警避免刷屏
 
@@ -78,6 +104,44 @@ const Arcade = (() => {
     }
 
     /**
+     * 安全写裸值：字符串原样写入 localStorage（不做 JSON 序列化，兼容历史裸串格式存档，
+     * 如分数记录、难度索引、每日任务标记等）；隐私模式/配额满等存储不可用时降级跳过，
+     * 本局不受影响；首次失败控制台告警便于观测
+     * @param {string} key 存档键名
+     * @param {string} value 原样写入的字符串值（非字符串将按 localStorage 规则自动转串）
+     */
+    function saveRaw(key, value) {
+        try {
+            localStorage.setItem(key, value);
+        } catch (e) {
+            if (!warnedWriteKeys.has(key)) { // 同键仅首次告警
+                warnedWriteKeys.add(key);
+                console.warn('[Arcade] saveRaw 写入失败（本局继续，不持久化）:', key, e);
+            }
+        }
+    }
+
+    /**
+     * 安全读裸值：原样返回键内字符串；键不存在返回 null（与 getItem 语义一致），
+     * 存储不可用（隐私模式/禁 Cookie）时返回兜底值
+     * @param {string} key 存档键名
+     * @param {string|null} [fallback=null] 存储不可用时的兜底值
+     * @returns {string|null} 键内原始字符串、null（键不存在）或 fallback（存储不可用）
+     */
+    function loadRaw(key, fallback = null) {
+        try { return localStorage.getItem(key); } catch (e) { return fallback; }
+    }
+
+    /**
+     * 安全删键：移除指定存档键；存储不可用时静默跳过
+     * （删除失败等同键暂存，下次同键覆盖写入时自然兜底，不影响主流程）
+     * @param {string} key 存档键名
+     */
+    function removeRaw(key) {
+        try { localStorage.removeItem(key); } catch (e) { /* 存储不可用：静默跳过 */ }
+    }
+
+    /**
      * 指针捕获守卫：setPointerCapture 在指针已释放（极快点按）、指针 id 失效或
      * 合成事件（如自动化测试派发的假 pointerId）场景下会抛 NotFoundError；
      * 捕获仅是"拖出画布仍跟踪指针"的体验增强，失败无副作用，
@@ -89,6 +153,6 @@ const Arcade = (() => {
         try { el.setPointerCapture(pointerId); } catch (e) { /* 无活动指针：忽略 */ }
     }
 
-    return { onTrustedMessage, saveJSON, loadJSON, loadJSONState, capturePointer };
+    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer };
 })();
 window.Arcade = Arcade;

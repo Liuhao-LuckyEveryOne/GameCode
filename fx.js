@@ -72,18 +72,17 @@ const FX = (() => {
     const FX_LEVEL_KEY = 'arcadeFxLevel';
     /** 演出强度档位名（0=精简 / 1=标准 / 2=完整默认 / 3=自动），面板展示与文档口径共用 */
     const FX_LEVEL_NAMES = ['精简', '标准', '完整', '自动'];
-    /** 跨文档 postMessage 目标 origin：file:// 直开时各帧为独立 opaque origin，回退 '*' 维持跨帧通信；http(s) 同源部署收紧为 '/'（与 audio.js/fullscreen.js 同款公式） */
-    const POST_MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
+    /** 跨文档 postMessage 目标 origin：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
+    const POST_MSG_TARGET = Arcade.MSG_TARGET;
     /** 切档宽限截止时间戳（performance.now 毫秒）：每次切档推至 200ms 后，期间粒子池跳过档位
      *  门控全量发放，与新档存量粒子沿自身 life 自然衰减并轨，消除粒子密集场景切精简档时
      *  "密度断崖"的可感知跳变 */
     let graceUntil = 0;
     /** 当前演出模式（持久化口径 0-3，权威归父页；子页仅镜像广播），3=自动档（引擎按帧率裁决实际档位） */
     let fxMode = (() => {
-        try {
-            const v = parseInt(localStorage.getItem(FX_LEVEL_KEY), 10);
-            if (v === 0 || v === 1 || v === 2 || v === 3) return v;
-        } catch (e) { /* 存储不可用：回退默认完整档 */ }
+        // loadRaw 存储不可用时兜底返回 null：parseInt 得 NaN，与键缺失/非法同样走默认完整档
+        const v = parseInt(Arcade.loadRaw(FX_LEVEL_KEY), 10);
+        if (v === 0 || v === 1 || v === 2 || v === 3) return v;
         return 2;
     })();
     /** 实际生效档位（0-2，门控四件套与粒子池均读此值）：固定档下与 fxMode 相同；自动档下由引擎动态裁决 */
@@ -117,7 +116,7 @@ const FX = (() => {
         if (window.parent !== window) {
             if (!fromRemote) {
                 // 用户在子页面板点击：转发原始请求（含自动档 3），由父页裁决后广播实际档位
-                try { window.parent.postMessage({ type: 'arcade:fxlevel', act: 'set', idx }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
+                try { window.parent.postMessage({ type: Arcade.MSG.FXLEVEL, act: 'set', idx }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
                 return;
             }
             // 广播静默应用：新版报文带 mode 字段可表达自动档（fxMode=3 + 实际档位 idx）；
@@ -134,14 +133,14 @@ const FX = (() => {
         } else {
             fxMode = fxLevel = (idx === 0 || idx === 1) ? idx : 2; // 模式切离自动档后引擎自行停转
         }
-        try { localStorage.setItem(FX_LEVEL_KEY, String(fxMode)); } catch (e) { /* 忽略持久化失败 */ }
+        Arcade.saveRaw(FX_LEVEL_KEY, String(fxMode)); // 存储不可用：忽略持久化失败
         broadcastLevel();
     }
 
     /** 向页面内全部游戏 iframe 广播当前实际档位与模式（固定切档与自动引擎裁决共用） */
     function broadcastLevel() {
         document.querySelectorAll('iframe').forEach(f => {
-            try { f.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: fxLevel, mode: fxMode }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
+            try { f.contentWindow.postMessage({ type: Arcade.MSG.FXLEVEL, idx: fxLevel, mode: fxMode }, POST_MSG_TARGET); } catch (e) { /* 跨域或未就绪时忽略 */ }
         });
     }
 
@@ -197,13 +196,13 @@ const FX = (() => {
         Arcade.onTrustedMessage((e) => {
             if (e.source !== window.parent) return; // 仅信任直接父页
             const d = e.data;
-            if (d && d.type === 'arcade:fxlevel' && d.act === undefined) setFxLevel(d.idx, true);
+            if (d && d.type === Arcade.MSG.FXLEVEL && d.act === undefined) setFxLevel(d.idx, true);
         });
     } else {
         // 父页（大厅）角色：来源守卫收口至 arcade-common.js（仅同源，或 file:// 直开时豁免 origin 'null'）
         Arcade.onTrustedMessage((e) => {
             const d = e.data;
-            if (d && d.type === 'arcade:fxlevel' && d.act === 'set') setFxLevel(d.idx); // 内部自动广播
+            if (d && d.type === Arcade.MSG.FXLEVEL && d.act === 'set') setFxLevel(d.idx); // 内部自动广播
         });
     }
     // 自动档开机自启：持久化恢复为自动模式时（父页/独立运行）立即启动帧率引擎
@@ -536,14 +535,12 @@ const FX = (() => {
             if (secs <= 0) return;
             // 嵌入模式：上报父页统一落盘（大厅是持久化唯一方，与音控协议同思路）
             if (window.parent !== window && new URLSearchParams(location.search).has('embed')) {
-                try { window.parent.postMessage({ type: 'arcade:playtime', id: id, seconds: secs }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
+                try { window.parent.postMessage({ type: Arcade.MSG.PLAYTIME, id: id, seconds: secs }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
             } else {
                 // 独立运行：直接累加写入 localStorage（隐私模式等不可用时静默放弃）
-                try {
-                    const key = 'arcade_playtime_' + id;
-                    const prev = parseInt(localStorage.getItem(key), 10) || 0;
-                    localStorage.setItem(key, String(prev + secs));
-                } catch (e) { /* 存储不可用：放弃本次冲账 */ }
+                const key = 'arcade_playtime_' + id;
+                const prev = parseInt(Arcade.loadRaw(key), 10) || 0; // 存储不可用兜底 null，按 0 计
+                Arcade.saveRaw(key, String(prev + secs)); // 写失败静默放弃本次冲账
             }
         }
 
@@ -605,7 +602,7 @@ const FX = (() => {
         }
         // 向父页汇报（arcade:behavior 报文）；file:// 协议下 targetOrigin 必须放宽为 '*'
         try {
-            window.parent.postMessage({ type: 'arcade:behavior', name: name, pass: cases.length - fails.length, total: cases.length, fails: fails }, POST_MSG_TARGET);
+            window.parent.postMessage({ type: Arcade.MSG.BEHAVIOR, name: name, pass: cases.length - fails.length, total: cases.length, fails: fails }, POST_MSG_TARGET);
         } catch (e) { /* 上报失败不影响页面本体 */ }
     }
 

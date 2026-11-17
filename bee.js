@@ -242,7 +242,7 @@ const DIFFICULTIES = {
 };
 /** 当前难度 key（启动时从 localStorage 恢复，非法值回退普通） */
 let difficulty = null;
-try { difficulty = localStorage.getItem(DIFFICULTY_KEY); } catch (e) { /* 存储被禁（隐私模式/禁 Cookie）时按未存档处理 */ }
+difficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储被禁（隐私模式/禁 Cookie）时按未存档处理
 if (!DIFFICULTIES[difficulty]) difficulty = 'normal';
 /** 当前难度的参数配置（各处计算经它取乘数，避免散落硬编码） */
 let diffCfg = DIFFICULTIES[difficulty];
@@ -257,7 +257,7 @@ function setDifficulty(key) {
     difficulty = key;
     diffCfg = DIFFICULTIES[key];
     // 隐私模式等存储不可用时静默跳过，不影响本次对局难度生效
-    try { localStorage.setItem(DIFFICULTY_KEY, key); } catch (e) { /* 存储不可用时忽略 */ }
+    Arcade.saveRaw(DIFFICULTY_KEY, key);
     // 同步开始画面按钮选中态
     for (const btn of difficultyButtons) {
         btn.classList.toggle('selected', btn.dataset.diff === key);
@@ -342,7 +342,7 @@ let bombFlashTimer = 0;
 let isNewRecord = false;
 /** 历史最高分（localStorage 持久化，键 beeHighScore）；|| 0 兜底脏数据，避免历史存储被污染成非数字时解析出 NaN */
 let highScore = 0;
-try { highScore = parseInt(localStorage.getItem('beeHighScore') || '0', 10) || 0; } catch (e) { /* 存储被禁时从 0 起算，不阻断页面初始化 */ }
+highScore = parseInt(Arcade.loadRaw('beeHighScore') || '0', 10) || 0; // 存储被禁时从 0 起算，不阻断页面初始化
 /** 当前连击数（COMBO_WINDOW 内连续击杀的次数） */
 let comboCount = 0;
 /** 连击窗口剩余时间（秒），归零则连击清零 */
@@ -409,13 +409,13 @@ const explosions = [];
 /** Boss 落地冲击环剩余时间（秒），大于 0 时绘制自落点扩散的椭圆冲击波 */
 let bossShockTimer = 0;
 
-/* ===================== 成就系统（DOM 成就墙） ===================== */
+/* ===================== 成就系统（共享库 ach-common.js 驱动） ===================== */
 
 /**
  * 成就定义表：id → { name, icon, rarity, cat, desc, stat, target }
  * - rarity 稀有度四档：common 普通 / rare 稀有 / epic 史诗 / legendary 传说（决定卡片配色与解锁特效档位）
  * - cat 分类：得分 / 成长 / 技巧 / 收集（成就墙卡片上的小标签）
- * - stat/target 对应 achStore.best 中的进度统计项与目标值（target 0 表示无进度条，仅解锁态展示）
+ * - stat/target 对应成就存档 best 中的进度统计项与目标值（target 0 表示无进度条，仅解锁态展示）
  */
 const ACHIEVEMENTS = [
     { id: 'firstBlood', name: '初战告捷', icon: '🚀', rarity: 'common', cat: '成长', desc: '击落第一只蜜蜂', stat: 'totalKills', target: 1 },
@@ -429,9 +429,7 @@ const ACHIEVEMENTS = [
     { id: 'dash30', name: '幻影步', icon: '💨', rarity: 'common', cat: '技巧', desc: '单局冲刺 30 次', stat: 'dash', target: 30 },
     { id: 'perfect', name: '完美防御', icon: '✨', rarity: 'epic', cat: '技巧', desc: '任意一波未掉命通关', stat: 'perfect', target: 1 }
 ];
-/** 稀有度中文标签：卡片徽章与解锁 toast 标题共用 */
-const RARITY_LABEL = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' };
-/** 跨局最佳/累计统计初始值：loadAchStore 初始化与旧档迁移时以此为基准合并 */
+/** 跨局最佳/累计统计初始值：共享层 Ach.init 初始化与旧档迁移钩子以此为基准合并 */
 const ACH_BEST_DEFAULTS = {
     score: 0,      // 单局最高分
     wave: 1,       // 单局到达的最高波次
@@ -448,179 +446,89 @@ const ACHIEVEMENT_KEY = 'arcade_ach_bee';
 const ACHIEVEMENT_LEGACY_KEY = 'beeAchievements';
 
 /**
- * 从 localStorage 读取成就持久化数据（v2 结构），并兼容迁移两种旧格式：
- * - v1.5：{ unlocked: [id...], totalKills, totalBombs }（数组解锁表 + 跨局累计，均为旧键/新键历史形态）
- * - v1.0：更早期旧键 beeAchievements 的 { unlocked: [...] } 形态
- * 旧格式的已解锁 id 全部保留（解锁时间戳记 0），跨局累计统计并入 v2 的 best 字段
+ * 成就存档自有迁移钩子：把读出的原始档归一为 v2 形状交共享层采用并落盘。
+ * 兼容两代旧格式，判定分支与原 loadAchStore 逐条对应：
+ * - v2 现役：unlocked 为对象映射 → 原样采用，best 缺项用初始值补齐；
+ * - v1.5：新键 { unlocked: [id...], totalKills, totalBombs } 数组形态；
+ * - v1.0：更早期旧键 beeAchievements 的 { unlocked: [...] } 形态；
+ * - 其余（无档/损坏/裸数组等）按首次游玩处理返回全新空档——原实现不迁移裸数组，
+ *   故此处不返回 null 借用共享层默认迁移（那会把裸数组当成就 id 迁入，与原行为不一致）
+ * @param {*} raw Arcade.loadJSON 读新键的原始档（null = 无档/损坏/存储不可用）
  * @returns {{unlocked: Object<string, number>, best: Object<string, number>}}
- *          已解锁 id → 解锁时间戳映射，以及各维度最佳/累计统计；数据缺失或损坏时返回初始值
+ *          已解锁 id → 解锁时间戳映射，以及各维度最佳/累计统计
  */
-function loadAchStore() {
-    try {
-        // 先读新键：命中 v2 结构（unlocked 为对象映射而非数组）直接采用，best 缺项用初始值补齐
-        const raw = Arcade.loadJSON(ACHIEVEMENT_KEY); // 键缺失 / 损坏 / 存储不可用统一返回 null
-        if (raw && raw.unlocked && typeof raw.unlocked === 'object' && !Array.isArray(raw.unlocked)) {
-            return { unlocked: raw.unlocked, best: Object.assign({}, ACH_BEST_DEFAULTS, raw.best || {}) };
+function migrateBeeStore(raw) {
+    // v2 现役结构：unlocked 为对象映射（非数组）直接采用，best 缺项用初始值补齐
+    if (raw && raw.unlocked && typeof raw.unlocked === 'object' && !Array.isArray(raw.unlocked)) {
+        return { unlocked: Object.assign({}, raw.unlocked), best: Object.assign({}, ACH_BEST_DEFAULTS, raw.best || {}) };
+    }
+    // 旧格式归一化：v1.5 新键数组形态优先，否则回读 v1.0 旧键（两代累计统计字段同名同义）
+    let legacyIds = null;
+    const legacyBest = {};
+    if (raw && Array.isArray(raw.unlocked)) {
+        legacyIds = raw.unlocked;
+        legacyBest.totalKills = raw.totalKills || 0;
+        legacyBest.totalBombs = raw.totalBombs || 0;
+    } else {
+        const legacy = Arcade.loadJSON(ACHIEVEMENT_LEGACY_KEY); // 旧键缺失 / 损坏 / 存储不可用统一返回 null
+        if (legacy && Array.isArray(legacy.unlocked)) {
+            legacyIds = legacy.unlocked;
+            legacyBest.totalKills = legacy.totalKills || 0;
+            legacyBest.totalBombs = legacy.totalBombs || 0;
         }
-        // 旧格式归一化：v1.5 新键 { unlocked: [...] } 数组形态，或 v1.0 旧键 { unlocked: [...] }
-        let legacyIds = null;
-        const legacyBest = {};
-        if (raw && Array.isArray(raw.unlocked)) {
-            legacyIds = raw.unlocked;
-            legacyBest.totalKills = raw.totalKills || 0;
-            legacyBest.totalBombs = raw.totalBombs || 0;
-        } else {
-            const legacy = Arcade.loadJSON(ACHIEVEMENT_LEGACY_KEY); // 旧键缺失 / 损坏 / 存储不可用统一返回 null
-            if (legacy && Array.isArray(legacy.unlocked)) {
-                legacyIds = legacy.unlocked;
-                legacyBest.totalKills = legacy.totalKills || 0;
-                legacyBest.totalBombs = legacy.totalBombs || 0;
-            }
-        }
-        // 命中旧格式：组装 v2 结构（旧解锁无时间戳记 0），一次性迁移写入新键，保留老玩家的成就与累计统计
-        if (legacyIds) {
-            const migrated = { unlocked: {}, best: Object.assign({}, ACH_BEST_DEFAULTS, legacyBest) };
-            for (let i = 0; i < legacyIds.length; i++) migrated.unlocked[legacyIds[i]] = 0;
-            // 迁移写入直接落新键（此刻全局 achStore 尚未初始化，不走 saveAchStore）；失败静默，下次解锁会再次尝试持久化
-            Arcade.saveJSON(ACHIEVEMENT_KEY, migrated); // 存储不可用时忽略
-            return migrated;
-        }
-    } catch (e) { /* 数据损坏时按首次游玩处理 */ }
-    return { unlocked: {}, best: Object.assign({}, ACH_BEST_DEFAULTS) };
+    }
+    // 旧解锁迁入 unlocked（时间戳记 0，墙内显示已达成），累计统计并入 best；迁移落盘由共享层统一执行。
+    // Arcade.loadJSON 失败统一返回 null 不会抛错，原实现的 try/catch 包裹的正是这些调用，故无需保留
+    const migrated = { unlocked: {}, best: Object.assign({}, ACH_BEST_DEFAULTS, legacyBest) };
+    if (legacyIds) {
+        for (let i = 0; i < legacyIds.length; i++) migrated.unlocked[legacyIds[i]] = 0;
+    }
+    return migrated;
 }
 
-/** 成就持久化数据：已解锁 id → 解锁时间戳映射，以及各维度最佳/累计统计 */
-let achStore = loadAchStore();
-/** 成就墙是否展开（展开期间游戏主循环冻结逻辑，输入被键盘入口吞掉） */
-let achPanelOpen = false;
-/** 成就墙遮罩 DOM 引用（本模块自取；游戏其余 DOM 在后方"DOM 引用"区统一管理） */
+/** 成就墙遮罩 DOM 引用（开合/遮罩点击/× 按钮接线由共享库完成；游戏其余 DOM 在后方"DOM 引用"区统一管理） */
 const achWall = document.getElementById('achWall');
 /** 成就卡片网格容器 DOM 引用 */
 const achGrid = document.getElementById('achGrid');
-/** 已解锁计数文本 DOM 引用 */
-const achCountElement = document.getElementById('achCount');
+/** 已解锁计数 DOM 引用（共享层以数字滚动补间刷新） */
+const achCountEl = document.getElementById('achCount');
+/** 成就总数 DOM 引用（与计数同排的"/10"分母） */
+const achTotalEl = document.getElementById('achTotal');
 /** 总进度条填充 DOM 引用 */
 const achBarFill = document.getElementById('achBarFill');
 /** 成就解锁 toast 悬浮容器 DOM 引用 */
 const achToastStack = document.getElementById('achToastStack');
 
-/**
- * 将成就数据写入 localStorage
- * （隐私模式等存储不可用时静默降级为仅本会话生效）
- */
-function saveAchStore() {
-    Arcade.saveJSON(ACHIEVEMENT_KEY, achStore); // 存储不可用：跳过持久化
-}
-
-/**
- * 回写单局统计到跨局最佳/累计（仅在超越历史最佳时落盘），
- * 并顺带检查是否有对应成就达到目标（如单局分数里程碑）
- * @param {string} stat 统计项名（对应 ACH_BEST_DEFAULTS 的键）
- * @param {number} value 本局当前值
- */
-function trackRunStat(stat, value) {
-    if (!(value > achStore.best[stat])) return;
-    achStore.best[stat] = value;
-    saveAchStore();
-    // 新最佳值达到目标的成就直接解锁（unlockAchievement 幂等，与显式挂点重复调用无害）
-    for (let i = 0; i < ACHIEVEMENTS.length; i++) {
-        const a = ACHIEVEMENTS[i];
-        if (a.stat === stat && a.target > 0 && value >= a.target) unlockAchievement(a.id);
-    }
-}
-
-/**
- * 解锁指定成就：幂等（重复调用无害），解锁时立即持久化、弹出右上角 DOM toast，
- * 播放蜜蜂页专属解锁音效，史诗/传说稀有度追加金色彩带爆发特效
- * @param {string} id 成就 id（见 ACHIEVEMENTS 定义表）
- */
-function unlockAchievement(id) {
-    if (Object.prototype.hasOwnProperty.call(achStore.unlocked, id)) return;
-    achStore.unlocked[id] = Date.now();
-    saveAchStore();
-    const ach = ACHIEVEMENTS.find(a => a.id === id);
-    if (ach) {
-        showAchToast(ach);
-        SFX.beeAchievement(); // 蜜蜂页专属解锁音效
-        // 史诗/传说稀有度追加彩带爆发，强化高稀有度成就的仪式感（系统减弱动态时 FX 内部自动跳过）
-        if (ach.rarity === 'epic' || ach.rarity === 'legendary') FX.recordBurst();
-    }
-}
-
-/**
- * 弹出成就解锁 toast：构建 DOM 节点挂入右上角悬浮队列，
- * 滑入/滑出由 CSS 动画接力完成，3.4 秒后移除节点（入场 0.3s + 停留 2.8s + 出场 0.3s）
- * @param {{id: string, name: string, icon: string, rarity: string}} ach 成就定义项
- */
-function showAchToast(ach) {
-    const toast = document.createElement('div');
-    toast.className = `ach-toast r-${ach.rarity}`;
-    toast.innerHTML = `<span class="t-icon">${ach.icon}</span>` +
-        `<span class="t-body"><span class="t-title">成就解锁 · ${RARITY_LABEL[ach.rarity]}</span>` +
-        `<span class="t-name">${ach.name}</span></span>`;
-    achToastStack.appendChild(toast);
-    setTimeout(() => toast.remove(), 3400);
-}
-
-/**
- * 渲染成就墙：按定义表重建卡片网格、刷新已解锁计数与总进度条
- * （展开瞬间调用一次即可——墙展开期间游戏逻辑冻结，统计数据不会变化）
- */
-function renderAchWall() {
-    let unlockedCount = 0;
-    const html = [];
-    for (let i = 0; i < ACHIEVEMENTS.length; i++) {
-        const a = ACHIEVEMENTS[i];
-        const unlocked = Object.prototype.hasOwnProperty.call(achStore.unlocked, a.id);
-        if (unlocked) unlockedCount++;
-        // 进度比例：带目标成就按 best 统计推进，无目标成就解锁即 100%
-        const cur = a.stat ? (achStore.best[a.stat] || 0) : 0;
-        const ratio = a.target > 0 ? Math.min(1, cur / a.target) : (unlocked ? 1 : 0);
-        html.push(
-            `<div class="ach-card r-${a.rarity} ${unlocked ? 'unlocked' : 'locked'}">` +
-            `<div class="ach-icon">${a.icon}</div>` +
-            `<div class="ach-info">` +
-            `<div class="ach-name-row"><span class="ach-name">${a.name}</span>` +
-            `<span class="ach-rarity">${RARITY_LABEL[a.rarity]}</span></div>` +
-            `<div class="ach-desc">${a.desc}</div>` +
-            `<div class="ach-cat">${a.cat}</div>` +
-            (a.target > 0
-                ? `<div class="ach-prog"><div class="ach-prog-bar"><div class="ach-prog-fill" style="width:${(ratio * 100).toFixed(1)}%"></div></div>` +
-                  `<div class="ach-prog-text">${Math.min(cur, a.target)}/${a.target}</div></div>`
-                : '') +
-            `</div></div>`
-        );
-    }
-    achGrid.innerHTML = html.join('');
-    achCountElement.textContent = `${unlockedCount}/${ACHIEVEMENTS.length}`;
-    achBarFill.style.width = `${((unlockedCount / ACHIEVEMENTS.length) * 100).toFixed(1)}%`;
-}
-
-/**
- * 切换成就墙展开/收起：展开时渲染最新数据并显示遮罩，
- * 同时清空键鼠状态（防止关闭后残留的移动/开火输入"卡住"）
- */
-function toggleAchPanel() {
-    achPanelOpen = !achPanelOpen;
-    if (achPanelOpen) {
-        renderAchWall();
-        achWall.hidden = false;
+// 初始化共享成就系统：存档装载/三代档位迁移、解锁演出（toast + 蜜蜂专属音效 + 史诗/传说彩带爆发）、
+// 成就墙渲染与 V/Esc/遮罩/× 开合接线全部由 ach-common.js 提供。V 任意状态可用（含手动/失焦暂停中），
+// 与原实现一致无前置门槛故省略 canOpen；开墙瞬间清空键鼠输入由 onToggle 接线
+Ach.init({
+    defs: ACHIEVEMENTS,
+    storageKey: ACHIEVEMENT_KEY,
+    bestDefaults: ACH_BEST_DEFAULTS,
+    mount: { wall: achWall, grid: achGrid, count: achCountEl, total: achTotalEl, barFill: achBarFill, toasts: achToastStack },
+    sfx: { unlock: () => SFX.beeAchievement() }, // 蜜蜂页专属解锁音效（缺省为共享层的破纪录号角）
+    onToggle: (open) => {
+        if (!open) return;
+        // 开墙瞬间清空按键表并停火：防止关墙后残留的移动/开火输入"卡住"（关墙不清，与原实现一致）
         for (const k in keys) delete keys[k];
         mouseFire = false;
-    } else {
-        achWall.hidden = true;
-    }
-    SFX.uiClick();
-}
+    },
+    migrate: migrateBeeStore
+});
 
-// 遮罩点击关闭：点在遮罩本身（而非面板内部）时收起，与 Esc 等效
-achWall.addEventListener('click', e => {
-    if (e.target === achWall && achPanelOpen) toggleAchPanel();
-});
-// 面板右上角 × 关闭按钮
-document.getElementById('achClose').addEventListener('click', () => {
-    if (achPanelOpen) toggleAchPanel();
-});
+/**
+ * 累计型统计上报（add 语义：跨局击杀 totalKills / 用弹 totalBombs / 蜂王 boss / 完美防御 perfect）。
+ * 旧值 + 增量必然大于旧值，经共享层 trackRunStat 的 max 语义等效写入 best 并连带解锁挂靠成就
+ * （如 firstBlood / hundred / bomb10 / boss1 / perfect）
+ * @param {string} stat 统计名（ACH_BEST_DEFAULTS 中的键）
+ * @param {number} delta 本次增量（非正数忽略，防御调用方误传）
+ * @returns {void}
+ */
+function trackCumulativeStat(stat, delta) {
+    if (delta <= 0) return;
+    Ach.trackRunStat(stat, Ach.getStore().best[stat] + delta);
+}
 
 /* ===================== DOM 引用 ===================== */
 
@@ -746,8 +654,7 @@ function initGame() {
     mouseDx = 0;
     mouseFire = false;
     // 成就墙强制收起（新局从干净界面开始）；解锁提示为 DOM toast 自动消失，无需清理
-    achPanelOpen = false;
-    achWall.hidden = true;
+    Ach.close();
     comboCount = 0;
     comboTimer = 0;
     comboMult = 1;
@@ -913,7 +820,7 @@ function endGame() {
         deathFxShown = true;
         gameState = 'over';
         // 游戏已结束：立即清除进行中保存的进度快照，避免下次进入误恢复残局（存储不可用时静默忽略）
-        try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* 存储不可用时忽略 */ }
+        Arcade.removeRaw(SAVE_KEY);
         // 玩家阵亡立即停止背景音乐，为死亡演出留出声音空间
         SFX.bgm.stop();
         deathFxTimer = DEATH_FX_TIME;
@@ -932,14 +839,12 @@ function endGame() {
         return;
     }
     gameState = 'over';
-    // 持久化跨局成就统计（击杀/炸弹累计）
-    saveAchStore();
     // 刷新最高分持久化
     if (score > highScore) {
         highScore = score;
         isNewRecord = true;
         // 隐私模式等存储不可用时静默跳过，本局结算仍正常显示新纪录
-        try { localStorage.setItem('beeHighScore', String(highScore)); } catch (e) { /* 存储不可用时忽略 */ }
+        Arcade.saveRaw('beeHighScore', String(highScore));
         highScoreElement.textContent = `HI ${highScore}`;
     }
     finalScoreElement.textContent = score;
@@ -1073,9 +978,8 @@ function performDash() {
     dashTimer = DASH_TIME;
     dashCdTimer = DASH_COOLDOWN;
     dashCount++;
-    // 成就：单局冲刺次数回写最佳值 + 30 次里程碑
-    trackRunStat('dash', dashCount);
-    if (dashCount >= 30) unlockAchievement('dash30');
+    // 成就：单局冲刺次数回写最佳值（挂靠的 dash30 由共享层扫描连带解锁）
+    Ach.trackRunStat('dash', dashCount);
     SFX.beeDash();
 }
 
@@ -1278,15 +1182,11 @@ function killBee(b) {
         // 倍率提升瞬间全屏金色脉冲，强化成长反馈
         goldPulseTimer = 0.3;
     }
-    // 成就统计：本局与跨局击杀数推进（累计值入 v2 best），并检查连击里程碑
+    // 成就统计：本局连击与跨局累计击杀推进（累计值入 best 存档；
+    // firstBlood/hundred/combo10/combo25 由共享层扫描挂靠统计连带解锁）
     killCount++;
-    achStore.best.totalKills++;
-    saveAchStore();
-    unlockAchievement('firstBlood');
-    if (achStore.best.totalKills >= 100) unlockAchievement('hundred');
-    if (comboCount >= 10) unlockAchievement('combo10');
-    if (comboCount >= 25) unlockAchievement('combo25');
-    trackRunStat('combo', comboCount);
+    trackCumulativeStat('totalKills', 1);
+    Ach.trackRunStat('combo', comboCount);
     // 按蜂种结算基础分并乘以倍率
     const baseByType = { elite: ELITE_POINTS, splitter: SPLITTER_POINTS, bomber: BOMBER_POINTS, mini: MINI_POINTS };
     const base = baseByType[b.type] || BEE_POINTS;
@@ -1350,9 +1250,8 @@ function hitBoss() {
                 delay: 0.12 + i * 0.14
             });
         }
-        // 成就：击败蜂王（跨局累计计数回写）+ 首杀里程碑
-        trackRunStat('boss', achStore.best.boss + 1);
-        unlockAchievement('boss1');
+        // 成就：击败蜂王（跨局累计计数回写，挂靠的 boss1 由共享层扫描连带解锁）
+        trackCumulativeStat('boss', 1);
         dropPowerup(boss.x + BOSS_W / 2, boss.y + BOSS_H / 2);
         boss = null;
         SFX.bgm.setIntensity(false); // Boss 被击败：脱离危险分层，鼓点层逐拍衰减收场
@@ -1523,10 +1422,8 @@ function detonateBomb(x, y) {
     for (let i = 0; i < BOMB_BOSS_DAMAGE && boss; i++) hitBoss();
     // 蜂群自爆引发的弹幕与原有敌弹一并清空（必须在伤害结算后执行）
     enemyBullets.length = 0;
-    // 成就统计：跨局炸弹使用数推进（累计值入 v2 best）
-    achStore.best.totalBombs++;
-    saveAchStore();
-    if (achStore.best.totalBombs >= 10) unlockAchievement('bomb10');
+    // 成就统计：跨局炸弹使用数推进（累计值入 best 存档，挂靠的 bomb10 由共享层连带解锁）
+    trackCumulativeStat('totalBombs', 1);
     bombFlashTimer = BOMB_FLASH_TIME;
     shakeTime = Math.max(shakeTime, 0.35);
     shakeMag = Math.max(shakeMag, 6);
@@ -1586,17 +1483,15 @@ function nextWave() {
     if (lives === livesAtWaveStart) {
         bonus += 200;
         addFloatText(viewW / 2, 292, '完美防御 +200', '#ffd23e', 1.3);
-        // 成就：完美防御次数回写 + 任意一波未掉命里程碑
-        trackRunStat('perfect', achStore.best.perfect + 1);
-        unlockAchievement('perfect');
+        // 成就：完美防御次数回写（挂靠的 perfect 由共享层扫描连带解锁）
+        trackCumulativeStat('perfect', 1);
     }
     score += bonus;
     SFX.beeWaveClear();
     checkExtraLife();
     wave++;
-    // 成就：波次最佳值回写 + 到达第 10 波里程碑（wave 已自增为即将开始的波次）
-    trackRunStat('wave', wave);
-    if (wave >= 10) unlockAchievement('wave10');
+    // 成就：波次最佳值回写（挂靠的 wave10 由共享层扫描连带解锁；wave 已自增为即将开始的波次）
+    Ach.trackRunStat('wave', wave);
     livesAtWaveStart = lives;
     spawnWave();
     updateHud();
@@ -1687,9 +1582,8 @@ function updateGame(dt) {
         dashGhosts[i].t += dt;
         if (dashGhosts[i].t >= dashGhosts[i].life) dashGhosts.splice(i, 1);
     }
-    // 成就：单局分数最佳值实时回写（超越历史最佳才落盘）+ 万分里程碑
-    trackRunStat('score', Math.floor(score));
-    if (score >= 10000) unlockAchievement('score10k');
+    // 成就：单局分数最佳值实时回写（超越历史最佳才落盘，挂靠的 score10k 由共享层连带解锁）
+    Ach.trackRunStat('score', Math.floor(score));
 
     // ---- 玩家子弹飞行，出屏移除 ----
     for (let i = bullets.length - 1; i >= 0; i--) {
@@ -2475,7 +2369,7 @@ function saveSnapshot() {
     try {
         // 未开始/已结束界面：快照不应存在，直接移除
         if (gameState !== 'playing') {
-            localStorage.removeItem(SAVE_KEY);
+            Arcade.removeRaw(SAVE_KEY);
             return;
         }
         // 组装纯数据快照：v 为首字段协议版本号，恢复时 v !== 1 即整体弃用
@@ -2675,8 +2569,7 @@ function restoreSnapshot() {
         bossShockTimer = 0;
         deathFxTimer = 0;
         deathFxShown = false;
-        achPanelOpen = false;
-        achWall.hidden = true; // 成就墙强制收起：恢复存档从干净界面开始
+        Ach.close(); // 成就墙强制收起：恢复存档从干净界面开始（常态已关则空操作）
         fireCooldown = 0;
         isNewRecord = false;
         // 键鼠输入态清零：恢复后从静止开始，避免残留方向脉冲或开火态
@@ -2692,7 +2585,7 @@ function restoreSnapshot() {
         return true;
     } catch (e) {
         // 快照缺失/损坏/校验不过：移除存档键并按无存档处理，绝不向上抛错
-        try { localStorage.removeItem(SAVE_KEY); } catch (e2) { /* 存储不可用时忽略 */ }
+        Arcade.removeRaw(SAVE_KEY); // 存储不可用时忽略
         return false;
     }
 }
@@ -2713,7 +2606,7 @@ function loop(now) {
     if (freezeTimer > 0) {
         // 命中顿帧：冻结游戏逻辑制造打击停顿
         freezeTimer -= dt;
-    } else if (gameState === 'playing' && !achPanelOpen && !blurPaused && !paused) {
+    } else if (gameState === 'playing' && !Ach.isOpen() && !blurPaused && !paused) {
         // 成就面板展开、失焦暂停或手动暂停期间挂起游戏逻辑，仅保留渲染
         updateGame(dt);
         updateEffects(dt);
@@ -2846,10 +2739,11 @@ document.addEventListener('keydown', e => {
     // A/D/Shift/P/V 无浏览器默认行为，无需拦截；F 键全屏等其它快捷键由 fullscreen.js 另行处理
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown' ||
         e.code === 'ArrowLeft' || e.code === 'ArrowRight') e.preventDefault();
-    // 成就墙键例外：V 开墙 / Esc 关墙不作为失焦恢复键——落到下方墙逻辑处理且不解除失焦暂停，
+    // 成就墙键例外：V 开墙 / Esc 关墙不作为失焦恢复键——由共享库 ach-common.js 的窗口级
+    // 键盘接线处理（document 监听先于 window 监听触发，此处放行即可）且不解除失焦暂停，
     // 对齐全站惯例「V 任意状态含暂停可用」（snake/pac 等失焦与手动共用同一暂停标记、V 分支天然放行，
     // bee 双标记体系下需显式豁免，否则切窗回来的首次按 V 会被"任意键继续"消费掉弹不出墙）
-    const isAchKey = e.code === 'KeyV' || (e.code === 'Escape' && achPanelOpen);
+    const isAchKey = e.code === 'KeyV' || (e.code === 'Escape' && Ach.isOpen());
     // 失焦暂停中：按任意键恢复并一次清空双标记，本次按键不作为游戏输入（防误触发冲刺/成就面板）
     if (blurPaused && gameState === 'playing' && !isAchKey) {
         for (const k in keys) delete keys[k];
@@ -2864,7 +2758,7 @@ document.addEventListener('keydown', e => {
     // P 键手动暂停/继续：与失焦暂停相互独立；成就面板展开时不响应，避免面板开关状态错乱；
     // 暂停瞬间清空键鼠状态，防止恢复后残留的移动/开火输入"卡住"
     if (e.code === 'KeyP') {
-        if (!e.repeat && gameState === 'playing' && !achPanelOpen) { // !e.repeat 防长按连发反复切换暂停
+        if (!e.repeat && gameState === 'playing' && !Ach.isOpen()) { // !e.repeat 防长按连发反复切换暂停
             paused = !paused;
             if (paused) {
                 for (const k in keys) delete keys[k];
@@ -2881,18 +2775,14 @@ document.addEventListener('keydown', e => {
         }
         return;
     }
-    // V 切换成就面板展开/收起（全站统一开墙键：V，任意状态可用——含手动暂停中；
-    // !e.repeat 防长按连发）。置于暂停守卫之前：暂停吞键不得拦截开墙键
-    if (e.code === 'KeyV' && !e.repeat) toggleAchPanel();
-    // Esc 关闭成就面板（仅墙打开时接管，与 V 键等效；!e.repeat 防长按连发）
-    if (e.code === 'Escape' && achPanelOpen && !e.repeat) toggleAchPanel();
-    // 手动暂停中：P/V/Esc 已在上方处理，其余按键不作为游戏输入
+    // V 开墙 / Esc 关墙由共享库 ach-common.js 的窗口级键盘接线处理，本监听不再重复接管
+    // 手动暂停中：P 已在上方处理，其余按键不作为游戏输入
     if (paused && gameState === 'playing') {
         for (const k in keys) delete keys[k];
         return;
     }
     keys[e.code] = true;
-    // Shift 触发冲刺闪避（左右 Shift 均可；!e.repeat 防长按连发反复冲刺，与 P/V 键守卫一致）
+    // Shift 触发冲刺闪避（左右 Shift 均可；!e.repeat 防长按连发反复冲刺，与 P 键守卫一致）
     if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) performDash();
 });
 // 键盘抬起：清除按键状态
@@ -2909,12 +2799,12 @@ document.addEventListener('fullscreenchange', () => {
 // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
 Arcade.onTrustedMessage(e => {
     const d = e.data;
-    if (d && d.type === 'arcade:fs') {
+    if (d && d.type === Arcade.MSG.FS) {
         if (d.fs) SFX.crtOn();
         else SFX.crtOff();
     }
     // 游戏厅父页在关闭 iframe 覆盖层前下发存档指令：保存当前局进度快照
-    if (d && d.type === 'arcade:save') saveSnapshot();
+    if (d && d.type === Arcade.MSG.SAVE) saveSnapshot();
 });
 
 // 页面卸载（关闭/刷新/父页移除 iframe）兜底保存：仅在游戏进行中（含暂停态）写入快照

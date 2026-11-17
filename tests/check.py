@@ -9,7 +9,10 @@
   2. 缓存指纹     —— 本地 .js/.css/.html 引用必须携带 ?v= 版本参数（手动破缓存策略）
   3. 公共库加载序 —— 每页必须按 arcade-common.js → audio.js → fx.js → fullscreen.js → 业务 js 顺序加载公共库
   4. 危险模式扫描 —— 全站禁止 eval( / new Function( / document.write(
-  5. 存储兜底     —— 直接调用 localStorage 读写的每一处必须位于 try 块内（行级检测：注释/字符串去噪 + 大括号深度追踪 try 状态机）
+  5. 存储/消息收口 —— 全站禁止绕过 Arcade 存储 API 裸调 localStorage，禁止裸写跨帧
+                     消息类型字面量 arcade:*（两者仅允许 arcade-common.js 实现层/定义处
+                     与 tests 测试装置白名单；实现层存储裸调仍逐处 try 行级检测，
+                     消息字面量一律引用 Arcade.MSG 常量表）
   6. 游戏入口完整 —— 大厅七张卡片入口与各游戏 html/js 文件一一对应齐全
   7. 兼容性前缀   —— CSS 前缀敏感属性必须 -webkit- 成对（Safari 兼容），AudioContext 必须带
                      webkitAudioContext 回退（文件级粗检；Firefox/Safari 手测清单见技术文档 §9.4）
@@ -42,6 +45,25 @@ DANGEROUS_PATTERNS = [
 
 # localStorage 直接读写 API（行级存储兜底检测的目标调用）
 LS_API_RE = re.compile(r"localStorage\.(?:getItem|setItem|removeItem|clear)\s*\(")
+
+# 跨帧消息协议字面量（检查项 5 消息侧）：arcade:* 七类型单点定义于 arcade-common.js
+# 的 MSG 表，业务代码一律引用 Arcade.MSG.*，裸写即报错
+MSG_LIT_RE = re.compile(r"['\"]arcade:[a-z]+['\"]")
+
+# window message 监听注册（检查项 5 消息侧补充）：跨帧消息监听一律经
+# Arcade.onTrustedMessage 统一来源守卫注册（arcade-common.js 单点实现，跨源伪造
+# 报文在守卫处静默丢弃），裸 addEventListener('message') 即报错
+MSG_LISTEN_RE = re.compile(r"addEventListener\(\s*['\"]message['\"]")
+
+# 存储/消息收口白名单（检查项 5 三族规则共用）：裸调 localStorage、裸写消息类型
+# 字面量与裸挂 message 监听仅允许以下文件——
+#   arcade-common.js：存储原语与消息注册表唯一实现/定义处（Arcade 存储 API 族 +
+#                     MSG/MSG_TARGET/onTrustedMessage），其内部存储裸调仍逐处 try
+#                     行级检测；其余生产代码一律走 Arcade API / 引用 Arcade.MSG
+#                     常量表 / 经 onTrustedMessage 注册监听
+#   smoke/behavior 测试页内联脚本：测试装置需直连真实存储做快照/恢复/种档/黑盒断言，
+#                     并以真实报文驱动跨帧消息协议做黑盒验证，属刻意直写
+RAW_ALLOW_FILES = {"arcade-common.js", "smoke.html", "behavior.html"}
 
 # try 块开括号（try 与 { 间允许任意空白；在去噪文本上匹配，注释里「提及」的 try 不误判）
 TRY_OPEN_RE = re.compile(r"\btry\s*\{")
@@ -84,6 +106,11 @@ GAMES = [
     ("klotski.html", "klotski.js"),
     ("1024.html", "1024.js"),
 ]
+
+# 游戏页专属公共库：成就系统共享层（ach-common.js），七游戏页必须加载且排在
+# fullscreen.js 之后、业务 js 之前；大厅 index.html 不开成就墙故不在此列
+GAME_LIB_ORDER = ["ach-common.js"]
+GAME_PAGES = {html for html, _js in GAMES}
 
 
 def html_files():
@@ -175,6 +202,8 @@ def check_version_problems():
 def check_lib_order_problems():
     """检查项 3：每页公共库齐全且顺序 arcade-common → audio → fx → fullscreen → 业务 js。
 
+    游戏页额外要求：ach-common.js（成就共享层）必须存在且排在 fullscreen.js 之后。
+
     返回:
         失败明细列表（空列表 = 通过）
     """
@@ -198,17 +227,25 @@ def check_lib_order_problems():
             problems.append(f"{page.name} 公共库加载顺序错误: {refs}")
         # 业务脚本（公共库之外的首个 js）必须排在 fullscreen.js 之后
         if pos:
-            biz = [i for i, r in enumerate(refs) if r not in LIB_ORDER]
+            biz = [i for i, r in enumerate(refs) if r not in LIB_ORDER and r not in GAME_LIB_ORDER]
             if biz and min(biz) < pos[-1]:
                 problems.append(f"{page.name} 业务 js 早于 fullscreen.js 加载: {refs}")
+        # 游戏页专属公共库：存在性 + 必须晚于 fullscreen.js（ach-common 依赖 audio/fx 的挂载）
+        if page.name in GAME_PAGES:
+            for lib in GAME_LIB_ORDER:
+                if lib not in refs:
+                    problems.append(f"{page.name} 缺少游戏页公共库 {lib}")
+                elif pos and refs.index(lib) < pos[-1]:
+                    problems.append(f"{page.name} 游戏页公共库 {lib} 未排在 fullscreen.js 之后")
     return problems
 
 
 def scan_targets():
     """统一扫描目标收集：每个文件只读一次原文并去噪一次生成骨架。
 
-    供危险模式扫描（用原文 raw）、存储兜底（用骨架 skel，二次去噪幂等）、
-    风格红线（用骨架 skel）三项检查复用，替代各自重复读盘与重复去噪。
+    供危险模式扫描（用原文 raw）、存储/消息收口（存储用骨架 skel 幂等；消息用原文 raw
+    经 strip_comment_tails 剥注释保留字符串）、风格红线（用骨架 skel）三项检查复用，
+    替代各自重复读盘与重复去噪。
 
     返回:
         [(name, raw, skel)] 列表——name 为报告用文件名（HTML 内联脚本带
@@ -379,21 +416,145 @@ def storage_line_problems(name, text):
 
 
 def check_storage_problems(targets):
-    """检查项 5：直接调用 localStorage 读写的每一处必须逐处位于 try 块内（行级检测）。
+    """检查项 5：全站 localStorage 直接调用收口于 Arcade 存储 API。
 
-    本站约定为「直接调用 + try-catch 逐处包裹」（技术文档 §5）。原文件级粗检
-    （同文件存在任意 catch 即放行）曾放过单处裸调用（bee.js 顶层读取，2026-11-05
-    审查修复），故升级为行级：仅当调用点本身处于未闭合 try 块体内才视为有兜底。
+    2026-11-17 存储收口改造后的守护，替代旧「直接调用 + try-catch 逐处包裹」约定
+    （旧约定曾放过文件级粗检漏洞，bee.js 顶层读取 2026-11-05 审查修复）：生产代码
+    一律走 Arcade.saveRaw/loadRaw/removeRaw 与 saveJSON/loadJSON 族（兜底与告警
+    下沉到 arcade-common.js 实现层），任何绕过均报错。白名单内文件另行处理：
+    arcade-common.js 实现层保留原行级 try 检测自证兜底完整；tests 测试装置跳过。
 
     参数:
         targets: scan_targets() 产出的 (name, raw, skel) 列表（本项用骨架 skel，
-                 storage_line_problems 内部二次去噪幂等，结果与传原文一致）
+                 行级状态机对骨架逐行处理，行号与原文对齐）
     返回:
         失败明细列表（空列表 = 通过）
     """
     problems = []
     for name, _raw, skel in targets:
-        problems.extend(storage_line_problems(name, skel))
+        base = name.split("（", 1)[0]     # 剥「（内联脚本）」后缀取文件本名
+        if base == "arcade-common.js":
+            # 存储原语实现层：裸调合法，但仍须逐处 try（行级兜底自检，复用旧状态机）
+            problems.extend(storage_line_problems(name, skel))
+        elif base in RAW_ALLOW_FILES:
+            continue                      # tests 测试装置：刻意直连真实存储，放行
+        else:
+            # 生产代码：出现任何直接调用即违规（无论是否已包 try）
+            for lineno, line in enumerate(skel.split("\n"), 1):
+                if LS_API_RE.search(line):
+                    problems.append(f"{name}:L{lineno} 绕过 Arcade 存储 API 裸调 localStorage"
+                                    f"（应改用 Arcade.saveRaw/loadRaw/removeRaw 或 saveJSON/loadJSON 族）")
+    return problems
+
+
+def strip_comment_tails(line, state):
+    r"""剥离一行 JS 中的注释，保留字符串/模板串字面量内容（与 strip_js_noise 反向）。
+
+    消息类型字面量守护的前置去噪：协议字符串写在字符串字面量里，strip_js_code 会把
+    字面量内容剥掉导致正则无处匹配；本函数只剥注释（行注释整段丢弃、块注释内容丢弃、
+    引号字符串与模板串整体保留），让 MSG_LIT_RE 能在「保留字符串的骨架」上命中裸写
+    字面量。已知局限：跨行模板串内的 ${} 表达式不二次解析，内层若有代码级裸写字面量
+    属漏报不误报；字符串内的伪注释形态同理（仅漏报）。
+
+    参数:
+        line: 原始行文本
+        state: 跨行扫描状态字典 {"block": 是否处于块注释内, "tmpl": 是否处于模板串内}
+    返回:
+        (剥注释后的文本, state)——state 原地更新并原样返回
+
+    示例（doctest 自检，第 10 项检查运行）：
+    >>> strip_comment_tails("f('arcade:save')// 大厅下发", {"block": False, "tmpl": False})
+    ("f('arcade:save')", {'block': False, 'tmpl': False})
+    >>> strip_comment_tails("a /* 'arcade:fs' */f('arcade:fs')", {"block": False, "tmpl": False})
+    ("a f('arcade:fs')", {'block': False, 'tmpl': False})
+    >>> strip_comment_tails("u('http://x')// 注释提及", {"block": False, "tmpl": False})
+    ("u('http://x')", {'block': False, 'tmpl': False})
+    >>> strip_comment_tails("t/* 未闭合 'arcade:fs'", {"block": False, "tmpl": False})
+    ('t', {'block': True, 'tmpl': False})
+    """
+    out = []
+    i, n = 0, len(line)
+    while i < n:
+        if state["block"]:
+            # 块注释内：找到 */ 结束；找不到则整行吞掉，状态延续下一行
+            j = line.find("*/", i)
+            if j < 0:
+                i = n
+            else:
+                state["block"] = False
+                i = j + 2
+            continue
+        if state["tmpl"]:
+            # 模板串内：整体保留至未转义的 ` 结束（\` 转义跳过）；找不到则延续下一行
+            j = i
+            while j < n:
+                if line[j] == "\\":
+                    j += 2
+                elif line[j] == "`":
+                    break
+                else:
+                    j += 1
+            out.append(line[i:j])
+            if j < n:
+                state["tmpl"] = False
+            i = j + 1
+            continue
+        ch = line[i]
+        if ch == "/" and line[i + 1:i + 2] == "/":
+            break                                   # 行注释：余下整段忽略
+        if ch == "/" and line[i + 1:i + 2] == "*":
+            state["block"] = True                   # 块注释开始
+            i += 2
+            continue
+        if ch in "'\"":
+            # 单双引号字符串：整体保留（含引号），\ 转义跳过；未闭合按行尾宽松收束
+            j = i + 1
+            while j < n and line[j] != ch:
+                j += 2 if line[j] == "\\" else 1
+            out.append(line[i:j + 1])
+            i = j + 1
+            continue
+        if ch == "`":
+            state["tmpl"] = True                    # 模板串开始（允许跨行）
+            out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), state
+
+
+def check_message_problems(targets):
+    """检查项 5（消息侧）：全站跨帧消息字面量与监听注册双双收口。
+
+    2026-11-17 消息收口改造后的守护，两族规则共用一套白名单：
+    1) 协议指纹（arcade:* 七类型）单点定义于 arcade-common.js 的 MSG 表，发送/接收
+       两侧一律引用 Arcade.MSG.*；生产代码裸写 'arcade:xxx' 字面量即报错——发/收
+       两侧各自硬编码易在协议演进时静默漂移。
+    2) message 监听一律经 Arcade.onTrustedMessage 统一来源守卫注册（守卫单点校验
+       来源与目标窗口，跨源伪造报文静默丢弃）；裸 addEventListener('message') 即报
+       错——绕过守卫的监听会把全站各窗口广播暴露给任意来源页面。
+    白名单内文件另行处理：arcade-common.js 为守卫/注册表定义处；smoke/behavior
+    测试装置以真实报文驱动黑盒验证，属刻意直写。
+
+    参数:
+        targets: scan_targets() 产出的 (name, raw, skel) 列表（本项用原文 raw 经
+                 strip_comment_tails 剥注释保留字符串后逐行正则，行号与原文对齐）
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    problems = []
+    for name, raw, _skel in targets:
+        base = name.split("（", 1)[0]     # 剥「（内联脚本）」后缀取文件本名
+        if base == "arcade-common.js" or base in RAW_ALLOW_FILES:
+            continue                      # 守卫/注册表定义处 + tests 测试装置：放行
+        state = {"block": False, "tmpl": False}
+        for lineno, line in enumerate(raw.split("\n"), 1):
+            kept, state = strip_comment_tails(line, state)
+            if MSG_LIT_RE.search(kept):
+                problems.append(f"{name}:L{lineno} 裸写消息类型字面量（应引用 Arcade.MSG 常量表）")
+            if MSG_LISTEN_RE.search(kept):
+                problems.append(f"{name}:L{lineno} 裸挂 message 监听（应经 Arcade.onTrustedMessage 统一来源守卫注册）")
     return problems
 
 
@@ -540,7 +701,7 @@ def main():
         ("缓存指纹(?v=)", check_version_problems),
         ("公共库加载序", check_lib_order_problems),
         ("危险模式扫描", lambda: check_dangerous_problems(targets)),
-        ("存储兜底", lambda: check_storage_problems(targets)),
+        ("存储/消息收口", lambda: check_storage_problems(targets) + check_message_problems(targets)),
         ("游戏入口完整", check_games_problems),
         ("兼容性前缀", check_compat_problems),
         ("风格红线", lambda: check_style_problems(targets)),

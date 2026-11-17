@@ -14,8 +14,8 @@
    ================================================================== */
 'use strict';
 // ---------- 跨帧消息投递目标：供大厅向游戏 iframe 投递存档通知等消息使用 ----------
-/** 消息投递目标：file:// 直开时各帧为独立 opaque origin，需回退 '*' 维持跨帧通信；http(s) 同源部署收紧为 '/'（仅同源可投） */
-const POST_MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
+/** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
+const POST_MSG_TARGET = Arcade.MSG_TARGET;
 
 // ---------- 大厅动效总开关：false 期间各 rAF 循环跳过绘制（时间基准同步重置） ----------
 // 有两个 false 窗口：
@@ -93,10 +93,9 @@ function cardGameId(href) {
 function readBest(keys, direction) {
     let best = null;
     for (let i = 0; i < keys.length; i++) {
-        // 隐私模式等场景访问 localStorage 会抛错：捕获后按无纪录（null）处理，
-        // 避免中断整个顺序初始化链导致所有角标与总分失效
-        let raw = null;
-        try { raw = localStorage.getItem(keys[i]); } catch (e) { /* localStorage 不可用：按无纪录处理 */ }
+        // 隐私模式等场景由 loadRaw 兜底返回 null（按无纪录处理），
+        // 不会中断整个顺序初始化链导致所有角标与总分失效
+        const raw = Arcade.loadRaw(keys[i]);
         const value = parseInt(raw, 10);
         if (Number.isNaN(value)) continue; // 键不存在或非数字：跳过
         if (direction === 'low') {
@@ -243,10 +242,9 @@ function readUnlockMap(def) {
  * @param {number} seconds 本次上报秒数（>0，四舍五入为整数秒累加）
  */
 function addPlaytime(id, seconds) {
-    try {
-        const old = parseInt(localStorage.getItem('arcade_playtime_' + id), 10) || 0;
-        localStorage.setItem('arcade_playtime_' + id, String(old + Math.round(seconds)));
-    } catch (e) { /* 隐私模式：写失败静默 */ }
+    // 隐私模式等存储不可用：loadRaw 兜底按 0 计，saveRaw 写失败静默
+    const old = parseInt(Arcade.loadRaw('arcade_playtime_' + id), 10) || 0;
+    Arcade.saveRaw('arcade_playtime_' + id, String(old + Math.round(seconds)));
 }
 
 /**
@@ -256,7 +254,7 @@ function addPlaytime(id, seconds) {
  */
 function readPlaytimeMinutes(id) {
     try {
-        return Math.floor((parseInt(localStorage.getItem('arcade_playtime_' + id), 10) || 0) / 60);
+        return Math.floor((parseInt(Arcade.loadRaw('arcade_playtime_' + id), 10) || 0) / 60);
     } catch (e) { return 0; }
 }
 
@@ -326,7 +324,7 @@ function refreshBest() {
  */
 function refreshLastBadge() {
     let lastId = null;
-    try { lastId = localStorage.getItem(LAST_PLAYED_KEY); } catch (e) { /* 隐私模式：读失败按无纪录处理 */ }
+    lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无纪录处理
     const cards = document.querySelectorAll('.card');
     for (let i = 0; i < cards.length; i++) {
         cards[i].classList.toggle('is-last', cardGameId(cards[i].getAttribute('href')) === lastId);
@@ -347,7 +345,7 @@ function refreshLastBadge() {
     refreshTimeBadges();
     // 存在「上次游玩」记录：把初始键盘焦点放到对应卡片，进场即可空格续玩
     let lastId = null;
-    try { lastId = localStorage.getItem(LAST_PLAYED_KEY); } catch (e) { /* 隐私模式：读失败按无记录处理 */ }
+    lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无记录处理
     if (lastId) {
         const cards = document.querySelectorAll('.card');
         for (let i = 0; i < cards.length; i++) {
@@ -1536,7 +1534,7 @@ document.addEventListener('keydown', e => {
         const frame = el.querySelector('iframe');
         if (frame && frame.contentWindow) {
             // targetOrigin 取 POST_MSG_TARGET（见本脚本顶部定义）：http(s) 同源收紧为 '/'，file:// 直开回退 '*' 维持跨帧通信
-            try { frame.contentWindow.postMessage({ type: 'arcade:save' }, POST_MSG_TARGET); } catch (e) { /* 忽略 */ }
+            try { frame.contentWindow.postMessage({ type: Arcade.MSG.SAVE }, POST_MSG_TARGET); } catch (e) { /* 忽略 */ }
         }
         // 关气回流缩略：截取游戏画布末帧，CRT 坍缩为过曝亮线后缩略图接棒绽放、缩放飞回
         // 对应卡片（叙事闭环——"画面装回卡带"）。截图/动画全链路 try-catch，任何失败
@@ -1723,9 +1721,7 @@ document.addEventListener('keydown', e => {
             // 存续期间（投币后约 6.0 秒 = 金币飞行 2.7s + 分层点亮波浪最长约 3.0s）静默吞掉本次点击——只投币，不启动
             if (document.body.classList.contains('lights-on')) return;
             // 记录本次启动的游戏为「上次游玩」（本页写入不触发本页 storage 事件，需手动刷角标）
-            try {
-                localStorage.setItem(LAST_PLAYED_KEY, cardGameId(card.getAttribute('href')));
-            } catch (e) { /* 隐私模式：写失败静默，游戏照常启动 */ }
+            Arcade.saveRaw(LAST_PLAYED_KEY, cardGameId(card.getAttribute('href'))); // 隐私模式：写失败静默，游戏照常启动
             refreshLastBadge();
             // 取卡片内联的霓虹色作为 LOADING 过渡主题色，并把卡片本身传入作为关机回流缩略落点
             openGame(card.getAttribute('href'), card.style.getPropertyValue('--glow').trim(), card);
@@ -1737,7 +1733,7 @@ document.addEventListener('keydown', e => {
     Arcade.onTrustedMessage(e => {
         const d = e.data;
         // 游玩时长上报：子页 FX.playtime 周期冲账，父页累计落盘并刷新卡片角标
-        if (d && d.type === 'arcade:playtime' && PLAYTIME_IDS.indexOf(d.id) !== -1
+        if (d && d.type === Arcade.MSG.PLAYTIME && PLAYTIME_IDS.indexOf(d.id) !== -1
             && typeof d.seconds === 'number' && d.seconds > 0) {
             addPlaytime(d.id, d.seconds);
             refreshTimeBadges();

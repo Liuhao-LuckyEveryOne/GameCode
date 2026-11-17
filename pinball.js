@@ -134,9 +134,7 @@ let state = 'start';
 let score = 0;
 /** 历史最高分（localStorage 持久化，键 pinballHighScore；存储不可用时兜底为 0） */
 let highScore = 0; // 存储不可用（隐私模式/禁用站点数据）时的兜底默认值
-try {
-    highScore = parseInt(localStorage.getItem('pinballHighScore') || '0', 10);
-} catch (e) { /* 存储不可用：静默保持兜底 0，不中断初始化 */ }
+highScore = parseInt(Arcade.loadRaw('pinballHighScore') || '0', 10); // 存储不可用：静默保持兜底 0，不中断初始化
 /** 最高分脏标记：破纪录时置位，由结算/既有存档钩子统一落盘（避免物理碰撞热路径每次得分同步写 localStorage） */
 let highScoreDirty = false;
 /** 剩余球数（含当前在场） */
@@ -249,16 +247,12 @@ let comboTimer = 0;
 /** 当前连击倍率（×1~×COMBO_MAX_MULT），在 addScore 内与原始分乘算 */
 let comboMult = 1;
 
-/* ===================== 成就系统（v2：对齐 snake 机台的 DOM 成就墙） ===================== */
+/* ===================== 成就系统（接入共享成就引擎 ach-common.js） ===================== */
 // 结构说明：ACHIEVEMENTS 为 8 条成就定义（普通/稀有/史诗/传说四档稀有度）；
-// achStore.best 按维度（score/combo/mult/balls）记录历史最佳并持久化，游玩峰值实时上报；
+// 历史最佳按维度（score/combo/mult/balls）经 Ach.trackRunStat 上报并存档，游玩峰值实时上报；
 // 达到 target 即解锁 → 右上角 toast 堆叠提示 + 音效，史诗/传说追加金色烟花庆典；
-// 成就墙（#achWall）打开期间局面冻结：主循环与失球演出均以 achPanelOpen 为闸门短路
+// 成就墙（#achWall）打开期间局面冻结：主循环与失球演出均以 Ach.isOpen() 为闸门短路
 //（与手动暂停 isPaused 相互独立——墙面关闭不改动暂停态，二者可叠加且互不干扰）。
-/** localStorage 存档键：v2 结构 { unlocked: {id:时间戳}, best: {维度:最佳值} }（沿用旧键名，旧档自动迁移） */
-const ACH_KEY = 'arcade_ach_pinball';
-/** 稀有度 → 中文标签映射：卡片右上角徽章与 toast 副标题共用 */
-const RARITY_LABEL = { common: '普通', rare: '稀有', epic: '史诗', legendary: '传说' };
 /** 历史最佳默认值：mult/balls 从 1 起步（连击倍率与同场球数基数），其余维度从 0 累计 */
 const BEST_DEFAULTS = { score: 0, combo: 0, mult: 1, balls: 1 };
 /**
@@ -276,16 +270,6 @@ const ACHIEVEMENTS = [
     { id: 'jackpot',    name: '头奖时刻',     icon: '🎰', rarity: 'rare',      cat: '收集', desc: '触发一次 JACKPOT 大奖' },
     { id: 'multiball3', name: '三球齐飞',     icon: '🎱', rarity: 'rare',      cat: '收集', desc: '同场保持 3 颗弹球',     stat: 'balls', target: 3 }
 ];
-/** 本局实时峰值收集器：开局清零，随游玩经 trackRunStat 持续刷新 */
-const runStats = { score: 0, combo: 0, mult: 1, balls: 1 };
-/**
- * 成就存档 v2：unlocked 值为解锁时间戳（0 = 旧档迁移，仅存「已达成」语义），best 为历史最佳；
- * 启动时从 localStorage 读取（存档损坏时按全新档案处理）
- * @type {{unlocked: Object<string, number>, best: Object<string, number>}}
- */
-const achStore = loadAchStore();
-/** 成就墙是否打开：true 时主循环与失球演出短路冻结（见 loop / toggleAchPanel） */
-let achPanelOpen = false;
 
 /* ===================== 台面元素 ===================== */
 
@@ -384,7 +368,7 @@ const finalScoreElement = document.getElementById('finalScore');
 const newRecordElement = document.getElementById('newRecord');
 /** 成就墙全屏遮罩层（DOM 覆盖层，V/Esc 开合，打开期间主循环冻结） */
 const achWall = document.getElementById('achWall');
-/** 成就卡片网格容器（条目由 renderAchWall 生成） */
+/** 成就卡片网格容器（条目由共享成就引擎渲染） */
 const achGrid = document.getElementById('achGrid');
 /** 已解锁成就计数元素 */
 const achCountEl = document.getElementById('achCount');
@@ -778,15 +762,15 @@ function addScore(pts, wx, wy) {
     const nextMult = Math.min(COMBO_MAX_MULT, 1 + Math.floor(comboHits / COMBO_STEP));
     if (nextMult > comboMult) {
         comboMult = nextMult;
-        trackRunStat('mult', comboMult); // 成就上报：连击倍率峰值（达标解锁 mult5）
+        Ach.trackRunStat('mult', comboMult); // 成就上报：连击倍率峰值（达标解锁 mult5）
         // 升级演出：台面中央金色 COMBO 飘字 + 音调随级爬升的连击音
         floatTexts.push({ x: WORLD_W / 2, y: WORLD_H * 0.32, txt: 'COMBO ×' + comboMult, t: 0 });
         SFX.comboUp(comboMult);
     }
-    trackRunStat('combo', comboHits); // 成就上报：连击计数峰值（达标解锁 combo30/combo100）
+    Ach.trackRunStat('combo', comboHits); // 成就上报：连击计数峰值（达标解锁 combo30/combo100）
     const total = pts * comboMult; // 最终得分 = 原始分（含难度倍率）× 连击倍率
     score += total;
-    trackRunStat('score', score); // 成就上报：单局得分（addScore 为全部得分唯一入口，达标解锁 score 系成就）
+    Ach.trackRunStat('score', score); // 成就上报：单局得分（addScore 为全部得分唯一入口，达标解锁 score 系成就）
     FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡（128ms 快速插值）
     // 得分 DOM 弹跳：放大回弹强化"涨分"瞬间反馈（WAAPI 播完自动清理）
     scoreElement.animate(
@@ -821,7 +805,7 @@ function addScore(pts, wx, wy) {
 function flushHighScore() {
     if (!highScoreDirty) return; // 无新增破纪录：幂等返回，零 IO
     try {
-        localStorage.setItem('pinballHighScore', String(highScore));
+        Arcade.saveRaw('pinballHighScore', String(highScore));
         highScoreDirty = false; // 写入成功才清脏标记，失败则保留待下次重试
     } catch (err) {
         // 存储不可用：静默忽略（与 saveSnapshot 同口径，不影响游戏）
@@ -868,7 +852,7 @@ function triggerJackpot() {
     FX.hitstop(80); // 顿帧强化大奖冲击感（减少动态偏好时库内自动跳过）
     FX.shake(canvas, 5, 280); // 大奖全屏震动（强烈冲击感）
     SFX.klRankS();
-    unlockAchievement('jackpot');
+    Ach.unlock('jackpot');
 }
 
 /**
@@ -888,7 +872,7 @@ function spawnMultiball() {
         floatTexts.push({ x: WORLD_W / 2, y: 60, txt: 'MULTIBALL', t: 0 });
         SFX.pinLaunch();
     }
-    trackRunStat('balls', balls.length); // 成就上报：同场球数峰值（trackRunStat 达标自动解锁 multiball3）
+    Ach.trackRunStat('balls', balls.length); // 成就上报：同场球数峰值（库内达标自动解锁 multiball3）
 }
 
 /**
@@ -1001,9 +985,7 @@ function selectDifficulty(btn) {
     multElement.textContent = '×' + mult;
     rebuildFlippers();
     // 持久化所选难度（按钮组中的序号），供下次加载时恢复；存储不可用时静默跳过，保证后续 uiClick 音效正常
-    try {
-        localStorage.setItem(DIFFICULTY_KEY, String([...document.querySelectorAll('.difficulty-btn')].indexOf(btn)));
-    } catch (e) { /* 存储不可用（隐私模式/禁用站点数据）：静默忽略 */ }
+    Arcade.saveRaw(DIFFICULTY_KEY, String([...document.querySelectorAll('.difficulty-btn')].indexOf(btn))); // 存储不可用（隐私模式/禁用站点数据）：静默忽略
     SFX.uiClick();
 }
 
@@ -1028,8 +1010,7 @@ function startGame() {
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 
     startScreen.style.display = 'none';
-    achWall.hidden = true; // 收起可能打开的成就墙
-    achPanelOpen = false;
+    Ach.close(); // 收起可能打开的成就墙（开合回调内自动处理 BGM 与计时基准）
     gameOverScreen.style.display = 'none';
     pauseScreen.style.display = 'none';
     pauseRestoreTip.style.display = 'none'; // 复位进度恢复提示，新局暂停时不残留
@@ -1046,11 +1027,6 @@ function startGame() {
     comboHits = 0; // 连击状态清零：累计次数/窗口/倍率全部复位
     comboTimer = 0;
     comboMult = 1;
-    // 重置成就本局峰值收集器（历史最佳存档 achStore.best 不重置）
-    runStats.score = 0;
-    runStats.combo = 0;
-    runStats.mult = 1;
-    runStats.balls = 1;
     accumulator = 0; // 物理累加器清零，避免残留帧时长带入新局
     scoreElement.textContent = '0';
     rebuildFlippers();
@@ -1067,9 +1043,7 @@ function startGame() {
 function gameOver() {
     state = 'over';
     flushHighScore(); // 结算落盘：本局破纪录值在此统一持久化（原来由 addScore 实时写入，现改为结算时机）
-    try {
-        localStorage.removeItem(SAVE_KEY); // 本局已终结：清除进度快照，下次进入按新局处理
-    } catch (e) { /* 存储不可用：静默跳过，确保结算面板与音效不受存储异常中断 */ }
+    Arcade.removeRaw(SAVE_KEY); // 本局已终结：清除进度快照，下次进入按新局处理；存储不可用时静默跳过，确保结算面板与音效不受存储异常中断
     finalScoreElement.textContent = score;
     newRecordElement.style.display = isNewRecord ? 'block' : 'none';
     gameOverScreen.style.display = 'block';
@@ -1084,7 +1058,7 @@ function gameOver() {
  */
 function togglePause() {
     if (state !== 'play' && state !== 'ready') return;
-    if (achPanelOpen) return; // 成就墙打开中：暂停键不生效，避免与墙面冻结叠加出双层遮罩
+    if (Ach.isOpen()) return; // 成就墙打开中：暂停键不生效，避免与墙面冻结叠加出双层遮罩
     isPaused = !isPaused;
     pauseScreen.style.display = isPaused ? 'block' : 'none';
     if (isPaused) {
@@ -1112,7 +1086,7 @@ function saveSnapshot() {
     try {
         flushHighScore(); // 复用既有存档钩子（arcade:save / pagehide）顺带补写脏最高分，避免中途刷新丢纪录
         if (state !== 'play' && state !== 'ready') {
-            localStorage.removeItem(SAVE_KEY); // 未开始 / 已结束：清除残留快照
+            Arcade.removeRaw(SAVE_KEY); // 未开始 / 已结束：清除残留快照
             return;
         }
         const snap = {
@@ -1231,153 +1205,38 @@ function restoreSnapshot() {
         return true;
     } catch (err) {
         // 任何解析 / 校验异常：清除非法快照，按无存档处理（绝不向游戏层抛错）
-        try {
-            localStorage.removeItem(SAVE_KEY);
-        } catch (ignored) {
-            // 存储不可用：忽略
-        }
+        Arcade.removeRaw(SAVE_KEY); // 存储不可用：忽略
         return false;
     }
 }
 
-/* ===================== 成就系统：函数实现（常量与存档定义见文件头部区块） ===================== */
+/* ===================== 成就系统：接入共享成就引擎（ach-common.js） ===================== */
 
-/**
- * 读取成就存档并兼容迁移到 v2 结构：
- * v1 旧档为「已解锁 id 数组」→ 全部迁入 unlocked（时间戳记 0，墙上显示「已达成」）；
- * v2 档缺失维度时按 BEST_DEFAULTS 补齐（新增成就维度向后兼容旧存档）
- * @returns {{unlocked: Object<string, number>, best: Object<string, number>}} v2 成就存档
- */
-function loadAchStore() {
-    const data = Arcade.loadJSON(ACH_KEY); // 键缺失 / 损坏 / 存储不可用统一返回 null，按全新档案处理
-    if (!data) return { unlocked: {}, best: { ...BEST_DEFAULTS } }; // 无存档：全新档案
-    if (Array.isArray(data)) {
-        // v1 → v2 迁移：旧 id 全部保留，历史最佳无从考证按默认值起步（后续游玩自然填充）
-        const migrated = { unlocked: {}, best: { ...BEST_DEFAULTS } };
-        for (const id of data) migrated.unlocked[id] = 0;
-        return migrated;
+// 存档读写（含 v1 数组档自动迁移并落盘）、V / Esc / 关闭按钮 / 遮罩点击的开合接线、
+// 成就墙与解锁 toast 的渲染全部由共享引擎负责；游戏侧仅保留 Ach.isOpen() 主循环闸门
+Ach.init({
+    defs: ACHIEVEMENTS,
+    storageKey: 'arcade_ach_pinball', // 沿用旧存档键名，老玩家成就与历史最佳无缝延续
+    bestDefaults: BEST_DEFAULTS,
+    mount: {
+        wall: achWall,
+        grid: achGrid,
+        count: achCountEl,
+        total: achTotalEl,
+        barFill: achBarFill,
+        toasts: document.getElementById('achToastStack')
+    },
+    // 开合镜像旧成就墙开关的 BGM 联动：开墙时进行中的局挂起 BGM 保留进度
+    //（暂停态的局不动 BGM，避免与暂停续播逻辑互踩）；关墙后续播并重置计时基准，
+    // 防止关闭瞬间帧时长暴涨导致物理大步跳变
+    onToggle: (open) => {
+        if (open) {
+            if ((state === 'play' || state === 'ready') && !isPaused) SFX.bgm.pause();
+        } else {
+            lastTime = performance.now();
+            if ((state === 'play' || state === 'ready') && !isPaused) SFX.bgm.resume();
+        }
     }
-    // v2 结构：best 缺失维度用默认值补齐（展开时已存键覆盖默认值，缺失键自然落到默认值）
-    return { unlocked: data.unlocked || {}, best: { ...BEST_DEFAULTS, ...(data.best || {}) } };
-}
-
-/**
- * 持久化成就存档（unlocked 解锁表 + best 历史最佳一并写入 localStorage）
- */
-function saveAchStore() {
-    Arcade.saveJSON(ACH_KEY, achStore); // 隐私模式写入失败：成就提示照常弹出，仅不入盘，不中断结算链
-}
-
-/**
- * 上报本局峰值并驱动成就判定：刷新 runStats 与历史最佳（只增不减），
- * 随后检查引用该维度的全部成就，达标即解锁
- * @param {string} stat 数据维度（score/combo/mult/balls，对应 BEST_DEFAULTS 键）
- * @param {number} value 当前值（累进维度传累计值，峰值维度传当前峰值）
- */
-function trackRunStat(stat, value) {
-    runStats[stat] = value;
-    if (value > achStore.best[stat]) { // 只增不减：刷新历史最佳并立即持久化
-        achStore.best[stat] = value;
-        saveAchStore();
-    }
-    // 达标解锁：遍历定义表检查引用该维度的成就（8 条量级，线性遍历开销可忽略）
-    for (const a of ACHIEVEMENTS) {
-        if (a.stat === stat && value >= a.target) unlockAchievement(a.id);
-    }
-}
-
-/**
- * 解锁成就：幂等（已解锁静默返回）→ 持久化 → toast 堆叠提示 + 音效，
- * 史诗 / 传说级追加金色烟花庆典；成就墙开着时同步刷新卡片
- * @param {string} id 成就 id（对应 ACHIEVEMENTS 中的定义）
- */
-function unlockAchievement(id) {
-    if (achStore.unlocked[id] !== undefined) return; // 去重：已解锁不重复提示
-    achStore.unlocked[id] = Date.now(); // 记录解锁时间戳（供未来按时间排序 / 展示）
-    saveAchStore();
-    const def = ACHIEVEMENTS.find(a => a.id === id);
-    if (def) {
-        showAchToast(def);
-        SFX.newRecord(); // 成就解锁音：对齐全库音色（与贪吃蛇/俄罗斯方块机台一致复用破纪录五连琶音）
-        // 史诗 / 传说级追加金色烟花庆典（FX 内置减弱动效自动降级）
-        if (def.rarity === 'epic' || def.rarity === 'legendary') FX.recordBurst();
-    }
-    // 成就墙开着时同步刷新解锁状态
-    if (achPanelOpen) renderAchWall();
-}
-
-/**
- * 弹出成就解锁 toast：右上角堆叠滑入（CSS toastCycle 动画 3.2s 播完即移除节点），
- * 连续解锁时堆叠上限 3 条，超出裁掉最旧的
- * @param {{id: string, name: string, icon: string, rarity: string}} def 成就定义对象
- */
-function showAchToast(def) {
-    const stack = document.getElementById('achToastStack');
-    if (!stack) return;
-    const el = document.createElement('div');
-    el.className = 'ach-toast ' + def.rarity; // 稀有度决定左色条与图标光晕配色
-    el.innerHTML = '<div class="toast-icon">' + def.icon + '</div>' +
-        '<div class="toast-body">' +
-        '<span class="toast-cap">成就解锁 · ' + RARITY_LABEL[def.rarity] + '</span>' +
-        '<span class="toast-name">' + def.name + '</span></div>';
-    stack.appendChild(el);
-    setTimeout(() => el.remove(), 3300); // 与 CSS 动画时长(3.2s)对齐，播完移除节点防堆积
-    while (stack.children.length > 3) stack.firstChild.remove(); // 堆叠上限：裁掉最旧 toast
-}
-
-/**
- * 渲染成就墙卡片网格：完成度计数 / 顶部总进度条 + 逐卡片（图标、名称、描述、
- * 历史最佳进度条、稀有度徽章）；--i 序号驱动 CSS 瀑布入场与流光错峰动画
- */
-function renderAchWall() {
-    const unlockedCount = ACHIEVEMENTS.filter(a => achStore.unlocked[a.id] !== undefined).length;
-    achCountEl.textContent = unlockedCount;
-    achTotalEl.textContent = ACHIEVEMENTS.length;
-    achBarFill.style.width = (unlockedCount / ACHIEVEMENTS.length * 100) + '%'; // 完成度总进度条
-    achGrid.innerHTML = ACHIEVEMENTS.map((a, i) => {
-        const done = achStore.unlocked[a.id] !== undefined;
-        // 进度条：历史最佳 / 目标值（封顶 100%）；事件型成就按达成状态显示满/零进度
-        const best = a.stat !== undefined ? achStore.best[a.stat] : 0;
-        const pct = a.stat !== undefined ? Math.min(100, Math.round(best / a.target * 100)) : (done ? 100 : 0);
-        // 进度条下方文案：带 stat 维度显示「历史最佳 当前值/目标值」，事件型成就显示达成状态
-        const meta = a.stat !== undefined
-            ? '<span>历史最佳</span><span>' + Math.min(best, a.target).toLocaleString('en-US') + ' / ' + a.target.toLocaleString('en-US') + '</span>'
-            : '<span>一次性挑战</span><span>' + (done ? '已达成' : '待达成') + '</span>';
-        return '<div class="ach-card ' + (done ? 'unlocked ' : 'locked ') + a.rarity + '" style="--i:' + i + '">' +
-            '<div class="ach-icon">' + a.icon + (done ? '' : '<span class="ach-lock">🔒</span>') + '</div>' +
-            '<div class="ach-info">' +
-            '<div class="ach-name">' + a.name + '</div>' +
-            '<div class="ach-desc">' + a.desc + '</div>' +
-            '<div class="ach-prog"><div class="ach-prog-fill" style="width:' + pct + '%"></div></div>' +
-            '<div class="ach-prog-meta">' + meta + '</div>' +
-            '</div>' +
-            '<div class="ach-rarity-chip ' + a.rarity + '">' + RARITY_LABEL[a.rarity] + '</div>' +
-            '</div>';
-    }).join('');
-}
-
-/**
- * 成就墙开关：V 键 / Esc / 关闭按钮 / 遮罩点击统一入口，开关均播提示音。
- * 冻结由主循环与失球演出的 achPanelOpen 闸门保证（与手动暂停 isPaused 相互独立）；
- * 进行中的局随墙面打开挂起 BGM、关闭后续播，并重置计时基准防止恢复瞬间 delta 暴涨
- */
-function toggleAchPanel() {
-    achPanelOpen = !achPanelOpen;
-    achWall.hidden = !achPanelOpen;
-    SFX.uiClick(); // 开关提示音
-    if (achPanelOpen) {
-        renderAchWall();
-        // 进行中的局：BGM 同步挂起保留进度（暂停态的局不动 BGM，避免与暂停续播逻辑互踩）
-        if ((state === 'play' || state === 'ready') && !isPaused) SFX.bgm.pause();
-    } else {
-        lastTime = performance.now(); // 重置计时基准，防止关闭瞬间帧时长暴涨导致物理大步跳变
-        if ((state === 'play' || state === 'ready') && !isPaused) SFX.bgm.resume();
-    }
-}
-
-// 点击成就墙遮罩空白处关闭（点在面板内部不触发）：与键盘 Esc / 关闭按钮同走 toggleAchPanel
-achWall.addEventListener('pointerdown', e => {
-    if (e.target === e.currentTarget) toggleAchPanel();
 });
 
 /* ===================== 渲染 ===================== */
@@ -1964,7 +1823,7 @@ function loop(t) {
     }
     const dt = Math.min((t - lastTime) / 1000, 0.033);
     lastTime = t;
-    if (!isPaused && !achPanelOpen && (state === 'play' || state === 'ready')) {
+    if (!isPaused && !Ach.isOpen() && (state === 'play' || state === 'ready')) {
         // 固定步长物理：帧时长累加进累加器（封顶 MAX_STEPS_PER_FRAME 步，卡顿时丢弃多余时间），
         // 按整数个 FIXED_DT 步推进挡板/计时器/蓄力/物理
         accumulator = Math.min(accumulator + dt, FIXED_DT * MAX_STEPS_PER_FRAME);
@@ -1995,7 +1854,7 @@ function loop(t) {
         }
         updateSparks(dt);
         updateFloatTexts(dt);
-    } else if (state === 'lost' && !achPanelOpen) {
+    } else if (state === 'lost' && !Ach.isOpen()) {
         // 失球演出：球坠落 + 特效计时 + 火花余韵，结束后自动回待发射或结算（成就墙打开期间冻结不推进）
         updateLoseFx(dt);
         updateTimers(dt);
@@ -2010,20 +1869,15 @@ function loop(t) {
  * 全局键盘控制：
  * ← / A 拍左挡板，→ / D 拍右挡板（keydown 按下 / keyup 松开）；
  * 空格在 ready 状态按住蓄力、松开发射（力度决定初速），play 状态切换暂停；
- * P 键切换暂停；V 键开关成就墙（全站统一开墙键：V），Esc 关闭成就墙；
+ * P 键切换暂停；V 键开关成就墙 / Esc 关闭成就墙（由共享成就引擎全局监听处理）；
  * 成就墙打开期间吞掉其余按键（墙面已冻结局面，防止墙体遮挡下的游戏误输入）；
  * 方向键与空格均阻止页面滚动
  * @param {KeyboardEvent} event 键盘事件
  */
 document.addEventListener('keydown', (event) => {
-    // 成就墙打开期间：仅 V / Esc 可关闭墙面（preventDefault + !event.repeat 防长按连发），其余按键一律吞掉
-    if (achPanelOpen) {
-        if (event.code === 'KeyV' || event.code === 'Escape') {
-            event.preventDefault();
-            if (!event.repeat) toggleAchPanel();
-        }
-        return;
-    }
+    // 成就墙打开期间吞掉其余按键（墙面已冻结局面，防止墙体遮挡下的游戏误输入）；
+    // V / Esc 的开合与 preventDefault 由共享成就引擎的全局监听负责，这里不再重复处理
+    if (Ach.isOpen()) return;
     switch (event.code) {
         case 'ArrowLeft':
         case 'KeyA':
@@ -2053,9 +1907,6 @@ document.addEventListener('keydown', (event) => {
         case 'KeyP':
             if (!event.repeat) togglePause(); // 防长按连发
             break;
-        case 'KeyV':
-            if (!event.repeat) toggleAchPanel(); // 成就墙开关（全站统一开墙键：V；Esc 亦可关闭）
-            break;
     }
 });
 
@@ -2075,7 +1926,7 @@ document.addEventListener('keyup', (event) => {
             break;
         case 'Space':
             // 松开空格：按蓄力力度发射（未蓄力或非 ready 状态仅复位蓄力标记）
-            if (charging && state === 'ready' && !isPaused && !achPanelOpen) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
+            if (charging && state === 'ready' && !isPaused && !Ach.isOpen()) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
             charging = false;
             charge = 0;
             break;
@@ -2171,7 +2022,7 @@ function handleZoneUp(event) {
         if (!zoneHeld('right')) flippers[1].pressed = false;
     } else {
         // 与空格 keyup 分支一致：按蓄力力度发射，守卫不满足则仅复位蓄力标记
-        if (charging && state === 'ready' && !isPaused && !achPanelOpen) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
+        if (charging && state === 'ready' && !isPaused && !Ach.isOpen()) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
         charging = false;
         charge = 0;
     }
@@ -2201,7 +2052,7 @@ window.addEventListener('blur', () => {
     for (const f of flippers) f.pressed = false;
     // 触屏按下态并入同一处清理：跟踪表残留会使回窗后的抬手指误复位/误发射（挡板/蓄力实体态已在上两行复位）
     touchZones.clear();
-    if ((state === 'play' || state === 'ready') && !isPaused && !achPanelOpen) togglePause(); // 成就墙已冻结局面：不再叠加暂停遮罩
+    if ((state === 'play' || state === 'ready') && !isPaused && !Ach.isOpen()) togglePause(); // 成就墙已冻结局面：不再叠加暂停遮罩
 });
 
 /* ===================== 初始化 ===================== */
@@ -2211,16 +2062,14 @@ window.addEventListener('blur', () => {
 // 加载时 AudioContext 尚未激活，selectDifficulty 中的 uiClick 无声，无害；
 // 恢复会触发 rebuildFlippers 重建挡板与侧栏倍率刷新，加载时机安全）
 let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
-try {
-    savedDifficultyIndex = parseInt(localStorage.getItem(DIFFICULTY_KEY), 10);
-} catch (e) { /* 存储不可用：静默保持兜底，不中断初始化 */ }
+savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
     if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
 }
 
 // 恢复最高分与倍率显示，绘制初始球数，注册窗口/全屏监听，启动主循环
-// （成就墙初始渲染由打开墙面时的 renderAchWall 按需完成，启动时无需预渲染）
+// （成就墙初始渲染由共享成就引擎在打开墙面时按需完成，启动时无需预渲染）
 highElement.textContent = highScore;
 multElement.textContent = '×' + mult;
 drawBalls();
@@ -2244,7 +2093,7 @@ document.addEventListener('fullscreenchange', () => {
 Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (!d || typeof d !== 'object') return;
-    if (d.type === 'arcade:fs') {
+    if (d.type === Arcade.MSG.FS) {
         const fs = !!d.fs;
         // 沿检测：仅状态翻转时发声；首条消息（embedFsLast 为 null）仅静默同步状态
         if (embedFsLast !== null && fs !== embedFsLast) {
@@ -2252,7 +2101,7 @@ Arcade.onTrustedMessage(e => {
             else SFX.crtOff();
         }
         embedFsLast = fs;
-    } else if (d.type === 'arcade:save') {
+    } else if (d.type === Arcade.MSG.SAVE) {
         saveSnapshot(); // 父页关闭 iframe 覆盖层前下发：保存当前局进度快照
     }
 });
@@ -2316,19 +2165,20 @@ window.__ARCADE_TESTS__ = [
     // 触摸发射守卫：成就墙打开时拉杆松手仅复位蓄力不发射（与空格 keyup 分支同守卫），墙关后同条件正常发射
     { name: 'handleZoneUp 成就墙守卫与对照发射', fn: () => {
         // 保存全局状态与首球运动数据，用例结束时原样恢复，对其它用例零污染
-        const saved = { state, isPaused, charging, charge, achPanelOpen, vx: balls[0].vx, vy: balls[0].vy, trail: balls[0].trail.length };
+        const saved = { state, isPaused, charging, charge, achOpen: Ach.isOpen(), vx: balls[0].vx, vy: balls[0].vy, trail: balls[0].trail.length };
         state = 'ready'; isPaused = false; charging = true; charge = 0.5;
-        achPanelOpen = true; // 守卫分支：墙开着松手，应仅复位蓄力标记
+        Ach.open(); // 守卫分支：墙开着松手，应仅复位蓄力标记
         touchZones.set(9, 'plunger');
         handleZoneUp({ pointerId: 9 }); // 伪事件对象：该分支只读 pointerId
         if (charging !== false || charge !== 0) throw new Error('守卫分支未复位蓄力标记');
         if (state !== 'ready' || balls[0].vy !== saved.vy) throw new Error('成就墙打开时球被发射');
-        achPanelOpen = false; charging = true; charge = 0.5; // 对照分支：墙关后同条件应正常发射
+        Ach.close(); charging = true; charge = 0.5; // 对照分支：墙关后同条件应正常发射
         touchZones.set(9, 'plunger');
         handleZoneUp({ pointerId: 9 });
         if (state !== 'play') throw new Error('墙关后未发射');
         if (balls[0].vy !== 60 + 0.5 * 150) throw new Error('发射初速与蓄力力度不符: ' + balls[0].vy);
-        state = saved.state; isPaused = saved.isPaused; charging = saved.charging; charge = saved.charge; achPanelOpen = saved.achPanelOpen;
+        state = saved.state; isPaused = saved.isPaused; charging = saved.charging; charge = saved.charge;
+        if (Ach.isOpen() !== saved.achOpen) Ach.toggle(); // 恢复成就墙开合原状
         balls[0].vx = saved.vx; balls[0].vy = saved.vy; balls[0].trail.length = saved.trail;
     } },
 ];

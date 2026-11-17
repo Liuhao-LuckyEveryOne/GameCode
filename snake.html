@@ -5,7 +5,7 @@
           主布局（游戏容器：500×500 画布 + 开始/暂停/结束三块遮罩 +
           右侧 STATS 记分面板 + KEYS 键位说明栏）
      脚本：audio.js 公共音效库 / fx.js 画布与特效库 / fullscreen.js 全屏控制 /
-          gamepad.js 手柄支持 / snake.js 游戏逻辑
+          ach-common.js 共享成就系统 / gamepad.js 手柄支持 / snake.js 游戏逻辑
      共享：ach-trigger.css / ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
@@ -850,7 +850,7 @@
                     <div class="ach-count"><span id="achCount">0</span> / <span id="achTotal">0</span></div>
                     <div class="ach-bar"><div class="ach-bar-fill" id="achBarFill"></div></div>
                 </div>
-                <button class="ach-close" onclick="toggleAchPanel()" aria-label="关闭成就墙">✕</button>
+                <button class="ach-close" onclick="Ach.toggle()" aria-label="关闭成就墙">✕</button>
             </div>
             <div class="ach-grid" id="achGrid"></div>
             <div class="ach-foot">继续挑战解锁全部成就 · 史诗 / 传说级成就达成时附赠金色烟花庆典</div>
@@ -858,14 +858,15 @@
     </div>
     <!-- 成就解锁 toast 堆叠区：不拦截点击（pointer-events 由 CSS 控制），aria-live 播报新解锁 -->
     <div id="achToastStack" aria-live="polite"></div>
-    <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → gamepad.js / ach-trigger.js → snake.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261116-5"></script>
-    <script src="audio.js?v=20261117-1"></script>
-    <script src="fx.js?v=20261116-3"></script>
-    <script src="fullscreen.js?v=20261117-1"></script>
+    <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，成就墙开合/解锁/存档迁移由此驱动) → gamepad.js / ach-trigger.js → snake.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
+    <script src="arcade-common.js?v=20261117-2"></script>
+    <script src="audio.js?v=20261117-3"></script>
+    <script src="fx.js?v=20261117-2"></script>
+    <script src="fullscreen.js?v=20261117-2"></script>
+    <script src="ach-common.js?v=20261117-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
-    <script src="gamepad.js?v=20261117-1"></script>
+    <script src="gamepad.js?v=20261117-2"></script>
     <script src="ach-trigger.js?v=20261105-4"></script>
-    <script src="snake.js?v=20261117-1"></script>
+    <script src="snake.js?v=20261117-4"></script>
 </body>
 </html>

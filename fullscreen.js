@@ -48,8 +48,8 @@ const FS = (() => {
 
     /** 嵌入模式标记：URL 携带 ?embed=1 且确实运行于 iframe 之中 */
     const EMBED = new URLSearchParams(location.search).has('embed') && window.parent !== window;
-    /** 消息投递目标：file:// 直开时各帧为独立 opaque origin，需回退 '*' 维持跨帧通信；http(s) 同源部署收紧为 '/'（仅同源可投） */
-    const POST_MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
+    /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
+    const POST_MSG_TARGET = Arcade.MSG_TARGET;
 
     /** 用户系统偏好"减少动态效果"：为 true 时跳过全屏过渡动画（无障碍适配） */
     const REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -446,7 +446,7 @@ const FS = (() => {
         // 嵌入模式：全屏状态由大厅持有，转发切换请求（用户激活会随 postMessage 传递到父页）
         if (EMBED) {
             // 目标 origin 取 POST_MSG_TARGET（见顶部定义）：http(s) 同源收紧为 '/'，file:// 直开回退 '*' 维持跨帧通信
-            window.parent.postMessage({ type: 'arcade:fs' }, POST_MSG_TARGET);
+            window.parent.postMessage({ type: Arcade.MSG.FS }, POST_MSG_TARGET);
             return;
         }
         const req = isFullscreen() ? exit() : request(document.documentElement);
@@ -472,7 +472,7 @@ const FS = (() => {
     function broadcast() {
         document.querySelectorAll('iframe').forEach(f => {
             try {
-                f.contentWindow.postMessage({ type: 'arcade:fs', fs: isFullscreen() }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
+                f.contentWindow.postMessage({ type: Arcade.MSG.FS, fs: isFullscreen() }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
             } catch (e) { /* 跨源等异常场景静默忽略 */ }
         });
     }
@@ -487,9 +487,9 @@ const FS = (() => {
         Arcade.onTrustedMessage(e => {
             if (e.source !== window.parent) return; // 只信任父页消息
             const d = e.data;
-            if (d && d.type === 'arcade:fs') sync(!!d.fs);
+            if (d && d.type === Arcade.MSG.FS) sync(!!d.fs);
         });
-        window.parent.postMessage({ type: 'arcade:hello' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
+        window.parent.postMessage({ type: Arcade.MSG.HELLO }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
     }
 
     /**
@@ -500,9 +500,9 @@ const FS = (() => {
         Arcade.onTrustedMessage(e => {
             const d = e.data;
             if (!d || typeof d.type !== 'string') return;
-            if (d.type === 'arcade:hello') {
+            if (d.type === Arcade.MSG.HELLO) {
                 broadcast(); // 子页就绪：回复当前全屏状态
-            } else if (d.type === 'arcade:fs') {
+            } else if (d.type === Arcade.MSG.FS) {
                 // 子页请求切换全屏：等价于点击本页全屏按钮（顶层文档持有状态）
                 toggle(document.getElementById('fullscreenToggle'));
             }
