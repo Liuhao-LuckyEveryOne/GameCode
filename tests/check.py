@@ -7,7 +7,7 @@
 
   1. 引用完整性   —— 所有 HTML 中的本地 src=/href= 引用必须指向真实存在的文件
   2. 缓存指纹     —— 本地 .js/.css/.html 引用必须携带 ?v= 版本参数（手动破缓存策略）
-  3. 公共库加载序 —— 每页必须按 audio.js → fx.js → fullscreen.js → 业务 js 顺序加载三件套
+  3. 公共库加载序 —— 每页必须按 arcade-common.js → audio.js → fx.js → fullscreen.js → 业务 js 顺序加载公共库
   4. 危险模式扫描 —— 全站禁止 eval( / new Function( / document.write(
   5. 存储兜底     —— 直接调用 localStorage 读写的每一处必须位于 try 块内（行级检测：注释/字符串去噪 + 大括号深度追踪 try 状态机）
   6. 游戏入口完整 —— 大厅七张卡片入口与各游戏 html/js 文件一一对应齐全
@@ -49,8 +49,8 @@ TRY_OPEN_RE = re.compile(r"\btry\s*\{")
 # HTML 属性抽取：src="..." 或 href="..."（含单双引号两种写法）
 ATTR_RE = re.compile(r"""\b(?:src|href)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
 
-# 三件套的标准加载顺序（业务 js 必须排在其后）
-LIB_ORDER = ["audio.js", "fx.js", "fullscreen.js"]
+# 公共库的标准加载顺序（arcade-common 为零依赖基础库须最前，业务 js 必须排在其后）
+LIB_ORDER = ["arcade-common.js", "audio.js", "fx.js", "fullscreen.js"]
 
 # CSS 前缀敏感属性对：(无前缀属性正则, 要求同文件必须存在的 -webkit- 前缀形式)。
 # 规则来自本站兼容策略：Safari 旧版对下列属性需 -webkit- 前缀，Firefox/Chrome 均吃无前缀
@@ -173,7 +173,7 @@ def check_version_problems():
 
 
 def check_lib_order_problems():
-    """检查项 3：每页公共库三件套齐全且顺序 audio → fx → fullscreen → 业务 js。
+    """检查项 3：每页公共库齐全且顺序 arcade-common → audio → fx → fullscreen → 业务 js。
 
     返回:
         失败明细列表（空列表 = 通过）
@@ -186,17 +186,17 @@ def check_lib_order_problems():
         for url in ATTR_RE.findall(text):
             if is_local(url) and strip_query(url).endswith(".js"):
                 refs.append(strip_query(url))
-        # 三件套逐一核对存在性与相对顺序
+        # 公共库逐一核对存在性与相对顺序
         pos = []
         for lib in LIB_ORDER:
             if lib not in refs:
                 problems.append(f"{page.name} 缺少公共库 {lib}")
             else:
                 pos.append(refs.index(lib))
-        # 顺序单调递增校验（audio < fx < fullscreen）
-        if len(pos) == 3 and pos != sorted(pos):
+        # 顺序单调递增校验（仅在本页四件套齐全时才有意义）
+        if len(pos) == len(LIB_ORDER) and pos != sorted(pos):
             problems.append(f"{page.name} 公共库加载顺序错误: {refs}")
-        # 业务脚本（三件套之外的首个 js）必须排在 fullscreen.js 之后
+        # 业务脚本（公共库之外的首个 js）必须排在 fullscreen.js 之后
         if pos:
             biz = [i for i, r in enumerate(refs) if r not in LIB_ORDER]
             if biz and min(biz) < pos[-1]:

@@ -46,8 +46,10 @@
      页面自动串行执行全部场景，结果实时渲染；automation 可读
        window.SMOKE_RESULTS / document.title / #summary
      注意：file:// 直开下同源策略阻断 iframe 内部访问，必须经 http 起服运行。
-     无头运行：--virtual-time-budget ≥ 20000（本页 S17/S18 含帧泵耗时）；
-     tests/behavior.html 的 TIMEOUT_MS=9000 亦须小于该预算——两处阈值需同步调整。
+     无头运行：经 CDP 实时驱动直跑真实时钟（tools/verify_all.py 每 0.5s 轮询
+     document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
+     + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
+     本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
      一键全量验证：python tools/verify_all.py（重建分享包 → 十项静态检查 →
        无头冒烟 → 无头行为回归；自动起随机端口临时服 / 探测本机 Chrome 或 Edge）。
 

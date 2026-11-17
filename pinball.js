@@ -2313,5 +2313,23 @@ window.__ARCADE_TESTS__ = [
         if (zoneAt(100, PLUNGER_ZONE_Y) !== 'plunger') throw new Error('弹射区下界未命中');
         if (zoneAt(100, PLUNGER_ZONE_Y - 1) !== 'left') throw new Error('弹射区上沿被误判');
     } },
+    // 触摸发射守卫：成就墙打开时拉杆松手仅复位蓄力不发射（与空格 keyup 分支同守卫），墙关后同条件正常发射
+    { name: 'handleZoneUp 成就墙守卫与对照发射', fn: () => {
+        // 保存全局状态与首球运动数据，用例结束时原样恢复，对其它用例零污染
+        const saved = { state, isPaused, charging, charge, achPanelOpen, vx: balls[0].vx, vy: balls[0].vy, trail: balls[0].trail.length };
+        state = 'ready'; isPaused = false; charging = true; charge = 0.5;
+        achPanelOpen = true; // 守卫分支：墙开着松手，应仅复位蓄力标记
+        touchZones.set(9, 'plunger');
+        handleZoneUp({ pointerId: 9 }); // 伪事件对象：该分支只读 pointerId
+        if (charging !== false || charge !== 0) throw new Error('守卫分支未复位蓄力标记');
+        if (state !== 'ready' || balls[0].vy !== saved.vy) throw new Error('成就墙打开时球被发射');
+        achPanelOpen = false; charging = true; charge = 0.5; // 对照分支：墙关后同条件应正常发射
+        touchZones.set(9, 'plunger');
+        handleZoneUp({ pointerId: 9 });
+        if (state !== 'play') throw new Error('墙关后未发射');
+        if (balls[0].vy !== 60 + 0.5 * 150) throw new Error('发射初速与蓄力力度不符: ' + balls[0].vy);
+        state = saved.state; isPaused = saved.isPaused; charging = saved.charging; charge = saved.charge; achPanelOpen = saved.achPanelOpen;
+        balls[0].vx = saved.vx; balls[0].vy = saved.vy; balls[0].trail.length = saved.trail;
+    } },
 ];
 FX.behavior('pinball', window.__ARCADE_TESTS__);
