@@ -21,6 +21,10 @@
   9. 分享包一致   —— .trae-html-share-packages 下分享包与源文件逐条目字节一致
                      （缺失/过期/多余/越根均报错；重建命令 tools/sync_packages.py）
   10. 去噪自检    —— strip_js_noise 行级状态机 doctest 回归（转义引号/跨行注释/模板串）
+  11. 成就cat完整 —— 七游戏 ACHIEVEMENTS 数组内凡含 rarity: 的条目必须带 cat: 分类
+                     （成就墙锁定卡按「分类 · 尚未达成」渲染，缺失即显示 undefined）
+  12. 入口版本一致 —— 大厅卡片入口 X.html?v= 版本不得落后于同名业务 js 当前版本
+                     （只升不降不变量；tools/bump-versions.py 自动同步，本项兜底守护）
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
@@ -111,6 +115,16 @@ GAMES = [
 # fullscreen.js 之后、业务 js 之前；大厅 index.html 不开成就墙故不在此列
 GAME_LIB_ORDER = ["ach-common.js"]
 GAME_PAGES = {html for html, _js in GAMES}
+
+# 检查项 11：成就条目锚与分类字段（在去噪骨架上匹配，键名为标识符不受字符串剥离影响）。
+# rarity: 为成就条目专属锚字段（不依赖各游戏 ACHIEVEMENTS 变量命名统一）；cat 后紧跟
+# 冒号，category: 等更长标识符因词边界 + 冒号断言不误匹配
+ACH_ANCHOR_RE = re.compile(r"\brarity\s*:")
+ACH_CAT_RE = re.compile(r"\bcat\s*:")
+ACH_DECL_RE = re.compile(r"\bconst\s+\w*ACHIEVEMENTS\w*\s*=\s*\[")
+
+# 检查项 12：YYYYMMDD-N 版本号解析（fullmatch，用于入口/业务 js 版本元组比较）
+VER_NUM_RE = re.compile(r"(\d{8})-(\d+)")
 
 
 def html_files():
@@ -693,8 +707,89 @@ def check_doctest_problems():
     return []
 
 
+def check_ach_cat_problems():
+    """检查项 11：成就定义 cat 完整性。
+
+    成就墙锁定卡以「分类 · 尚未达成」展示（ach-common.js 渲染契约），成就条目缺
+    cat 字段会在锁定态渲染出「undefined · 尚未达成」。本项做条目级断言：七游戏 js
+    中 ACHIEVEMENTS 变量的数组体内，凡含 rarity: 的顶层 {...} 条目必须同时含 cat:。
+    rarity 为成就条目专属锚字段，不依赖各游戏变量命名统一（ACHIEVEMENTS /
+    SNAKE_ACHIEVEMENTS / KLOTSKI_ACHIEVEMENTS 并存）；数组体/条目均在去噪骨架上
+    花括号深度配对切片，字符串字面量里的方括号/花括号不干扰配对。
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    problems = []
+    for _html_name, js_name in GAMES:
+        path = ROOT / js_name
+        if not path.exists():
+            continue  # 文件缺失由检查项 6 报告，本项不重复
+        skel = strip_js_code(path.read_text(encoding="utf-8"))
+        for decl in ACH_DECL_RE.finditer(skel):
+            start = decl.end()  # 数组体起点（'[' 之后）
+            depth, i = 1, start
+            while i < len(skel) and depth:
+                if skel[i] == "[":
+                    depth += 1
+                elif skel[i] == "]":
+                    depth -= 1
+                i += 1
+            if depth != 0:
+                problems.append(f"{js_name} 成就数组未闭合: {decl.group(0)}")
+                continue
+            body = skel[start:i - 1]
+            # 拆顶层条目：花括号深度 0→1→0 的 {...} 片段即为单条成就定义
+            bdepth, bstart = 0, None
+            for j, ch in enumerate(body):
+                if ch == "{":
+                    if bdepth == 0:
+                        bstart = j
+                    bdepth += 1
+                elif ch == "}":
+                    bdepth -= 1
+                    if bdepth == 0 and bstart is not None:
+                        entry = body[bstart:j + 1]
+                        if ACH_ANCHOR_RE.search(entry) and not ACH_CAT_RE.search(entry):
+                            problems.append(f"{js_name} 成就条目缺 cat 分类字段: {entry.strip()[:60]}")
+                        bstart = None
+    return problems
+
+
+def check_entry_version_problems():
+    """检查项 12：卡片入口版本一致——入口引用不得落后于同名业务 js。
+
+    大厅卡片入口 href="X.html?v=V1" 与游戏页内业务脚本 src="X.js?v=V2" 的版本
+    遵循「只升不降」不变量：入口落后于业务 js 视为同步遗漏（入口先命中旧 html
+    缓存，与已更新的 js 版本脱节）。tools/bump-versions.py 已实现自动同步，本项
+    兜底守护该不变量。版本按 (日期, 当日序号) 元组比较；入口领先合法不回退。
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    problems = []
+    index_text = (ROOT / "index.html").read_text(encoding="utf-8")
+    for m in re.finditer(r'href="([\w./-]+\.html)\?v=([\w-]+)"', index_text):
+        name, entry_v = m.group(1), m.group(2)
+        page = ROOT / name
+        js_path = page.with_suffix(".js")
+        if not page.is_file() or not js_path.is_file():
+            continue  # 入口与文件对应齐全性由检查项 6 把关
+        js_m = re.search(r'src="[\w./-]*' + re.escape(js_path.name) + r'\?v=([\w-]+)"',
+                         page.read_text(encoding="utf-8"))
+        if not js_m:
+            continue  # 业务 js 引用带版本规范由检查项 2 把关
+        ev, jv = VER_NUM_RE.fullmatch(entry_v), VER_NUM_RE.fullmatch(js_m.group(1))
+        if ev and jv and (int(ev.group(1)), int(ev.group(2))) < (int(jv.group(1)), int(jv.group(2))):
+            problems.append(
+                f"index.html 入口 {name}?v={entry_v} 落后于 {js_path.name}?v={js_m.group(1)}"
+                f"（重跑 tools/bump-versions.py 可自动同步）"
+            )
+    return problems
+
+
 def main():
-    """主流程：依次运行十项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十二项检查，汇总结果并按退出码约定返回。"""
     targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
@@ -707,6 +802,8 @@ def main():
         ("风格红线", lambda: check_style_problems(targets)),
         ("分享包一致", check_packages_problems),
         ("去噪自检", check_doctest_problems),
+        ("成就cat完整", check_ach_cat_problems),
+        ("入口版本一致", check_entry_version_problems),
     ]
     all_ok = True
     for label, fn in checks:

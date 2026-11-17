@@ -7,7 +7,7 @@
      里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
      行为级验证——零依赖（无 node / playwright），与项目工具链一致。
 
-     覆盖场景（18 项）：
+     覆盖场景（20 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
        S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
@@ -37,9 +37,16 @@
                               确定性驱动源下精简档 obtain 全哑粒子 + 完整档同种子真粒子对照；
                               驱动步骤带名标签（失败定位到「页·段·步」），klotski 卒坐标
                               自棋盘格几何常量派生（替代魔数比例，几何重构自动跟随）
-     注：S9~S16 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
+       S19 演出档位mode   —— 子页收侧 mode 消费（aa051cb 修复回归）：mode=3 自动档记忆保持
+                              （只跟随实际档不丢「自动」高亮）+ act:set 忽略防回环 +
+                              旧版仅 idx 固定档兼容 + 非法 idx 钳位 + 子页不持久化
+       S20 事件型成就渲染 —— 合成 Ach.init 三卡（aa051cb 修复回归）：事件型锁定/解锁 + 进度型对照——
+                              NaN/undefined 零出现、「事件达成」标注、锁定卡「cat · 尚未达成」前缀、
+                              进度条 0%/100% 钳位、迁移旧解锁「已达成」兜底、unlock 幂等
+     注：S9~S16 与 S19 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
          改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归；
-         S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径
+         S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径；
+         S20 直引 ach-common.js 以受控 defs 合成实例，渲染契约断言零 iframe 开销
 
      运行方式：先起服（python server.py），浏览器访问
        http://localhost:8765/tests/smoke.html
@@ -50,7 +57,7 @@
      document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
      + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
      本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
-     一键全量验证：python tools/verify_all.py（重建分享包 → 十项静态检查 →
+     一键全量验证：python tools/verify_all.py（重建分享包 → 十二项静态检查 →
        无头冒烟 → 无头行为回归；自动起随机端口临时服 / 探测本机 Chrome 或 Edge）。
 
      数据安全：启动时快照 localStorage 全部键值，结束时（含 pagehide 兜底）
@@ -89,6 +96,7 @@
 <div id="stage"></div>
 <script src="../arcade-common.js?v=20261117-2"></script>
 <script src="../fx.js?v=20261117-3"></script>
+<script src="../ach-common.js?v=20261117-2"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------
@@ -995,6 +1003,109 @@ async function s18_fxGateAllPages() {
         '完整档对照 ' + totalReal + ' 次全真入池（' + names.join('/') + '）';
 }
 
+/** S19 演出档位 mode 消费（aa051cb 修复回归）：子页收侧按广播 mode 字段区分自动档记忆与旧版固定档。
+ *  真实 snake embed iframe + 同源 postMessage 链路，五组断言——mode=3 记忆保持 / act:set 忽略
+ *  防回环 / 旧版仅 idx 固定档兼容 / 非法 idx 钳位 / 子页不持久化（存储权威归父页） */
+async function s19_fxLevelMode() {
+    lsClear();
+    lsSet('arcadeFxLevel', '2'); // 子页按存储值固定完整档起步（基线 level=2 / mode=2）
+    const mark = msgLog.length;
+    const frame = await loadPage('../snake.html?embed=1');
+    await waitHandshake(mark);
+    const fx = () => frame.contentWindow.FX;
+    ok(fx() && fx().getFxLevel() === 2 && fx().getFxMode() === 2,
+        '子页未按存储值固定完整档起步（level=' + (fx() ? fx().getFxLevel() : '-') +
+        ' mode=' + (fx() ? fx().getFxMode() : '-') + '）');
+
+    // 新版自动档广播（带 mode=3）：mode 记忆保持 3、实际档跟随 idx——面板「自动」高亮不失真
+    frame.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: 0, mode: 3 }, location.origin);
+    await waitUntil(() => fx().getFxLevel() === 0 && fx().getFxMode() === 3, 'mode=3 广播未按自动档记忆消费（期望 level=0/mode=3）');
+    frame.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: 2, mode: 3 }, location.origin);
+    await waitUntil(() => fx().getFxLevel() === 2 && fx().getFxMode() === 3, '自动档第二跳 mode 未保持（期望 level=2/mode=3）');
+    ok(localStorage.getItem('arcadeFxLevel') === '2',
+        '子页不应持久化档位（存储被回写为 ' + localStorage.getItem('arcadeFxLevel') + '）');
+
+    // 父页方向的 act:'set' 指令报文（子页转发语义）：收侧必须忽略，防回环改写，状态保持 2/3
+    frame.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: 0, act: 'set' }, location.origin);
+    await new Promise(r => setTimeout(r, 120));
+    ok(fx().getFxLevel() === 2 && fx().getFxMode() === 3, 'act:set 报文未被忽略（子页状态被意外改写）');
+
+    // 旧版仅 idx（无 mode 字段）：按固定档应用——level 与 mode 一同回落为 idx
+    frame.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: 1 }, location.origin);
+    await waitUntil(() => fx().getFxLevel() === 1 && fx().getFxMode() === 1, '旧版仅 idx 广播未按固定档兼容（期望 1/1）');
+
+    // 非法 idx：旧版固定档分支钳位到完整档 2/2
+    frame.contentWindow.postMessage({ type: 'arcade:fxlevel', idx: 9 }, location.origin);
+    await waitUntil(() => fx().getFxLevel() === 2 && fx().getFxMode() === 2, '非法 idx 未钳位完整档（期望 2/2）');
+
+    return 'mode=3 记忆保持 + act:set 忽略 + 旧版固定档兼容 + 非法钳位 + 子页不持久化 全对';
+}
+
+/** S20 事件型成就渲染（aa051cb 修复回归）：直引 ach-common.js 合成 Ach.init 三卡实例，
+ *  受控 defs 覆盖事件型锁定 / 事件型解锁 / 进度型对照——渲染契约断言零 iframe 开销。
+ *  sfx 音效钩子双 stub（smoke 页未加载 audio.js，默认钩子会 ReferenceError）；rarity
+ *  全 common 免触发 FX.recordBurst 烟花，断言聚焦渲染产物本身 */
+async function s20_achEventRender() {
+    ok(window.Ach && typeof Ach.init === 'function' && Ach.RARITY_LABEL, 'Ach 共享层基础导出缺失（init/RARITY_LABEL）');
+    lsClear(); // 独立存储键仍先清库：防前序场景残留干扰
+    const mk = (id) => {
+        const el = document.createElement('div');
+        el.id = id;
+        document.body.appendChild(el);
+        return el;
+    };
+    const nodes = ['s20_wall', 's20_grid', 's20_count', 's20_total', 's20_bar', 's20_toasts'].map(mk);
+    const api = Ach.init({
+        defs: [
+            { id: 'ev_locked', name: '事件·锁', icon: '🎯', rarity: 'common', cat: '技巧', desc: '事件型未达成', stat: null, target: null },
+            { id: 'ev_done', name: '事件·达', icon: '🏆', rarity: 'common', cat: '成长', desc: '事件型已达成', stat: null, target: null },
+            { id: 'prog_ctrl', name: '进度·照', icon: '📈', rarity: 'common', cat: '得分', desc: '进度型对照', stat: 'score', target: 100 },
+        ],
+        storageKey: 'smoke_ach_s20',
+        bestDefaults: { score: 0 },
+        mount: { wall: nodes[0], grid: nodes[1], count: nodes[2], total: nodes[3], barFill: nodes[4], toasts: nodes[5] },
+        sfx: { unlock: () => {}, ui: () => {} },
+    });
+    ok(typeof Ach.renderWall === 'function' && typeof Ach.unlock === 'function', 'Ach.init 后实例 API 未合并到 window.Ach');
+    const cards = () => nodes[1].querySelectorAll('.ach-card');
+    const fill = (i) => nodes[1].querySelectorAll('.ach-prog-fill')[i].style.width;
+    const isLocked = (i) => /\blocked\b/.test(cards()[i].className); // 词边界区分 locked / unlocked（后者含前者子串）
+    api.renderWall();
+
+    // 初始渲染：三卡齐全 + NaN/undefined 零出现（修复前事件卡渲染 NaN/undefined + width:NaN% 假满）
+    ok(cards().length === 3, '成就卡数量不符（期望 3，实际 ' + cards().length + '）');
+    const html0 = nodes[1].innerHTML;
+    ok(!html0.includes('NaN') && !html0.includes('undefined'), '渲染产物含 NaN/undefined（hasProg 兜底失效）');
+    ok(html0.includes('事件达成'), '事件型卡未按「事件达成」标注进度文案');
+    ok(isLocked(0) && fill(0) === '0%', '锁定事件卡应为锁定态且进度条 0%（实际 ' + fill(0) + '）');
+    ok(cards()[0].textContent.includes('技巧 · 尚未达成'), '锁定事件卡缺 cat 前缀文案（期望「技巧 · 尚未达成」）');
+    ok(fill(2) === '0%' && cards()[2].textContent.includes('0 / 100'), '进度型对照卡初始应为 0 / 100');
+
+    // 解锁事件卡：unlocked 点亮态 + 进度条仍 0%（事件型无进度语义）+ unlock 幂等不覆盖时间戳
+    ok(api.unlock('ev_done') === true, 'unlock 新解锁应返回 true');
+    ok(api.unlock('ev_done') === false, 'unlock 重复解锁应幂等返回 false');
+    api.renderWall();
+    ok(/\bunlocked\b/.test(cards()[1].className), '已解锁事件卡应为点亮态');
+    ok(fill(1) === '0%', '已解锁事件卡进度条应为 0%（修复前 NaN%）');
+    ok(cards()[1].textContent.includes('事件达成'), '已解锁事件卡进度文案应保持「事件达成」');
+    // 迁移兜底：旧解锁无时间戳（ts=0）显示「已达成」而非 Invalid Date
+    api.getStore().unlocked.ev_done = 0;
+    api.renderWall();
+    ok(cards()[1].textContent.includes('已达成'), '时间戳为 0 的迁移旧解锁应显示「已达成」兜底');
+
+    // 进度型链路：trackRunStat 冲线自动解锁 → 进度条钳位 100%
+    api.trackRunStat('score', 100);
+    api.renderWall();
+    ok(/\bunlocked\b/.test(cards()[2].className), '冲线后进度型成就应自动解锁');
+    ok(fill(2) === '100%', '进度条应钳位 100%（实际 ' + fill(2) + '）');
+    ok(cards()[2].textContent.includes('100 / 100'), '进度文案应为 100 / 100');
+
+    // 清理：存储键与合成节点（未入 #stage，clearStage 不覆盖，须手动归还）
+    localStorage.removeItem('smoke_ach_s20');
+    nodes.forEach(n => n.remove());
+    return '三卡渲染无 NaN/undefined：事件卡 0% 钳位 + cat 前缀 + 已达成兜底 + unlock 幂等 + 进度型 100% 冲线 全对';
+}
+
 /**
  * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
  * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
@@ -1011,7 +1122,7 @@ async function runScenarios(list) {
     }
 }
 
-// ---------- 主流程：快照 → 串行执行十八场景 → 恢复 ----------
+// ---------- 主流程：快照 → 串行执行二十场景 → 恢复 ----------
 async function main() {
     if (running) return;
     running = true;
@@ -1054,6 +1165,8 @@ async function main() {
             ['S16 演出强度档位（门控/持久化/广播）', s16_fxLevel],
             ['S17 门控跨页黑盒（精简档活跃粒子归零 + 自动档帧泵契约）', s17_fxGateCrossPage],
             ['S18 门控跨页全量（其余六页 A/B 参数化冒烟）', s18_fxGateAllPages],
+            ['S19 演出档位 mode 消费（自动档记忆/固定档兼容）', s19_fxLevelMode],
+            ['S20 事件型成就渲染（NaN 兜底/cat 前缀/进度钳位）', s20_achEventRender],
         ]);
     } finally {
         clearStage();

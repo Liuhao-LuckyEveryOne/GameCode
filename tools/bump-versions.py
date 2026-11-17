@@ -7,6 +7,11 @@
 
 版本号规则：YYYYMMDD-N；当日已有版本则 N 递增，跨日则重置为 1。
 
+卡片入口同步规则：大厅 index.html 的卡片入口引用形如 <a href="snake.html?v=...">，
+其版本不得落后于同目录同名业务 js（snake.js）的当前版本——js 因内容变更 bump 后，
+入口引用自动升至 js 同值；入口领先（如 html 本体单独变更后）合法不回退（只升不降）。
+同步基于当前引用而非 hash 基线，seed 模式下同样执行（可修复历史遗留的落后入口）。
+
 用法：
     python tools/bump-versions.py          # 检测变更并 bump
     python tools/bump-versions.py --seed   # 首次运行/重置基线：仅记录当前 hash，不 bump
@@ -21,6 +26,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = Path(__file__).resolve().parent / '.js-versions.json'
 REF_RE = re.compile(rb'([\w./-]+\.js)\?v=([\w-]+)')
+ENTRY_RE = re.compile(rb'([\w./-]+\.html)\?v=([\w-]+)')
+
+
+def parse_ver(v):
+    """把 YYYYMMDD-N 版本号解析为可比较的元组；不可解析按 (0, 0) 视为最旧"""
+    m = re.match(r'(\d{8})-(\d+)$', v)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
 def sha1(path):
@@ -79,6 +91,10 @@ def main():
     today = date.today().strftime('%Y%m%d')
     bumped, seeded, missing = [], [], []
 
+    # js 物理路径 -> 当前最新版本号（初始化取各处引用值，bump 后同步更新；
+    # 卡片入口同步以此为准，保证入口对齐到 js bump 之后的最新版本）
+    cur_v = {(ref_owner[n] / n).resolve(): refs[n] for n in refs}
+
     for name in sorted(process):
         path = ref_owner[name] / name
         if not path.is_file():
@@ -116,6 +132,40 @@ def main():
                 count += 1
         cache[name] = h
         bumped.append('%s  %s -> %s （%d 个 html）' % (name, old_v, new_v, count))
+        cur_v[(ref_owner[name] / name).resolve()] = new_v
+
+    # ---------- 卡片入口同步：入口 html 引用版本不得落后于同名业务 js ----------
+    # 扫描全部 html 中的 X.html?v= 入口引用（如大厅卡片 <a href="snake.html?v=...">），
+    # 同一入口多路径引用按解析后路径去重；仅当入口页存在且同目录同名 stem.js 有版本
+    # 记录时参与同步——入口落后即字节替换升至 js 同值，入口领先合法不回退（只升不降）
+    entry_refs = {}     # {入口 html 引用名: (版本号, 首次引用它的 html 所在目录)}
+    for html, data in html_bytes.items():
+        for name, ver in ENTRY_RE.findall(data):
+            key = name.decode('utf-8')
+            if key not in entry_refs:
+                entry_refs[key] = (ver.decode('utf-8'), html.parent)
+    entry_seen = {}
+    for name, (ver, owner) in entry_refs.items():
+        entry_seen.setdefault((owner / name).resolve(), (name, ver, owner))
+
+    entry_synced = []
+    for epath, (name, ver, owner) in entry_seen.items():
+        page = owner / name
+        jsname = page.stem + '.js'
+        js_key = (owner / jsname).resolve()
+        if not page.is_file() or js_key not in cur_v:
+            continue  # 非卡片入口形态（同名业务 js 不存在）或该 js 无版本记录，跳过
+        js_v = cur_v[js_key]
+        if parse_ver(ver) >= parse_ver(js_v):
+            continue  # 入口持平或领先，合法
+        old_ref = ('%s?v=%s' % (name, ver)).encode('utf-8')
+        new_ref = ('%s?v=%s' % (name, js_v)).encode('utf-8')
+        count = 0
+        for html, data in html_bytes.items():
+            if old_ref in data:
+                html_bytes[html] = data.replace(old_ref, new_ref)
+                count += 1
+        entry_synced.append('%s?v=%s -> %s （对齐 %s，%d 个 html）' % (name, ver, js_v, jsname, count))
 
     # 写回 html（仅写入内容有变化的文件，按字节写避免换行符被改写）
     for html, data in html_bytes.items():
@@ -132,7 +182,11 @@ def main():
         print('版本号已更新 %d 个：' % len(bumped))
         for line in bumped:
             print('  * ' + line)
-    if not seeded and not bumped:
+    if entry_synced:
+        print('卡片入口同步 %d 处：' % len(entry_synced))
+        for line in entry_synced:
+            print('  -> ' + line)
+    if not seeded and not bumped and not entry_synced:
         print('无变更，所有版本号均为最新')
     if missing:
         print('警告：以下 js 文件缺失：%s' % ', '.join(missing))
