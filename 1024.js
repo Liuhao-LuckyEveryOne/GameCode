@@ -1231,12 +1231,45 @@ function isValidBoard(board) {
 }
 
 /**
+ * 将当前对局进度组装为纯数据快照对象（快照字段说明见 saveSnapshot 注释）：
+ * 仅含数值 / 字符串 / 嵌套数组，不含任何函数与 DOM 引用，可安全 JSON 序列化；
+ * v 必须是对象首个字段（JSON.stringify 按插入顺序输出，恢复端据此先校验版本）
+ * @returns {object} 纯数据进度快照
+ */
+function build1024Snapshot() {
+    return {
+        v: 1,                                                        // 结构版本号（契约固定首字段）
+        diff: currentDifficulty,                                     // 存档与难度绑定（棋盘尺寸不同）
+        board: grid.map((row) => row.map((t) => (t ? t.value : 0))), // 棋面值矩阵（0 或 2 的幂）
+        score,                                                       // 当前分数
+        combo,                                                       // 当前连击步数
+        undosLeft,                                                   // 剩余撤销次数
+        hasWon,                                                      // 是否已达成过 1024
+        isNewRecord,                                                 // 本局是否刷新过最高分
+        milestones: Array.from(milestones),                          // 已触发里程碑集合（Set 序列化为数组）
+        // 撤销栈镜像：只保留最近 32 步（slice(-32) 负索引从尾部截取），与恢复端上限一致
+        history: history.slice(-32).map((h) => ({ board: h.board, score: h.score, combo: h.combo })),
+    };
+}
+
+// 存取管线由共享库 snap-common.js 驱动：游戏进行中（含暂停中）写入镜像，
+// 处于开始界面 / 胜利面板 / 死局结算等非进行中状态时转为清除快照（快照只服务于未打完的局）；
+// 组装意外与存储不可用（隐私模式 / 配额满）由管线整体 try/catch 静默，不影响游戏本体
+const snapPipe = Snap.create({
+    key: SAVE_KEY,
+    canSave: () => playing,
+    build: build1024Snapshot,
+    validate: validate1024Snapshot,
+    apply: apply1024Snapshot
+});
+
+/**
  * 将当前对局进度镜像为纯数据快照写入 localStorage（键 arcade_save_1024，街机厅统一契约）：
  * 仅在「对局进行中（含暂停中）」时写入；开始界面 / 胜利面板 / 死局结算等非进行中状态
  * 一律转为清除存档（快照只服务于未打完的局）。整体 try/catch 静默处理，
  * 存储不可用（隐私模式 / 配额满）等异常不影响游戏本体。
  * 触发时机：每步有效滑动 / 撤销后（局内主动落盘），以及父页 arcade:save 消息、
- * pagehide 页面卸载两处兜底。
+ * pagehide 页面卸载两处兜底（接线见文件尾部 Snap.bindAutoSave）。
  * 快照字段（首字段固定结构版本号 v，恢复时不匹配立即视为无效）：
  *   v           快照格式版本，恒为 1
  *   diff        难度键名（easy / normal / hard，棋盘尺寸与存档绑定）
@@ -1251,29 +1284,7 @@ function isValidBoard(board) {
  * @returns {void}
  */
 function saveSnapshot() {
-    // 非进行中（未开始 / 胜利面板待决 / 死局结算面板）：不留快照，直接清除旧档
-    if (!playing) {
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用时静默
-        return;
-    }
-    try {
-        // 组装纯数据快照：仅含数值 / 字符串 / 嵌套数组，不含任何函数与 DOM 引用，可安全 JSON 序列化；
-        // v 必须是对象首个字段（JSON.stringify 按插入顺序输出，恢复端据此先校验版本）
-        const snap = {
-            v: 1,                                                        // 结构版本号（契约固定首字段）
-            diff: currentDifficulty,                                     // 存档与难度绑定（棋盘尺寸不同）
-            board: grid.map((row) => row.map((t) => (t ? t.value : 0))), // 棋面值矩阵（0 或 2 的幂）
-            score,                                                       // 当前分数
-            combo,                                                       // 当前连击步数
-            undosLeft,                                                   // 剩余撤销次数
-            hasWon,                                                      // 是否已达成过 1024
-            isNewRecord,                                                 // 本局是否刷新过最高分
-            milestones: Array.from(milestones),                          // 已触发里程碑集合（Set 序列化为数组）
-            // 撤销栈镜像：只保留最近 32 步（slice(-32) 负索引从尾部截取），与恢复端上限一致
-            history: history.slice(-32).map((h) => ({ board: h.board, score: h.score, combo: h.combo })),
-        };
-        Arcade.saveJSON(SAVE_KEY, snap); // 写入受限（隐私模式 / 配额满）由 saveJSON 静默降级
-    } catch (e) { /* 快照组装异常时静默放弃，不影响游戏 */ }
+    snapPipe.save();
 }
 
 /**
@@ -1282,70 +1293,80 @@ function saveSnapshot() {
  * @returns {void}
  */
 function clearProgress() {
-    Arcade.removeRaw(SAVE_KEY); // 存储受限时同样静默跳过
+    snapPipe.clear(); // 存储受限时同样静默跳过
+}
+
+/**
+ * 校验进度快照结构合法性（供共享库 Snap.restore 管线调用）：逐字段检查
+ * 结构版本号（v !== 1 立即视为无效）、难度归属、棋面矩阵（SIZE×SIZE 且
+ * 每格为 0 或 2 的幂）、分数/连击为非负整数、剩余撤销次数范围、
+ * hasWon/isNewRecord 布尔类型、棋面至少一个方块、撤销栈逐条结构
+ * （超长截断至最近 32 步）。里程碑为纯表现层标记，宽容处理不参与失效判定。
+ * @param {*} snap 待校验快照对象
+ * @returns {boolean} 快照合法返回 true；任一校验失败返回 false（存档由管线统一清除）
+ */
+function validate1024Snapshot(snap) {
+    if (!snap || typeof snap !== 'object' || snap.v !== 1) return false; // 结构版本号不匹配（损坏 / 被篡改 / 未来格式）
+    if (snap.diff !== currentDifficulty) return false; // 属于其他难度的对局
+    if (!isValidBoard(snap.board)) return false;       // 棋面矩阵非法（尺寸 / 非幂值）
+    if (!Number.isInteger(snap.score) || snap.score < 0) return false;   // 分数须为非负整数
+    if (!Number.isInteger(snap.combo) || snap.combo < 0) return false;   // 连击须为非负整数
+    if (!Number.isInteger(snap.undosLeft) || snap.undosLeft < 0 || snap.undosLeft > UNDO_LIMITS[currentDifficulty]) return false;
+    if (typeof snap.hasWon !== 'boolean' || typeof snap.isNewRecord !== 'boolean') return false;
+    // 棋面上至少要有一个方块（空棋面必为损坏数据）
+    let tileCount = 0;
+    for (const row of snap.board) for (const v of row) if (v) tileCount++;
+    if (!tileCount) return false;
+    // 撤销栈校验：超长镜像先截断至最近 32 步（与保存端上限一致），再逐条检查结构与取值
+    const historySaved = Array.isArray(snap.history) ? snap.history.slice(-32) : [];
+    for (const h of historySaved) {
+        if (!h || typeof h !== 'object' || !isValidBoard(h.board)) return false;
+        if (!Number.isInteger(h.score) || h.score < 0) return false;
+        if (!Number.isInteger(h.combo) || h.combo < 0) return false;
+    }
+    return true;
+}
+
+/**
+ * 将合法快照应用为续玩状态（供共享库 Snap.restore 管线调用）：按快照重建
+ * 棋面 / 分数 / 连击 / 撤销栈并收起开始面板直接续玩（恢复后直接可操作，
+ * 无需等待确认），并在操作提示行展示「已恢复上次进度」标记。
+ * @param {object} snap 已通过 validate1024Snapshot 校验的快照对象
+ * @returns {boolean} 应用成功返回 true
+ */
+function apply1024Snapshot(snap) {
+    // 撤销栈镜像截断至最近 32 步（与保存端 / 校验端上限一致）
+    const historySaved = Array.isArray(snap.history) ? snap.history.slice(-32) : [];
+    // 里程碑仅保留合法档位值（纯表现层标记，宽容处理不判存档失效）
+    const milestoneSaved = Array.isArray(snap.milestones)
+        ? snap.milestones.filter((m) => MILESTONE_VALUES.indexOf(m) !== -1)
+        : [];
+    // 复用撤销重建逻辑应用棋面/分数/连击，再补齐存档专属状态
+    restoreBoard({ board: snap.board, score: snap.score, combo: snap.combo });
+    history.length = 0;
+    for (const h of historySaved) history.push({ board: h.board, score: h.score, combo: h.combo });
+    undosLeft = snap.undosLeft;
+    hasWon = snap.hasWon;
+    isNewRecord = snap.isNewRecord;
+    milestones = new Set(milestoneSaved);
+    updateUndoHud(); // restoreBoard 执行时 undosLeft 尚未恢复，此处补刷撤销按钮态
+    playing = true;
+    SFX.bgm.start('n1024'); // 续玩存档：BGM 跟随恢复（AudioContext 未激活时挂起等待，首次手势后自动补启）
+    hideOverlay(startScreen); // 有进度可续：直接收起开始面板进入对局
+    // 恢复成功提示：画布下方操作提示行追加「已恢复上次进度」小字（重开后由 startGame 撤下）
+    if (restoreNote) restoreNote.style.display = 'inline';
+    return true;
 }
 
 /**
  * 从 localStorage 读取进度快照并恢复续玩状态（键 arcade_save_1024，街机厅统一契约）。
- * 整体 try/catch 绝不向上抛错；逐字段校验结构版本号（v !== 1 立即视为无效）、
- * 难度归属、棋面矩阵（SIZE×SIZE 且每格为 0 或 2 的幂）、分数/连击为非负整数、
- * 剩余撤销次数范围、撤销栈逐条结构（超长截断至最近 32 步）、里程碑档位合法性；
- * 任一校验失败即清除存档并返回 false，调用方回退默认新开局流程。
- * 全部通过则按快照重建棋面 / 分数 / 连击 / 撤销栈并收起开始面板直接续玩
- * （恢复后直接可操作，无需等待确认），并在操作提示行展示「已恢复上次进度」标记。
+ * 骨架（读取 / 校验 / 应用 / 任一环节失败清档 / 异常兜底）由共享库 snap-common.js
+ * 统一收口，校验与应用细节见 validate1024Snapshot / apply1024Snapshot；
+ * 无存档或快照非法时调用方回退默认新开局流程。
  * @returns {boolean} 快照合法并已恢复返回 true；无快照或快照非法返回 false
  */
 function restoreSnapshot() {
-    // 内部辅助：清除存档并返回 false（任一校验失败 / 读取异常统一走此收尾）
-    const drop = () => {
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用时忽略
-        return false;
-    };
-    try {
-        const snap = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        if (!snap) return false; // 无存档或已损坏：正常新开局，无需清理
-        // 结构版本号不匹配（损坏 / 被篡改 / 未来格式）：立即判无效并清除
-        if (!snap || typeof snap !== 'object' || snap.v !== 1) return drop();
-        if (snap.diff !== currentDifficulty) return drop(); // 属于其他难度的对局
-        if (!isValidBoard(snap.board)) return drop();       // 棋面矩阵非法（尺寸 / 非幂值）
-        if (!Number.isInteger(snap.score) || snap.score < 0) return drop();   // 分数须为非负整数
-        if (!Number.isInteger(snap.combo) || snap.combo < 0) return drop();   // 连击须为非负整数
-        if (!Number.isInteger(snap.undosLeft) || snap.undosLeft < 0 || snap.undosLeft > UNDO_LIMITS[currentDifficulty]) return drop();
-        if (typeof snap.hasWon !== 'boolean' || typeof snap.isNewRecord !== 'boolean') return drop();
-        // 棋面上至少要有一个方块（空棋面必为损坏数据）
-        let tileCount = 0;
-        for (const row of snap.board) for (const v of row) if (v) tileCount++;
-        if (!tileCount) return drop();
-        // 撤销栈校验：超长镜像先截断至最近 32 步（与保存端上限一致），再逐条检查结构与取值
-        const historySaved = Array.isArray(snap.history) ? snap.history.slice(-32) : [];
-        for (const h of historySaved) {
-            if (!h || typeof h !== 'object' || !isValidBoard(h.board)) return drop();
-            if (!Number.isInteger(h.score) || h.score < 0) return drop();
-            if (!Number.isInteger(h.combo) || h.combo < 0) return drop();
-        }
-        // 里程碑校验：仅保留合法档位值（纯表现层标记，宽容处理不判存档失效）
-        const milestoneSaved = Array.isArray(snap.milestones)
-            ? snap.milestones.filter((m) => MILESTONE_VALUES.indexOf(m) !== -1)
-            : [];
-        // 全部通过：复用撤销重建逻辑应用棋面/分数/连击，再补齐存档专属状态
-        restoreBoard({ board: snap.board, score: snap.score, combo: snap.combo });
-        history.length = 0;
-        for (const h of historySaved) history.push({ board: h.board, score: h.score, combo: h.combo });
-        undosLeft = snap.undosLeft;
-        hasWon = snap.hasWon;
-        isNewRecord = snap.isNewRecord;
-        milestones = new Set(milestoneSaved);
-        updateUndoHud(); // restoreBoard 执行时 undosLeft 尚未恢复，此处补刷撤销按钮态
-        playing = true;
-        SFX.bgm.start('n1024'); // 续玩存档：BGM 跟随恢复（AudioContext 未激活时挂起等待，首次手势后自动补启）
-        hideOverlay(startScreen); // 有进度可续：直接收起开始面板进入对局
-        // 恢复成功提示：画布下方操作提示行追加「已恢复上次进度」小字（重开后由 startGame 撤下）
-        if (restoreNote) restoreNote.style.display = 'inline';
-        return true;
-    } catch (e) {
-        // 任何异常（JSON 损坏 / 存储不可用等）：清除存档并按无档处理，绝不向上抛错
-        return drop();
-    }
+    return snapPipe.restore();
 }
 
 /** 显示指定遮罩面板
@@ -1447,22 +1468,25 @@ function continueGame() {
     SFX.bgm.start('n1024'); // 胜利演出期间 BGM 已停，继续挑战重新响起
 }
 
-/** 切换暂停：翻转暂停标记并显示/隐藏暂停遮罩。
- *  仅对局中生效（面板态调用无效——胜利/结束时 playing 已为 false）；
+/* 暂停引擎（共享库 pause-common.js）：守卫准入 → 写标志 → 遮罩显隐 → BGM 挂起/接续
+ * → 暂停/恢复音效的公共序列下沉，本文件只注入差异件——对局中准入、拖拽中暂停的
+ * 手势终止与 1024 专属暂停/恢复音效（n1024Pause/n1024Resume） */
+const pausePipe = Pause.create({
+    isPaused: () => isPaused,
+    canToggle: () => playing, // 面板态直接忽略（胜利/结束时 playing 已为 false）
+    setPaused: (paused) => {
+        isPaused = paused;
+        if (paused) endMouseDrag(); // 拖拽中暂停：立即终止鼠标拖拽手势，防止遮罩下残留拖拽在恢复时误出招
+    },
+    overlay: pauseScreen,
+    pauseSfx: () => SFX.n1024Pause(),
+    resumeSfx: () => SFX.n1024Resume(),
+});
+
+/** 切换暂停：委托共享暂停引擎（遮罩/BGM/音效公共序列），仅对局中生效；
  *  切窗失焦也会自动调用，与其他游戏失焦即暂停的行为保持一致 */
 function togglePause() {
-    if (!playing) return; // 面板态直接忽略
-    isPaused = !isPaused;
-    if (isPaused) {
-        endMouseDrag(); // 拖拽中暂停：立即终止鼠标拖拽手势，防止遮罩下残留拖拽在恢复时误出招
-        showOverlay(pauseScreen);
-        SFX.bgm.pause(); // 暂停 BGM，营造时间冻结氛围
-        SFX.n1024Pause(); // 暂停：下行收束音（时间冻结的质感）
-    } else {
-        hideOverlay(pauseScreen);
-        SFX.bgm.resume(); // 恢复 BGM 接续播放
-        SFX.n1024Resume(); // 恢复：上行启动音（重新出发的推进感）
-    }
+    pausePipe.toggle();
 }
 
 /** 切换难度：更新棋盘尺寸与按钮高亮，并以新尺寸重铺预览棋盘
@@ -1582,8 +1606,7 @@ function handleFocusLoss() {
     heldKeys.length = 0; // 清空按住记录：切窗后系统不会补发 keyup，防止回来后莫名连滑
     endMouseDrag(); // 清理进行中的鼠标拖拽手势：切窗后不会补发 pointerup，残留拖拽恢复后会误出招
 }
-window.addEventListener('blur', handleFocusLoss);
-document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
+Snap.bindFocusLoss(handleFocusLoss); // blur + visibilitychange 双通道接线收口共享库（幂等性说明见上）
 
 // 触屏：按下记录起点，手指划过阈值即刻出招（无需抬手），
 // 且每次触发后把起点重置为当前位置，一次连续拖动即可连环滑动
@@ -1705,20 +1728,12 @@ requestAnimationFrame(loop);
 FX.playtime.init('1024');
 FX.KeyLight.init();
 
-/* ---------- 进度镜像快照的两处保存触发点（街机厅统一契约，与 snake 等游戏一致） ---------- */
-
-// 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
-// （saveSnapshot 内部自行区分：进行中写入，未开始/胜利面板/死局结算则清除存档）
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
-Arcade.onTrustedMessage((e) => {
-    if (e.data && e.data.type === Arcade.MSG.SAVE) saveSnapshot();
-});
-
-// 触发点 b：页面卸载兜底（关闭标签页 / 刷新 / 父页移除 iframe 均触发）
-// —— 进行中写入快照；非进行中状态由 saveSnapshot 内部转为清除
-window.addEventListener('pagehide', () => {
-    saveSnapshot();
-});
+/* ---------- 进度镜像快照的两处保存触发点（街机厅统一契约，与 snake 等游戏一致） ----------
+ * 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度；
+ * 触发点 b：页面卸载兜底（关闭标签页 / 刷新 / 父页移除 iframe 均触发）；
+ * 进行中写入快照，非进行中状态由管线转为清除。两处接线收口共享库，
+ * 消息来源守卫在 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免 */
+Snap.bindAutoSave(snapPipe);
 
 /* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
 // 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；

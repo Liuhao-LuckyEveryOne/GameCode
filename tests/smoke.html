@@ -7,7 +7,7 @@
      里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
      行为级验证——零依赖（无 node / playwright），与项目工具链一致。
 
-     覆盖场景（20 项）：
+     覆盖场景（21 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
        S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
@@ -43,10 +43,14 @@
        S20 事件型成就渲染 —— 合成 Ach.init 三卡（aa051cb 修复回归）：事件型锁定/解锁 + 进度型对照——
                               NaN/undefined 零出现、「事件达成」标注、锁定卡「cat · 尚未达成」前缀、
                               进度条 0%/100% 钳位、迁移旧解锁「已达成」兜底、unlock 幂等
+       S21 手柄合成链路  —— bootGamePage 装载 snake 页 + 桩替换 navigator.getGamepads：GP.connected 上浮/拔除复位、
+                              合成 keydown/keyup 送达 document 且冒泡 window、key/code 与原生键盘同构（Space key=' '）、
+                              按住边沿去重、拔除补发 keyup 防卡键，页面侧 preventDefault 消费即端到端落点证据
      注：S9~S16 与 S19 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
          改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归；
          S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径；
-         S20 直引 ach-common.js 以受控 defs 合成实例，渲染契约断言零 iframe 开销
+         S20 直引 ach-common.js 以受控 defs 合成实例，渲染契约断言零 iframe 开销；
+         S21 经 bootGamePage 同源装载并以 getGamepads 桩替代实体手柄（轮询式 API 黑盒替换数据源）
 
      运行方式：先起服（python server.py），浏览器访问
        http://localhost:8765/tests/smoke.html
@@ -57,7 +61,7 @@
      document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
      + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
      本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
-     一键全量验证：python tools/verify_all.py（重建分享包 → 十二项静态检查 →
+     一键全量验证：python tools/verify_all.py（重建分享包 → 十三项静态检查 →
        无头冒烟 → 无头行为回归；自动起随机端口临时服 / 探测本机 Chrome 或 Edge）。
 
      数据安全：启动时快照 localStorage 全部键值，结束时（含 pagehide 兜底）
@@ -95,8 +99,8 @@
 <button id="rerun" type="button">重新运行</button>
 <div id="stage"></div>
 <script src="../arcade-common.js?v=20261117-2"></script>
-<script src="../fx.js?v=20261117-3"></script>
-<script src="../ach-common.js?v=20261117-2"></script>
+<script src="../fx.js?v=20261118-1"></script>
+<script src="../ach-common.js?v=20261118-1"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------
@@ -1107,6 +1111,80 @@ async function s20_achEventRender() {
 }
 
 /**
+ * S21 手柄库端到端（gamepad.js 保留决策的行为级证据）：bootGamePage 同源装载真实
+ * snake 页（rAF 已被泵桩接管 → gamepad.js 的轮询循环入泵队列、由 __pump 确定性
+ * 驱动），以 Object.defineProperty 桩替换子页 navigator.getGamepads（Gamepad API
+ * 为轮询式数据源、无原生按键事件，黑盒替换数据源即标准手法），断言库契约全链路——
+ * 连接状态上浮（GP.connected）、标准键盘事件合成送达 document 且冒泡至 window、
+ * key/code 双属性与原生键盘同构（含 Space 的 key=' ' ≠ code='KeyP' 型差异键）、
+ * 按住期边沿去重（不模拟连发）、拔除时 held 补发 keyup（防 tetris DAS 卡键）+
+ * connected 复位；另断言合成事件被页面真实监听消费（snake 键盘监听对方向键
+ * preventDefault——defaultPrevented 为真即端到端落点证据，与游戏内部状态机解耦）。
+ * 无实体手柄依赖，headless 可跑。
+ * @returns {Promise<string>} 通过明细
+ */
+async function s21_gamepadSynth() {
+    const frame = await bootGamePage('../snake.html');
+    const w = frame.contentWindow, d = w.document;
+    ok(w.GP && w.GP.connected === false, 'gamepad.js 应已装载且初始 GP.connected=false');
+    // 合成手柄：standard mapping 布局（17 按钮 + 左摇杆双轴），初始全空态
+    const pad = { connected: true, id: 'Smoke Pad (STUB)', mapping: 'standard',
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0] };
+    Object.defineProperty(w.navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] });
+    // 捕获合成事件：document 侧全量记录 + window 侧证 bubbles 冒泡通路；dp 记录页面是否消费
+    const log = [];
+    const cap = e => log.push({ t: e.type, k: e.key, c: e.code, w: false, dp: e.defaultPrevented });
+    const capWin = e => log.push({ t: e.type, k: e.key, c: e.code, w: true, dp: false });
+    d.addEventListener('keydown', cap);
+    d.addEventListener('keyup', cap);
+    w.addEventListener('keydown', capWin);
+    w.addEventListener('keyup', capWin);
+    try {
+        // 段A：按下 A(0)→Space、X(2)→KeyP、十字上(12)→ArrowUp，泵 1 帧过边沿
+        pad.buttons[0].pressed = true;
+        pad.buttons[2].pressed = true;
+        pad.buttons[12].pressed = true;
+        frame.__pump(1);
+        ok(w.GP.connected === true, '轮询到已连接手柄后 GP.connected 应为 true');
+        const downs = log.filter(x => x.t === 'keydown' && !x.w);
+        ok(downs.length === 3, '三键按下应恰好合成三次 keydown');
+        ok(downs.some(x => x.k === ' ' && x.c === 'Space'), 'A 键应合成 key=" " code="Space"（key≠code 同构原生键盘）');
+        ok(downs.some(x => x.k === 'p' && x.c === 'KeyP'), 'X 键应合成 key="p" code="KeyP"');
+        ok(downs.some(x => x.k === 'ArrowUp' && x.c === 'ArrowUp'), '十字上应合成 ArrowUp/ArrowUp');
+        ok(log.some(x => x.t === 'keydown' && x.w && x.c === 'Space'), '合成事件应冒泡至 window（bubbles:true 通路）');
+        const upEv = downs.find(x => x.c === 'ArrowUp');
+        ok(upEv.dp === true, 'snake 页键盘监听应消费合成事件（方向键 preventDefault → defaultPrevented）');
+        // 段B：维持按下再泵 1 帧——边沿触发不得重复派发（按住=一次 keydown，对齐 e.repeat 过滤）
+        frame.__pump(1);
+        ok(log.filter(x => x.t === 'keydown' && !x.w).length === 3, '按住期间泵帧不得重复 keydown（边沿去重）');
+        // 段C：三键全松——keyup 回放 press 时记录的原 key（Space 回放 ' ' 而非 code）
+        pad.buttons[0].pressed = false;
+        pad.buttons[2].pressed = false;
+        pad.buttons[12].pressed = false;
+        frame.__pump(1);
+        const ups = log.filter(x => x.t === 'keyup' && !x.w);
+        ok(ups.length === 3, '三键松开应各派发一次 keyup');
+        ok(ups.some(x => x.k === ' ' && x.c === 'Space') && ups.some(x => x.k === 'p' && x.c === 'KeyP') && ups.some(x => x.k === 'ArrowUp' && x.c === 'ArrowUp'), 'keyup 键名应与 keydown 一致（原 key 回放）');
+        // 段D：再按 A 后拔除手柄——轮询侧掉线兜底应补发 held 键 keyup 并复位 connected
+        const mark = log.length;
+        pad.buttons[0].pressed = true;
+        frame.__pump(1);
+        ok(w.GP.connected === true, '再按 A 后仍在线');
+        Object.defineProperty(w.navigator, 'getGamepads', { configurable: true, value: () => [null, null, null, null] });
+        frame.__pump(1);
+        ok(w.GP.connected === false, '手柄拔除后 GP.connected 应回位 false（掉线兜底）');
+        const dUps = log.slice(mark).filter(x => x.t === 'keyup' && !x.w);
+        ok(dUps.length === 1 && dUps[0].k === ' ' && dUps[0].c === 'Space', '拔除应补发 held 键 keyup（防 tetris DAS 卡键兜底）');
+        return '合成手柄端到端：连接上浮 / 三键 key+code 同构送达 document 且冒泡 window / 页面 preventDefault 消费 / 边沿去重 / keyup 原 key 回放 / 拔除补发 keyup 并复位 全对';
+    } finally {
+        d.removeEventListener('keydown', cap);
+        d.removeEventListener('keyup', cap);
+        w.removeEventListener('keydown', capWin);
+        w.removeEventListener('keyup', capWin);
+    }
+}
+
+/**
  * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
  * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
  */
@@ -1122,7 +1200,7 @@ async function runScenarios(list) {
     }
 }
 
-// ---------- 主流程：快照 → 串行执行二十场景 → 恢复 ----------
+// ---------- 主流程：快照 → 串行执行二十一场景 → 恢复 ----------
 async function main() {
     if (running) return;
     running = true;
@@ -1167,6 +1245,7 @@ async function main() {
             ['S18 门控跨页全量（其余六页 A/B 参数化冒烟）', s18_fxGateAllPages],
             ['S19 演出档位 mode 消费（自动档记忆/固定档兼容）', s19_fxLevelMode],
             ['S20 事件型成就渲染（NaN 兜底/cat 前缀/进度钳位）', s20_achEventRender],
+            ['S21 手柄合成链路（GP 状态/键盘事件端到端）', s21_gamepadSynth],
         ]);
     } finally {
         clearStage();

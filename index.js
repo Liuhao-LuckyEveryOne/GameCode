@@ -49,7 +49,9 @@ const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').mat
 // ---------- 卡片最高分与「上次游玩」：读取各游戏写入的 localStorage 记录 ----------
 // 各游戏最高分键与语义方向（与游戏页内读写代码严格一致）：
 // snake/tetris/pac/bee/pinball/1024 均为分数（越大越好）；
-// klotski 为最少步数（越小越好，0 表示无纪录），按 难度×布局 拆为 18 键 + 3 个旧版布局键
+// klotski 为最少步数（越小越好，0 表示无纪录），按 难度×布局 拆为 18 键
+// + 6 个旧版布局键（klotski.js readBest 进阶档回读对所有布局生效，
+// guowu/jinzai/binglin 三布局无旧版写路径、读出恒为 0，收录仅为忠实镜像防漏同步）
 const BEST_DEFS = [
     { id: 'snake', keys: ['snakeHighScore'], direction: 'high' },
     { id: 'tetris', keys: ['tetrisHighScore'], direction: 'high' },
@@ -65,8 +67,9 @@ const BEST_DEFS = [
             'klotskiBest_normal_guowu', 'klotskiBest_normal_jinzai', 'klotskiBest_normal_binglin',
             'klotskiBest_hard_hengdao', 'klotskiBest_hard_zhihui', 'klotskiBest_hard_jiezu',
             'klotskiBest_hard_guowu', 'klotskiBest_hard_jinzai', 'klotskiBest_hard_binglin',
-            // 旧版（无难度维度）键：进阶难度仍会回读，聚合一并纳入
-            'klotskiBest_hengdao', 'klotskiBest_zhihui', 'klotskiBest_jiezu'
+            // 旧版（无难度维度）键：进阶档回读对所有布局生效，全量收录（永空键按无纪录跳过）
+            'klotskiBest_hengdao', 'klotskiBest_zhihui', 'klotskiBest_jiezu',
+            'klotskiBest_guowu', 'klotskiBest_jinzai', 'klotskiBest_binglin'
         ]
     },
     // 1024.js 自 2026-11 起主用 1024HighScore，1024BestScore 仅为旧存档迁移源，

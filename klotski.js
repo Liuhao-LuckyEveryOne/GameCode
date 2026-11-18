@@ -18,7 +18,8 @@
  *          重开/换局/演示零重复计算；Worker 不可用时降级为拒绝求解，不卡游戏）
  * 演示系统：P 键自动复现当前布局的 BFS 最佳解（格步口径，各布局均可完整通关）：
  *          从初始棋面起按固定节奏逐步自动执行，通关走完整庆祝演出但不写
- *          纪录与评级（非玩家成绩）；演示中玩家输入被屏蔽，仅 P 可中断（重开须先退出演示）
+ *          纪录与评级（非玩家成绩）；演示中走子/撤销/重开/提示/切布局输入被屏蔽，
+ *          仅 P 可中断、空格仍可暂停
  * 评级系统：通关按 步数/BFS最优步数 的比率评 S/A/B/C，使用 H 提示会封顶
  *          等级（1~2 次最高 A、≥3 次最高 B）；最佳评级按 难度+布局 分键记录
  * 每日一题：本地日期经 FNV-1a 哈希对布局池取模，确定性选出当日布局
@@ -274,7 +275,7 @@ let isNewRecord = false;
 let shake = 0;
 /** 胜利结算面板延迟显示的倒计时（秒），给纸屑演出留时间 */
 let winRevealTimer = 0;
-/** 演示模式进行中：true 时按最佳解逐步自动执行，玩家输入被屏蔽（仅 P 可中断） */
+/** 演示模式进行中：true 时按最佳解逐步自动执行，走子/撤销/重开等输入被屏蔽（仅 P 可中断，空格仍可暂停） */
 let demoActive = false;
 /** 演示剩余步序（startDemo 时求解的完整路径快照，逐步弹出）：[{ t, x, y, dx, dy }, ...] */
 let demoPath = null;
@@ -788,7 +789,7 @@ function checkAchievements(rank) {
     const before = Object.keys(Ach.getStore().unlocked); // 结算前快照：用于识别「本次新增」
     // 累计通关 +1：wins 为累计型统计，借共享库 max 通道等价实现加法（旧值+1 必然破纪录）
     Ach.trackRunStat('wins', Ach.getStore().best.wins + 1);
-    Ach.trackRunStat('moves', moves); // 本局步数兜底上报（走子路径已实时上报，此处保证通关路径完整）
+    Ach.trackRunStat('moves', moves); // 本局步数兜底上报（键盘走子已实时上报，拖拽走子仅经此处上报）
     // 神机妙算：本次评级达 S 即解锁（历史 S 不重判，以本次为准保持即时性）
     if (rank === 'S') Ach.unlock('rankS');
     // 兵贵神速：单局 5 分钟（300 秒）内通关
@@ -1005,33 +1006,43 @@ function loadLayout(index) {
 }
 
 /**
- * 将当前局进度镜像为纯数据快照写入 localStorage（键 arcade_save_klotski，与其它
- * 街机游戏同一契约）：仅在游戏进行中（含暂停中，state 为 playing）写入；处于开始
- * 界面（未开始）或已通关时转为清除快照（快照只服务于未打完的局）。整体 try/catch
- * 静默，存储不可用（隐私模式 / 配额满）等异常不影响游戏本体。
+ * 组装当前局进度镜像为纯数据快照（仅含数值 / 字符串 / 数组，不含任何函数与 DOM
+ * 引用，可安全 JSON 序列化）。仅在游戏进行中（含暂停中，state 为 playing）被管线调用。
  * 快照字段（首字段固定版本号 v，读取时不匹配立即视为无效）：
  *   v       快照格式版本，恒为 1
  *   layout  布局标识（LAYOUTS 的 id，恢复时据此切到对应布局）
  *   diff    难度标识（DIFF_IDS 的 id，辅助规则与存档棋面绑定）
  *   pieces  全部棋子当前位置数组 [[x, y]...]（与布局棋子表顺序一一对应）
  *   moves   当前步数
+ * @returns {object} 快照数据对象
+ */
+function buildKlotskiSnapshot() {
+    return {
+        v: 1, // 结构版本号：读取时不匹配立即视为无效
+        layout: LAYOUTS[layoutIndex].id, // 布局标识：恢复时据此切到对应布局
+        diff: currentDiffId(), // 难度标识：辅助规则不同，存档与难度绑定
+        pieces: pieces.map(p => [p.x, p.y]), // 全部棋子当前位置（按布局棋子表顺序对应）
+        moves: moves // 当前步数
+    };
+}
+
+// 存取管线由共享库 snap-common.js 驱动：游戏进行中（含暂停中）写入镜像，
+// 处于开始界面（未开始）或已通关时转为清除快照（快照只服务于未打完的局）；
+// 组装意外与存储不可用（隐私模式 / 配额满）由管线整体 try/catch 静默，不影响游戏本体
+const snapPipe = Snap.create({
+    key: SAVE_KEY,
+    canSave: () => state === 'playing',
+    build: buildKlotskiSnapshot,
+    validate: validateKlotskiSnapshot,
+    apply: applyKlotskiSnapshot
+});
+
+/**
+ * 将当前局进度镜像写入 localStorage（键 arcade_save_klotski，薄壳）：
+ * 进行中保存 / 未开始或已通关清除，读写管线与触发接线由 snap-common.js 统一实现
  */
 function saveSnapshot() {
-    // 仅进行中的棋局值得存档：已通关 / 未开始时转为清除，防止下次误续玩打完或没开的局
-    if (state === 'playing') {
-        // 组装纯数据快照：仅含数值 / 字符串 / 数组，不含任何函数与 DOM 引用，可安全 JSON 序列化
-        const snap = {
-            v: 1, // 结构版本号：读取时不匹配立即视为无效
-            layout: LAYOUTS[layoutIndex].id, // 布局标识：恢复时据此切到对应布局
-            diff: currentDiffId(), // 难度标识：辅助规则不同，存档与难度绑定
-            pieces: pieces.map(p => [p.x, p.y]), // 全部棋子当前位置（按布局棋子表顺序对应）
-            moves: moves // 当前步数
-        };
-        Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用 / 配额满时静默放弃，不影响游戏
-    } else {
-        // 游戏未开始 / 已通关：不留快照
-        Arcade.removeRaw(SAVE_KEY); // 静默
-    }
+    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
 }
 
 /**
@@ -1039,117 +1050,109 @@ function saveSnapshot() {
  * 启动演示时调用，避免下次进入页面误续玩一局已被废弃的棋局；存储不可用时静默跳过
  */
 function clearSnapshot() {
-    Arcade.removeRaw(SAVE_KEY); // 存储受限时同样静默跳过
+    snapPipe.clear(); // 委托共享库管线：直写 removeRaw（存储受限时同样静默跳过）
 }
 
 /**
- * 从 localStorage 读取进度快照并恢复续玩状态（键 arcade_save_klotski）：
- * 逐字段校验版本号 / 布局与难度标识可解析 / 棋子数量与该布局棋子表一致 /
- * 各棋子整数坐标且在棋盘界内 / 所有棋子两两互不重叠 / 步数为非负整数，
- * 任一校验失败即清除快照并返回 false（调用方回退默认新开局流程），绝不因脏数据抛错。
- * 校验通过后：切到快照的布局与难度，重新装载布局后把棋子摆到快照局面并同步步数，
- * 返回 true 由调用方直接进入可玩状态。
+ * 校验进度快照逐字段（键 arcade_save_klotski）：版本号 / 布局与难度标识可解析 /
+ * 棋子数量与该布局棋子表一致 / 各棋子整数坐标且在棋盘界内 / 所有棋子两两互不重叠 /
+ * 步数为非负整数。返回布尔风格：任一校验不通过返回 false，
+ * 由快照管线（snap-common.js）统一清除快照并回退默认新开局流程，绝不因脏数据抛错。
+ * @param {object} snap 待校验的快照对象（Arcade.loadJSON 产出，可能为任意脏数据）
+ * @returns {boolean} 校验全部通过返回 true；任一不通过返回 false
+ */
+function validateKlotskiSnapshot(snap) {
+    // 版本号不符（损坏或未来格式）：立即弃用
+    if (!snap || typeof snap !== 'object' || snap.v !== 1) return false;
+    // 布局标识：字符串且能在布局表中找到对应项（恢复时据此切到该布局）
+    const li = typeof snap.layout === 'string'
+        ? LAYOUTS.findIndex(l => l.id === snap.layout) : -1;
+    if (li < 0) return false;
+    // 难度标识：字符串且能在难度表中找到对应项（辅助规则与存档棋面绑定）
+    const di = typeof snap.diff === 'string' ? DIFF_IDS.indexOf(snap.diff) : -1;
+    if (di < 0) return false;
+    const layout = LAYOUTS[li];
+    // 棋子位置数组：数量必须与该布局的棋子表完全一致（按序一一对应）
+    if (!Array.isArray(snap.pieces) || snap.pieces.length !== layout.pieces.length) return false;
+    // 逐棋子校验：整数坐标、按棋子自身宽高判定在棋盘界内；
+    // 同步维护占用矩阵保证所有棋子两两互不重叠（逻辑同 buildGrid）
+    const grid = [];
+    for (let y = 0; y < ROWS; y++) grid.push(new Array(COLS).fill(false));
+    for (let i = 0; i < snap.pieces.length; i++) {
+        const pos = snap.pieces[i];
+        const src = layout.pieces[i];
+        if (!Array.isArray(pos) || !Number.isInteger(pos[0]) || !Number.isInteger(pos[1])) return false;
+        // 界内判定：左上角非负，且按宽高推算的右 / 下边缘不超出棋盘
+        if (pos[0] < 0 || pos[1] < 0 || pos[0] + src.w > COLS || pos[1] + src.h > ROWS) return false;
+        // 重叠判定：占据的每个格子均不得被先前棋子占用，校验通过后标记占用
+        for (let cy = pos[1]; cy < pos[1] + src.h; cy++) {
+            for (let cx = pos[0]; cx < pos[0] + src.w; cx++) {
+                if (grid[cy][cx]) return false;
+                grid[cy][cx] = true;
+            }
+        }
+    }
+    // 步数：非负整数
+    if (!Number.isInteger(snap.moves) || snap.moves < 0) return false;
+    return true;
+}
+
+/**
+ * 将已通过校验的快照应用到运行状态：切到快照的布局与难度，重新装载布局后把棋子
+ * 摆到快照局面并同步步数（布局 / 难度切换含按钮高亮与选择持久化，与侧栏
+ * selectLayout / selectDifficulty 行为一致），返回 true 由调用方直接进入可玩状态。
+ * @param {object} snap 已通过 validateKlotskiSnapshot 校验的快照对象
+ * @returns {boolean} 恒返回 true（应用成功；意外抛错由管线兜底弃档）
+ */
+function applyKlotskiSnapshot(snap) {
+    // 布局 / 难度标识已通过校验，此处按 id 重新定位（与校验期同一查找逻辑）
+    const li = LAYOUTS.findIndex(l => l.id === snap.layout);
+    const di = DIFF_IDS.indexOf(snap.diff);
+    const layout = LAYOUTS[li];
+    // ---------- 切布局 / 难度并恢复局面 ----------
+    // 切到快照布局（含按钮高亮与布局选择持久化，与侧栏 selectLayout 行为一致）
+    if (li !== layoutIndex) {
+        layoutIndex = li;
+        Arcade.saveRaw(LAYOUT_KEY, String(li));
+        document.querySelectorAll('.layout-btn').forEach((b, i) => b.classList.toggle('active', i === li));
+    }
+    // 切到快照难度（含按钮高亮、难度选择持久化与辅助开关刷新，与 selectDifficulty 行为一致）
+    if (di !== diffIndex) {
+        diffIndex = di;
+        Arcade.saveRaw(DIFF_KEY, String(di)); // 难度持久化：续玩恢复上次难度（隐私模式写失败静默，不影响本局恢复）
+        document.querySelectorAll('.diff-btn').forEach((b, i) => b.classList.toggle('active', i === di));
+        applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮
+    }
+    loadLayout(layoutIndex); // 重新装载：复位全部局内状态并按快照布局 / 难度刷新纪录显示
+    // 把棋子摆到快照局面并同步步数（撤销栈清空：快照之前的历史不再可回退）
+    for (let i = 0; i < layout.pieces.length; i++) {
+        pieces[i].x = snap.pieces[i][0];
+        pieces[i].y = snap.pieces[i][1];
+    }
+    moves = snap.moves;
+    undoStack.length = 0;
+    invalidateHint(); // 恢复的棋面与任何旧缓存无关：提示展示与解路径缓存作废
+    // 按恢复后的棋面重新求解最优步数作为评级基准（loadLayout 请求的是初始棋面的解，
+    // 已随棋面变动过期；旧结果经局代次校验自动丢弃）
+    optimalMoves = 0;
+    const gen = ++solveGen; // 捕获本局代次：恢复后再换局 / 重开则过期结果丢弃
+    requestSolve(encodeBoard(), path => {
+        if (gen !== solveGen) return; // 已换局 / 重开：过期结果丢弃
+        optimalMoves = path ? path.length : 0;
+    });
+    updateHud(); // 步数等统计与恢复后的局面同步
+    return true;
+}
+
+/**
+ * 从 localStorage 读取进度快照并恢复续玩状态（键 arcade_save_klotski，薄壳）：
+ * 读取 → 校验 → 应用管线与失败清档兜底由共享库 snap-common.js 统一实现，
+ * 快照合法并已恢复返回 true；无快照或快照非法返回 false（调用方回退默认新开局流程），
+ * 绝不因脏数据抛错。
  * @returns {boolean} 快照合法并已恢复返回 true；无快照或快照非法返回 false
  */
 function restoreSnapshot() {
-    try {
-        const snap = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        if (!snap) return false; // 无快照或已损坏：正常新开局，无需清理
-        // 版本号不符（损坏或未来格式）：立即弃用并清除
-        if (!snap || typeof snap !== 'object' || snap.v !== 1) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 布局标识：字符串且能在布局表中找到对应项（恢复时据此切到该布局）
-        const li = typeof snap.layout === 'string'
-            ? LAYOUTS.findIndex(l => l.id === snap.layout) : -1;
-        if (li < 0) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 难度标识：字符串且能在难度表中找到对应项（辅助规则与存档棋面绑定）
-        const di = typeof snap.diff === 'string' ? DIFF_IDS.indexOf(snap.diff) : -1;
-        if (di < 0) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        const layout = LAYOUTS[li];
-        // 棋子位置数组：数量必须与该布局的棋子表完全一致（按序一一对应）
-        if (!Array.isArray(snap.pieces) || snap.pieces.length !== layout.pieces.length) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 逐棋子校验：整数坐标、按棋子自身宽高判定在棋盘界内；
-        // 同步维护占用矩阵保证所有棋子两两互不重叠（逻辑同 buildGrid）
-        const grid = [];
-        for (let y = 0; y < ROWS; y++) grid.push(new Array(COLS).fill(false));
-        for (let i = 0; i < snap.pieces.length; i++) {
-            const pos = snap.pieces[i];
-            const src = layout.pieces[i];
-            if (!Array.isArray(pos) || !Number.isInteger(pos[0]) || !Number.isInteger(pos[1])) {
-                Arcade.removeRaw(SAVE_KEY);
-                return false;
-            }
-            // 界内判定：左上角非负，且按宽高推算的右 / 下边缘不超出棋盘
-            if (pos[0] < 0 || pos[1] < 0 || pos[0] + src.w > COLS || pos[1] + src.h > ROWS) {
-                Arcade.removeRaw(SAVE_KEY);
-                return false;
-            }
-            // 重叠判定：占据的每个格子均不得被先前棋子占用，校验通过后标记占用
-            for (let cy = pos[1]; cy < pos[1] + src.h; cy++) {
-                for (let cx = pos[0]; cx < pos[0] + src.w; cx++) {
-                    if (grid[cy][cx]) {
-                        Arcade.removeRaw(SAVE_KEY);
-                        return false;
-                    }
-                    grid[cy][cx] = true;
-                }
-            }
-        }
-        // 步数：非负整数
-        if (!Number.isInteger(snap.moves) || snap.moves < 0) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-
-        // ---------- 校验全部通过：切布局 / 难度并恢复局面 ----------
-        // 切到快照布局（含按钮高亮与布局选择持久化，与侧栏 selectLayout 行为一致）
-        if (li !== layoutIndex) {
-            layoutIndex = li;
-            Arcade.saveRaw(LAYOUT_KEY, String(li));
-            document.querySelectorAll('.layout-btn').forEach((b, i) => b.classList.toggle('active', i === li));
-        }
-        // 切到快照难度（含按钮高亮、难度选择持久化与辅助开关刷新，与 selectDifficulty 行为一致）
-        if (di !== diffIndex) {
-            diffIndex = di;
-            Arcade.saveRaw(DIFF_KEY, String(di)); // 难度持久化：续玩恢复上次难度（隐私模式写失败静默，不影响本局恢复）
-            document.querySelectorAll('.diff-btn').forEach((b, i) => b.classList.toggle('active', i === di));
-            applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮
-        }
-        loadLayout(layoutIndex); // 重新装载：复位全部局内状态并按快照布局 / 难度刷新纪录显示
-        // 把棋子摆到快照局面并同步步数（撤销栈清空：快照之前的历史不再可回退）
-        for (let i = 0; i < layout.pieces.length; i++) {
-            pieces[i].x = snap.pieces[i][0];
-            pieces[i].y = snap.pieces[i][1];
-        }
-        moves = snap.moves;
-        undoStack.length = 0;
-        invalidateHint(); // 恢复的棋面与任何旧缓存无关：提示展示与解路径缓存作废
-        // 按恢复后的棋面重新求解最优步数作为评级基准（loadLayout 请求的是初始棋面的解，
-        // 已随棋面变动过期；旧结果经局代次校验自动丢弃）
-        optimalMoves = 0;
-        const gen = ++solveGen; // 捕获本局代次：恢复后再换局 / 重开则过期结果丢弃
-        requestSolve(encodeBoard(), path => {
-            if (gen !== solveGen) return; // 已换局 / 重开：过期结果丢弃
-            optimalMoves = path ? path.length : 0;
-        });
-        updateHud(); // 步数等统计与恢复后的局面同步
-        return true;
-    } catch (e) {
-        // 任何异常（JSON 损坏 / 存储不可用等）：清除快照并按无存档处理，绝不向上抛错
-        Arcade.removeRaw(SAVE_KEY); // 静默
-        return false;
-    }
+    return snapPipe.restore();
 }
 
 /**
@@ -1210,25 +1213,27 @@ function restartLayout() {
     SFX.bgm.start('klotski'); // 再来一局：起 BGM（同名在播则幂等续播，通关后的重开则从头新起）
 }
 
+/* 暂停引擎（共享库 pause-common.js）：守卫准入 → 写标志 → 遮罩显隐 → BGM 挂起/接续
+ * → 暂停/恢复音效的公共序列下沉，本文件只注入差异件——playing 准入、悬停高亮
+ * 清理与拖拽中暂停的手势终止回弹 */
+const pausePipe = Pause.create({
+    isPaused: () => isPaused,
+    canToggle: () => state === 'playing', // ready/won 阶段无计时需求，不响应暂停
+    setPaused: (paused) => {
+        isPaused = paused;
+        hoverPiece = null; // 暂停时清除悬停高亮，避免遮罩下仍显示可动棋子提示
+        if (paused) endDrag(); // 拖拽中暂停：立即终止手势并回弹，防止暂停遮罩下残留 drag 在恢复时误走子
+    },
+    overlay: pauseScreen,
+});
+
 /**
- * 切换暂停状态（空格手动暂停/继续）：仅进行中的棋局可暂停；
+ * 切换暂停状态（空格手动暂停/继续）：仅进行中的棋局可暂停（守卫见 pausePipe.canToggle）；
  * 回合制也需要暂停——用时统计（elapsed）参与评级与纪录，
  * 暂停期间 elapsed 累加与演示步进一并冻结，保证计时公平
  */
 function togglePause() {
-    if (state !== 'playing') return; // ready/won 阶段无计时需求，不响应暂停
-    isPaused = !isPaused;
-    hoverPiece = null; // 暂停时清除悬停高亮，避免遮罩下仍显示可动棋子提示
-    pauseScreen.style.display = isPaused ? 'block' : 'none'; // 同步暂停面板显隐（DOM 形态与开始/胜利面板一致）
-    // BGM 随暂停挂起/恢复，与游戏节奏同步
-    if (isPaused) {
-        endDrag(); // 拖拽中暂停：立即终止手势并回弹，防止暂停遮罩下残留 drag 在恢复时误走子
-        SFX.bgm.pause();
-        SFX.uiPause(); // 暂停：下行收束音，标记时间冻结（替代原 uiClick 的敷衍反馈）
-    } else {
-        SFX.bgm.resume();
-        SFX.uiResume(); // 继续：上行启动音，标记重新出发
-    }
+    pausePipe.toggle();
 }
 
 /* ===================== H 键提示求解器 ===================== */
@@ -1499,11 +1504,11 @@ function requestHint() {
     if (hintPath) { showHintStep(hintPath.shift(), diff); return; } // 缓存命中：同步取下一步
     if (hintPending) return; // 求解在途：重复按键静默等待回调
     const start = encodeBoard(); // 快照当前棋面：回调时比对是否已变动
-    const gen = solveGen; // 捕获当前局代次：回调时已换局/切难度则丢弃
+    const gen = solveGen; // 捕获当前局代次：回调时已换局/重开则丢弃
     hintPending = true;
     requestSolve(start, path => {
         hintPending = false;
-        if (gen !== solveGen) return; // 请求后已换局/重开/切难度：过期结果丢弃
+        if (gen !== solveGen) return; // 请求后已换局/重开：过期结果丢弃
         if (state !== 'playing' || isPaused) return;
         if (encodeBoard() !== start) return; // 棋面已变动：丢弃（可再按 H 重新求解）
         if (!path || path.length === 0) { SFX.klBlock(); return; } // 求解失败：钝响提示
@@ -2955,6 +2960,7 @@ canvas.addEventListener('pointerup', e => {
         p.x += d.dir[0] * n;
         p.y += d.dir[1] * n;
         moves += n;
+        if (!demoActive) Ach.trackRunStat('moves', moves); // 本局步数实时上报成就统计（与键盘走子路径同口径；演示复现不计入玩家成绩）
         undoStack.push({ piece: p, dx: d.dir[0], dy: d.dir[1], steps: n });
         invalidateHint(); // 棋面已变：提示展示与解路径缓存作废
         if (p.t === 'cao') SFX.klMoveCao(n); // 曹操专属：低音区厚重滑音
@@ -3005,7 +3011,8 @@ function endDrag() {
 /**
  * 全局键盘控制：空格暂停/继续 / 方向键 / WASD 推动选中棋子（默认曹操）/ U 撤销 /
  * R 重开 / H 提示 / P 演示最佳解 / 数字键 1~6 切换布局，并阻止方向键滚动页面；
- * 暂停中仅空格（恢复）与 R（重开）可用；演示进行中屏蔽除 P 外的全部输入（含 R/U/H/方向键/数字键）
+ * 暂停中仅空格（恢复）与 R（重开）可用；演示进行中屏蔽走子/撤销/重开/提示/切布局输入
+ * （P 中断演示、空格仍可暂停）
  * @param {KeyboardEvent} e 键盘事件
  */
 document.addEventListener('keydown', e => {
@@ -3083,14 +3090,11 @@ document.addEventListener('keydown', e => {
 function handleFocusLoss() {
     endDrag(); // 清理进行中的拖拽手势：切窗后指针按住态丢失（浏览器不会补发 pointerup），
                // 残留的 drag 会在返回后随指针移动继续更新位移，恢复点击时被误结算为走子
-    if (state === 'playing' && !isPaused) {
-        isPaused = true;
-        pauseScreen.style.display = 'block'; // 失焦自动暂停同步显示暂停面板
-        SFX.bgm.pause(); // 失焦自动暂停同步挂起 BGM（恢复走 togglePause 的 resume 分支）
-    }
+    if (state === 'playing') pausePipe.autoPause(); // 失焦自动暂停（静默无声，历史行为对齐；已暂停时幂等跳过），恢复走 togglePause 的 resume 分支
 }
-window.addEventListener('blur', handleFocusLoss);
-document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
+// blur 与 visibilitychange 双通道接线由共享库 snap-common.js 统一注册
+//（visibilitychange 兜底移动端切应用不触发 blur 的场景，双触发经暂停守卫天然幂等）
+Snap.bindFocusLoss(handleFocusLoss);
 
 /* ===================== CRT 全屏开关音效 ===================== */
 
@@ -3102,8 +3106,6 @@ document.addEventListener('fullscreenchange', () => {
 
 // iframe 嵌入（?embed=1）：fullscreenchange 不穿越文档边界，全屏态由父页大厅持有
 // 并广播 arcade:fs 消息，此处同样接入 CRT 开关机音，保证两种打开方式行为一致
-// 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
-// （saveSnapshot 内部自行区分：进行中保存，未开始 / 已通关则清除快照）
 // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
 Arcade.onTrustedMessage(e => {
     const d = e.data;
@@ -3111,14 +3113,13 @@ Arcade.onTrustedMessage(e => {
         if (d.fs) SFX.crtOn();
         else SFX.crtOff();
     }
-    if (d && d.type === Arcade.MSG.SAVE) saveSnapshot(); // 返回大厅前的进度镜像
 });
 
-// 触发点 b：页面卸载兜底（关闭标签页 / 刷新 / 父页移除 iframe 均触发）
-// —— 进行中保存快照；未开始 / 已通关则由 saveSnapshot 清除
-window.addEventListener('pagehide', () => {
-    saveSnapshot();
-});
+// 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
+// 与触发点 b（页面卸载兜底：关闭标签页 / 刷新 / 父页移除 iframe 均触发）两处接线
+// 收口于 snap-common.js（Snap.bindAutoSave）——快照管线内部自判：
+// 进行中保存快照；未开始 / 已通关则清除
+Snap.bindAutoSave(snapPipe);
 
 /* ===================== 主循环与初始化 ===================== */
 

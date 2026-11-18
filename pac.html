@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <!-- ==================================================================
      吃豆人游戏页
      结构：左上角成就墙入口 → 右上角固定按钮（音效开关 / 全屏）→ PAC-MAN 彩色标题 →
@@ -863,15 +863,17 @@
     </div>
     <!-- 成就解锁 toast 堆叠容器：右上角滑入-停留-退场，稀有度色条标识 -->
     <div id="achToastStack" aria-live="polite"></div>
-    <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，依赖前述 SFX/FX/Arcade) → pac.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
+    <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，依赖前述 SFX/FX/Arcade) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → pac.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="arcade-common.js?v=20261117-2"></script>
-    <script src="audio.js?v=20261117-3"></script>
-    <script src="fx.js?v=20261117-3"></script>
+    <script src="audio.js?v=20261118-1"></script>
+    <script src="fx.js?v=20261118-1"></script>
     <script src="fullscreen.js?v=20261117-2"></script>
-    <script src="ach-common.js?v=20261117-2"></script>
+    <script src="ach-common.js?v=20261118-1"></script>
+    <script src="snap-common.js?v=20261118-1"></script>
+    <script src="pause-common.js?v=20261117-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
-    <script src="gamepad.js?v=20261117-3"></script>
+    <script src="gamepad.js?v=20261118-1"></script>
     <script src="ach-trigger.js?v=20261105-4"></script>
-    <script src="pac.js?v=20261117-6"></script>
+    <script src="pac.js?v=20261118-2"></script>
 </body>
 </html>

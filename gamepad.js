@@ -47,8 +47,8 @@
 'use strict';
 
 // ---------- 对外暴露的最小状态对象：对齐 SFX / FX / FS 全局命名 ----------
-/** 手柄支持全局状态：connected 标识当前是否有已连接手柄（供页面按需查询；本库自治运行，不要求页面调用） */
-const GP = { connected: false };
+/** 手柄支持全局状态：connected 标识当前是否有已连接手柄（供页面按需查询；本库自治运行，不要求页面调用）；显式挂 window——const 词法绑定不落 window 属性，文档 §2 分层图与测试台均按 window.GP 契约读取 */
+const GP = window.GP = { connected: false };
 
 (function () {
     // ---------- 能力检测：无 Gamepad API 的环境（旧浏览器等）静默退出 ----------
@@ -173,7 +173,8 @@ const GP = { connected: false };
 
     function poll() {
         requestAnimationFrame(poll);
-        // 页面隐藏时跳过轮询（rAF 本身会被浏览器暂停，此处双保险）；恢复可见由 visibilitychange 统一释放
+        // 页面隐藏时跳过轮询（rAF 本身会被浏览器暂停，此处双保险）；按键释放统一在
+        // visibilitychange 转隐藏分支，恢复可见后由下一帧轮询重建状态
         if (document.hidden) return;
         let pads;
         try { pads = navigator.getGamepads(); } catch (e) { pads = null; }

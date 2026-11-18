@@ -668,10 +668,74 @@ function gameOver() {
     gameOverScreen.style.display = 'block';
     SFX.gameOver();
     SFX.bgm.stop(); // 游戏结束时停止 BGM
-    Arcade.removeRaw(SNAPSHOT_KEY); // 游戏结束即清除进度快照：下次进入按原逻辑新开局；存储不可用时静默跳过，确保结算面板与音效不受存储异常中断
+    snapPipe.clear(); // 游戏结束即清除进度快照：下次进入按原逻辑新开局；存储不可用时静默跳过，确保结算面板与音效不受存储异常中断
 }
 
 /* ===================== 进度镜像快照 ===================== */
+// 存取骨架（保存/清除分流、读档→校验→应用管线、异常清档兜底）与触发接线
+// 收口于共享库 snap-common.js，本文件只保留吃豆人特有的字段契约。
+
+/**
+ * 构建当前局纯数据快照（数值/字符串/布尔/数组，不含函数与 DOM 引用）
+ * @returns {Object} 快照对象（首字段固定版本号 v=1，恢复时校验）
+ */
+function buildPacSnapshot() {
+    // 豆子集合压位串：每格一字符（'0' 空地或已吃 / '1' 普通豆 / '2' 能量豆），
+    // 长度恒为 ROWS×COLS，恢复时与原迷宫逐格互验（豆只能落在原豆位上）
+    let dots = '';
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            const t = grid[r][c];
+            dots += t === T_DOT ? '1' : t === T_POWER ? '2' : '0';
+        }
+    }
+    return {
+        v: 1,                          // 快照协议版本
+        score, level, lives,           // 分数 / 关卡 / 剩余生命
+        dotCount,                      // 剩余豆子数（含能量豆，与压位串统计互验）
+        dots,                          // 豆子集合压位串
+        recordBase,                    // 本局开局时最高分（破纪录判定基准）
+        oneUpGiven, recordBroken,      // 本局一次性标志（防恢复后重复奖励 1UP / 重复破纪录庆祝）
+        frightTimer,                   // 惊惧模式剩余时间（秒）
+        frightDur,                     // 当前难度惊惧总时长
+        ghBase,                        // 当前难度幽灵基础速度
+        scoreMult,                     // 当前难度分数倍率
+        invincibleMode,                // 无敌难度开关
+        ghostCombo,                    // 惊惧连锁计数（200/400/800/1600 分档）
+        phaseIndex,                    // scatter/chase 相位索引
+        phaseTimer,                    // 当前相位已持续时间（秒）
+        pacDotsEaten,                  // 本关累计吃豆数（驱动水果 70/170 触发）
+        fruitSpawned,                  // 水果已触发次数（0/1/2）
+        fruit: fruit ? { timer: fruit.timer } : null, // 场上水果剩余存活时间
+        pac: {                         // 吃豆人：像素坐标 / 所在格 / 方向 / 预输入队列 / 停止标志
+            x: pac.x, y: pac.y,
+            cx: pac.cell.x, cy: pac.cell.y,
+            dir: pac.dir,
+            queue: pac.dirQueue.slice(),
+            stopped: pac.stopped
+        },
+        ghosts: ghosts.map(g => ({     // 四幽灵：像素坐标 / 所在格 / 方向 / 模式 / 惊惧 / 出屋计时
+            name: g.name,
+            x: g.x, y: g.y,
+            cx: g.cell.x, cy: g.cell.y,
+            dir: g.dir,
+            mode: g.mode,              // house | exit | roam | eyes
+            frightened: g.frightened,
+            releaseTimer: g.releaseTimer
+        }))
+    };
+}
+
+// 快照管线实例：保存/清除分流（仅"进行中(play)或就绪(ready，含恢复后暂停中)"保存，
+// 未开始/死亡过场/清版/已结束清除残留快照）与恢复管线（校验抛错/应用失败一律
+// 清档回退原新开局逻辑）由 Snap.create 统一实现
+const snapPipe = Snap.create({
+    key: SNAPSHOT_KEY,
+    canSave: () => state === 'play' || state === 'ready',
+    build: buildPacSnapshot,
+    validate: validatePacSnapshot,
+    apply: applyPacSnapshot
+});
 
 /**
  * 保存当前局进度镜像快照到 localStorage（键 arcade_save_pac）。
@@ -681,227 +745,195 @@ function gameOver() {
  * 组装纯数据快照（数值/字符串/布尔/数组，不含函数与 DOM 引用），整体 try/catch 异常静默。
  */
 function saveSnapshot() {
-    try {
-        // 状态门槛：进行中/暂停中才保存，其余界面（开始/死亡/清版/结算）删除旧快照
-        if (state !== 'play' && state !== 'ready') {
-            Arcade.removeRaw(SNAPSHOT_KEY);
-            return;
-        }
-        // 豆子集合压位串：每格一字符（'0' 空地或已吃 / '1' 普通豆 / '2' 能量豆），
-        // 长度恒为 ROWS×COLS，恢复时与原迷宫逐格互验（豆只能落在原豆位上）
-        let dots = '';
-        for (let r = 0; r < ROWS; r++) {
-            for (let c = 0; c < COLS; c++) {
-                const t = grid[r][c];
-                dots += t === T_DOT ? '1' : t === T_POWER ? '2' : '0';
+    snapPipe.save(); // 管线内部自行分流：状态门槛判定保存 / 清除
+}
+
+/**
+ * 校验快照数据合法性（管线弃档判定钩子）：v===1 且逐字段类型/范围合法
+ * （坐标在迷宫范围内、生命/分数非负有限、幽灵数量与枚举合法、豆子压位串与
+ * 迷宫规格逐格互验）。校验辅助采用断言抛错风格，任一不合法立即抛错，
+ * 由管线统一捕获并清除快照（本函数不清存储）。
+ * 注意：校验期间会以原迷宫重建基准网格并把快照中已吃掉的豆格清空（写入 grid），
+ * 后续校验失败或应用失败时由调用方的新开局流程重建网格，无残留影响。
+ * @param {*} s 待校验的快照对象（JSON 解析结果）
+ * @returns {boolean} 全部字段合法返回 true（断言失败即抛出异常）
+ */
+function validatePacSnapshot(s) {
+    // 首字段版本校验：v !== 1 即弃用（抛错由管线捕获清档）
+    if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) {
+        throw new Error('snapshot version mismatch');
+    }
+    /* ---- 局部校验辅助：任一不合法立即抛错，由管线统一清除快照并按新开局处理 ---- */
+    /** 断言辅助：条件不成立即抛错中断恢复流程 @param {boolean} cond 断言条件 */
+    const need = cond => { if (!cond) throw new Error('invalid snapshot field'); };
+    /** 有限数值校验（排除 NaN/Infinity/字符串），并限定闭区间范围 @returns {number} 原值 */
+    const num = (v, min, max) => { need(Number.isFinite(v) && v >= min && v <= max); return v; };
+    /** 布尔类型校验 @returns {boolean} 原值 */
+    const bool = v => { need(typeof v === 'boolean'); return v; };
+    /** 方向枚举校验（必须为 up/down/left/right 之一） */
+    const dirOk = d => { need(typeof d === 'string' && Object.prototype.hasOwnProperty.call(DIRS, d)); };
+
+    /* ---- 标量字段校验 ---- */
+    num(s.score, 0, Number.MAX_SAFE_INTEGER);   // 分数非负且有限
+    num(s.level, 1, Number.MAX_SAFE_INTEGER);   // 关卡 ≥ 1
+    num(s.lives, 0, 99);                        // 生命非负且有限
+    num(s.dotCount, 1, Number.MAX_SAFE_INTEGER); // 剩余豆数 > 0（0 为清版瞬间，快照失效）
+    need(typeof s.dots === 'string' && s.dots.length === ROWS * COLS); // 压位串与迷宫规格匹配
+    num(s.recordBase, 0, Number.MAX_SAFE_INTEGER);
+    bool(s.oneUpGiven);
+    bool(s.recordBroken);
+    num(s.frightTimer, 0, 600);
+    num(s.frightDur, 0.5, 600);
+    num(s.ghBase, 1, 1000);
+    num(s.scoreMult, 1, 100);
+    bool(s.invincibleMode);
+    need(Number.isInteger(s.ghostCombo) && s.ghostCombo >= 0 && s.ghostCombo <= 3);
+    need(Number.isInteger(s.phaseIndex) && s.phaseIndex >= 0 && s.phaseIndex < PHASES.length);
+    num(s.phaseTimer, 0, 100000);
+    num(s.pacDotsEaten, 0, Number.MAX_SAFE_INTEGER);
+    need(Number.isInteger(s.fruitSpawned) && s.fruitSpawned >= 0 && s.fruitSpawned <= FRUIT_DOT_GOALS.length);
+    if (s.fruit !== null) { // 水果：null 或 { timer ∈ (0, FRUIT_LIFETIME] }
+        need(typeof s.fruit === 'object' && s.fruit !== null && !Array.isArray(s.fruit));
+        num(s.fruit.timer, 0.001, FRUIT_LIFETIME);
+    }
+
+    /* ---- 实体校验：像素坐标在迷宫范围（左右隧道侧留 2 格瞬移余量）、格号严格界内、枚举合法 ---- */
+    const rangeX = COLS * CELL + CELL * 2;
+    /** 单实体公共校验：像素坐标 / 所在格 / 方向 @param {object} e 实体快照 */
+    const checkEntity = e => {
+        num(e.x, -rangeX, rangeX);
+        num(e.y, 0, ROWS * CELL);
+        need(Number.isInteger(e.cx) && e.cx >= 0 && e.cx < COLS); // 所在格严格在迷宫内
+        need(Number.isInteger(e.cy) && e.cy >= 0 && e.cy < ROWS);
+        dirOk(e.dir);
+    };
+    need(s.pac && typeof s.pac === 'object' && !Array.isArray(s.pac));
+    checkEntity(s.pac);
+    bool(s.pac.stopped);
+    need(Array.isArray(s.pac.queue) && s.pac.queue.length <= DIR_QUEUE_MAX);
+    s.pac.queue.forEach(dirOk); // 预输入队列每项均须为合法方向
+    need(Array.isArray(s.ghosts) && s.ghosts.length === GHOST_DEFS.length); // 幽灵数量固定 4
+    const MODES = ['house', 'exit', 'roam', 'eyes'];
+    s.ghosts.forEach((g, i) => {
+        need(g && typeof g === 'object' && !Array.isArray(g));
+        need(g.name === GHOST_DEFS[i].name); // 序号与幽灵定义表一一对应
+        checkEntity(g);
+        need(MODES.includes(g.mode)); // 模式枚举合法
+        bool(g.frightened);
+        num(g.releaseTimer, 0, 100000);
+    });
+
+    /* ---- 豆子集合与迷宫逐格互验：快照豆位必须落在原迷宫豆位上（墙/门格不允许出现豆） ---- */
+    buildGrid(); // 以原迷宫重建基准网格（与初始化等价，快照失败时由新开局流程重建，无残留影响）
+    let dotsLeft = 0;
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            const ch = s.dots[r * COLS + c];
+            const orig = grid[r][c];
+            if (ch === '1') {
+                need(orig === T_DOT);  // 声称存在普通豆的格子，原迷宫必须是普通豆位
+                dotsLeft++;
+            } else if (ch === '2') {
+                need(orig === T_POWER); // 能量豆同理
+                dotsLeft++;
+            } else {
+                need(ch === '0'); // 其余字符一律非法
+                if (orig === T_DOT || orig === T_POWER) grid[r][c] = T_EMPTY; // 已吃掉的豆格清空
             }
         }
-        // 纯数据快照：首字段固定版本号 v=1（恢复时 !==1 即弃用）
-        const snap = {
-            v: 1,                          // 快照协议版本
-            score, level, lives,           // 分数 / 关卡 / 剩余生命
-            dotCount,                      // 剩余豆子数（含能量豆，与压位串统计互验）
-            dots,                          // 豆子集合压位串
-            recordBase,                    // 本局开局时最高分（破纪录判定基准）
-            oneUpGiven, recordBroken,      // 本局一次性标志（防恢复后重复奖励 1UP / 重复破纪录庆祝）
-            frightTimer,                   // 惊惧模式剩余时间（秒）
-            frightDur,                     // 当前难度惊惧总时长
-            ghBase,                        // 当前难度幽灵基础速度
-            scoreMult,                     // 当前难度分数倍率
-            invincibleMode,                // 无敌难度开关
-            ghostCombo,                    // 惊惧连锁计数（200/400/800/1600 分档）
-            phaseIndex,                    // scatter/chase 相位索引
-            phaseTimer,                    // 当前相位已持续时间（秒）
-            pacDotsEaten,                  // 本关累计吃豆数（驱动水果 70/170 触发）
-            fruitSpawned,                  // 水果已触发次数（0/1/2）
-            fruit: fruit ? { timer: fruit.timer } : null, // 场上水果剩余存活时间
-            pac: {                         // 吃豆人：像素坐标 / 所在格 / 方向 / 预输入队列 / 停止标志
-                x: pac.x, y: pac.y,
-                cx: pac.cell.x, cy: pac.cell.y,
-                dir: pac.dir,
-                queue: pac.dirQueue.slice(),
-                stopped: pac.stopped
-            },
-            ghosts: ghosts.map(g => ({     // 四幽灵：像素坐标 / 所在格 / 方向 / 模式 / 惊惧 / 出屋计时
-                name: g.name,
-                x: g.x, y: g.y,
-                cx: g.cell.x, cy: g.cell.y,
-                dir: g.dir,
-                mode: g.mode,              // house | exit | roam | eyes
-                frightened: g.frightened,
-                releaseTimer: g.releaseTimer
-            }))
-        };
-        Arcade.saveJSON(SNAPSHOT_KEY, snap); // 存储不可用时由 saveJSON 静默降级
-    } catch (e) { /* 快照组装异常时静默放弃，绝不妨碍游戏运行 */ }
+    }
+    need(dotsLeft === s.dotCount); // 压位串统计与 dotCount 双保险互验
+    return true;
+}
+
+/**
+ * 应用快照到游戏状态（管线应用钩子，调用前 validatePacSnapshot 已全部通过）：
+ * 覆盖游戏状态并停在暂停遮罩等待玩家按 P 继续（防恢复即死）
+ * @param {*} s 已通过校验的快照对象
+ * @returns {boolean} 恒返回 true（应用即成功，无二次失败路径）
+ */
+function applyPacSnapshot(s) {
+    /* ---- 覆盖游戏状态（豆子剩余数以校验阶段清空后的基准网格重新统计，与互验值一致） ---- */
+    let dotsLeft = 0;
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (grid[r][c] === T_DOT || grid[r][c] === T_POWER) dotsLeft++;
+        }
+    }
+    dotCount = dotsLeft;
+    score = s.score;
+    level = s.level;
+    lives = s.lives;
+    recordBase = s.recordBase;
+    oneUpGiven = s.oneUpGiven;
+    recordBroken = s.recordBroken;
+    frightTimer = s.frightTimer;
+    frightDur = s.frightDur;
+    ghBase = s.ghBase;
+    scoreMult = s.scoreMult;
+    invincibleMode = s.invincibleMode;
+    ghostCombo = s.ghostCombo;
+    phaseIndex = s.phaseIndex;
+    phaseTimer = s.phaseTimer;
+    SFX.bgm.setIntensity(PHASES[phaseIndex][0] === 'chase'); // 续玩追击相位直接进入危险分层，与恢复局面匹配
+    pacDotsEaten = s.pacDotsEaten;
+    fruitSpawned = s.fruitSpawned;
+    fruit = s.fruit ? { timer: s.fruit.timer } : null;
+    pac = {
+        x: s.pac.x, y: s.pac.y,
+        cell: { x: s.pac.cx, y: s.pac.cy },
+        dir: s.pac.dir,
+        dirQueue: s.pac.queue.slice(),
+        stopped: s.pac.stopped
+    };
+    // 幽灵按定义表重建：name/color/scatter/releaseDelay 取常量，动态量取快照
+    ghosts = GHOST_DEFS.map((def, i) => ({
+        name: def.name,
+        color: def.color,
+        scatter: def.scatter,
+        releaseDelay: def.releaseDelay,
+        x: s.ghosts[i].x, y: s.ghosts[i].y,
+        cell: { x: s.ghosts[i].cx, y: s.ghosts[i].cy },
+        dir: s.ghosts[i].dir,
+        mode: s.ghosts[i].mode,
+        frightened: s.ghosts[i].frightened,
+        releaseTimer: s.ghosts[i].releaseTimer
+    }));
+    highScore = Math.max(highScore, score); // HUD 最高分与当前分取大（与 addScore 口径一致）
+    // 演出类不可安全镜像量复位：粒子/拖尾/飘字/闪烁全部归零（不影响玩法数据）
+    floatTexts.length = 0;
+    particlePool.clear();
+    eyeTrails.length = 0;
+    pacTrails.length = 0;
+    powerFlash = 0;
+    shakeTime = 0;
+    deathFlashTime = 0;
+    trailPushTimer = 0;
+    wakaAlt = false;
+    // 停在暂停遮罩等待玩家按 P 继续（防恢复即死）：进入 ready 但冻结倒计时
+    state = 'ready';
+    readyTimer = READY_DURATION;
+    isPaused = true;
+    startScreen.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    pauseScreen.style.display = 'block';
+    if (restoreNote) restoreNote.style.display = 'block'; // 遮罩追加"已恢复上次进度"提示
+    // 刷新 HUD 与画布一帧（此后主循环暂停中仅渲染，逻辑冻结直到玩家按 P）
+    updateHUD();
+    drawLives();
+    draw(performance.now());
+    return true;
 }
 
 /**
  * 从 localStorage 恢复进度镜像快照（初始化时调用一次）。
- * 读取 → JSON.parse → 校验 v===1 且逐字段类型/范围合法（坐标在迷宫范围内、
- * 生命/分数非负有限、幽灵数量与枚举合法、豆子压位串与迷宫规格逐格互验）；
- * 任何异常或非法数据 → 清除快照并返回 false（回退原新开局逻辑），绝不因脏数据抛错。
- * 校验全部通过 → 覆盖游戏状态并停在暂停遮罩等待玩家按 P 继续（防恢复即死），返回 true。
+ * 读取 → 校验（validatePacSnapshot）→ 应用（applyPacSnapshot）管线与异常清档
+ * 兜底由 Snap.create 统一实现：任何异常或非法数据一律清除快照并返回 false
+ * （回退原新开局逻辑），绝不因脏数据抛错。
  * @returns {boolean} 是否成功恢复（true：已续玩就绪；false：无快照或快照非法已清除）
  */
 function restoreSnapshot() {
-    try {
-        const s = Arcade.loadJSON(SNAPSHOT_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        if (s === null) return false; // 无快照或已损坏：按原逻辑新开局
-        // 首字段版本校验：v !== 1 即弃用
-        if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) {
-            throw new Error('snapshot version mismatch');
-        }
-        /* ---- 局部校验辅助：任一不合法立即抛错，由 catch 统一清除快照并返回 false ---- */
-        /** 断言辅助：条件不成立即抛错中断恢复流程 @param {boolean} cond 断言条件 */
-        const need = cond => { if (!cond) throw new Error('invalid snapshot field'); };
-        /** 有限数值校验（排除 NaN/Infinity/字符串），并限定闭区间范围 @returns {number} 原值 */
-        const num = (v, min, max) => { need(Number.isFinite(v) && v >= min && v <= max); return v; };
-        /** 布尔类型校验 @returns {boolean} 原值 */
-        const bool = v => { need(typeof v === 'boolean'); return v; };
-        /** 方向枚举校验（必须为 up/down/left/right 之一） */
-        const dirOk = d => { need(typeof d === 'string' && Object.prototype.hasOwnProperty.call(DIRS, d)); };
-
-        /* ---- 标量字段校验 ---- */
-        num(s.score, 0, Number.MAX_SAFE_INTEGER);   // 分数非负且有限
-        num(s.level, 1, Number.MAX_SAFE_INTEGER);   // 关卡 ≥ 1
-        num(s.lives, 0, 99);                        // 生命非负且有限
-        num(s.dotCount, 1, Number.MAX_SAFE_INTEGER); // 剩余豆数 > 0（0 为清版瞬间，快照失效）
-        need(typeof s.dots === 'string' && s.dots.length === ROWS * COLS); // 压位串与迷宫规格匹配
-        num(s.recordBase, 0, Number.MAX_SAFE_INTEGER);
-        bool(s.oneUpGiven);
-        bool(s.recordBroken);
-        num(s.frightTimer, 0, 600);
-        num(s.frightDur, 0.5, 600);
-        num(s.ghBase, 1, 1000);
-        num(s.scoreMult, 1, 100);
-        bool(s.invincibleMode);
-        need(Number.isInteger(s.ghostCombo) && s.ghostCombo >= 0 && s.ghostCombo <= 3);
-        need(Number.isInteger(s.phaseIndex) && s.phaseIndex >= 0 && s.phaseIndex < PHASES.length);
-        num(s.phaseTimer, 0, 100000);
-        num(s.pacDotsEaten, 0, Number.MAX_SAFE_INTEGER);
-        need(Number.isInteger(s.fruitSpawned) && s.fruitSpawned >= 0 && s.fruitSpawned <= FRUIT_DOT_GOALS.length);
-        if (s.fruit !== null) { // 水果：null 或 { timer ∈ (0, FRUIT_LIFETIME] }
-            need(typeof s.fruit === 'object' && s.fruit !== null && !Array.isArray(s.fruit));
-            num(s.fruit.timer, 0.001, FRUIT_LIFETIME);
-        }
-
-        /* ---- 实体校验：像素坐标在迷宫范围（左右隧道侧留 2 格瞬移余量）、格号严格界内、枚举合法 ---- */
-        const rangeX = COLS * CELL + CELL * 2;
-        /** 单实体公共校验：像素坐标 / 所在格 / 方向 @param {object} e 实体快照 */
-        const checkEntity = e => {
-            num(e.x, -rangeX, rangeX);
-            num(e.y, 0, ROWS * CELL);
-            need(Number.isInteger(e.cx) && e.cx >= 0 && e.cx < COLS); // 所在格严格在迷宫内
-            need(Number.isInteger(e.cy) && e.cy >= 0 && e.cy < ROWS);
-            dirOk(e.dir);
-        };
-        need(s.pac && typeof s.pac === 'object' && !Array.isArray(s.pac));
-        checkEntity(s.pac);
-        bool(s.pac.stopped);
-        need(Array.isArray(s.pac.queue) && s.pac.queue.length <= DIR_QUEUE_MAX);
-        s.pac.queue.forEach(dirOk); // 预输入队列每项均须为合法方向
-        need(Array.isArray(s.ghosts) && s.ghosts.length === GHOST_DEFS.length); // 幽灵数量固定 4
-        const MODES = ['house', 'exit', 'roam', 'eyes'];
-        s.ghosts.forEach((g, i) => {
-            need(g && typeof g === 'object' && !Array.isArray(g));
-            need(g.name === GHOST_DEFS[i].name); // 序号与幽灵定义表一一对应
-            checkEntity(g);
-            need(MODES.includes(g.mode)); // 模式枚举合法
-            bool(g.frightened);
-            num(g.releaseTimer, 0, 100000);
-        });
-
-        /* ---- 豆子集合与迷宫逐格互验：快照豆位必须落在原迷宫豆位上（墙/门格不允许出现豆） ---- */
-        buildGrid(); // 以原迷宫重建基准网格（与初始化等价，快照失败时无残留影响）
-        let dotsLeft = 0;
-        for (let r = 0; r < ROWS; r++) {
-            for (let c = 0; c < COLS; c++) {
-                const ch = s.dots[r * COLS + c];
-                const orig = grid[r][c];
-                if (ch === '1') {
-                    need(orig === T_DOT);  // 声称存在普通豆的格子，原迷宫必须是普通豆位
-                    dotsLeft++;
-                } else if (ch === '2') {
-                    need(orig === T_POWER); // 能量豆同理
-                    dotsLeft++;
-                } else {
-                    need(ch === '0'); // 其余字符一律非法
-                    if (orig === T_DOT || orig === T_POWER) grid[r][c] = T_EMPTY; // 已吃掉的豆格清空
-                }
-            }
-        }
-        need(dotsLeft === s.dotCount); // 压位串统计与 dotCount 双保险互验
-
-        /* ---- 全部校验通过：覆盖游戏状态 ---- */
-        dotCount = dotsLeft;
-        score = s.score;
-        level = s.level;
-        lives = s.lives;
-        recordBase = s.recordBase;
-        oneUpGiven = s.oneUpGiven;
-        recordBroken = s.recordBroken;
-        frightTimer = s.frightTimer;
-        frightDur = s.frightDur;
-        ghBase = s.ghBase;
-        scoreMult = s.scoreMult;
-        invincibleMode = s.invincibleMode;
-        ghostCombo = s.ghostCombo;
-        phaseIndex = s.phaseIndex;
-        phaseTimer = s.phaseTimer;
-        SFX.bgm.setIntensity(PHASES[phaseIndex][0] === 'chase'); // 续玩追击相位直接进入危险分层，与恢复局面匹配
-        pacDotsEaten = s.pacDotsEaten;
-        fruitSpawned = s.fruitSpawned;
-        fruit = s.fruit ? { timer: s.fruit.timer } : null;
-        pac = {
-            x: s.pac.x, y: s.pac.y,
-            cell: { x: s.pac.cx, y: s.pac.cy },
-            dir: s.pac.dir,
-            dirQueue: s.pac.queue.slice(),
-            stopped: s.pac.stopped
-        };
-        // 幽灵按定义表重建：name/color/scatter/releaseDelay 取常量，动态量取快照
-        ghosts = GHOST_DEFS.map((def, i) => ({
-            name: def.name,
-            color: def.color,
-            scatter: def.scatter,
-            releaseDelay: def.releaseDelay,
-            x: s.ghosts[i].x, y: s.ghosts[i].y,
-            cell: { x: s.ghosts[i].cx, y: s.ghosts[i].cy },
-            dir: s.ghosts[i].dir,
-            mode: s.ghosts[i].mode,
-            frightened: s.ghosts[i].frightened,
-            releaseTimer: s.ghosts[i].releaseTimer
-        }));
-        highScore = Math.max(highScore, score); // HUD 最高分与当前分取大（与 addScore 口径一致）
-        // 演出类不可安全镜像量复位：粒子/拖尾/飘字/闪烁全部归零（不影响玩法数据）
-        floatTexts.length = 0;
-        particlePool.clear();
-        eyeTrails.length = 0;
-        pacTrails.length = 0;
-        powerFlash = 0;
-        shakeTime = 0;
-        deathFlashTime = 0;
-        trailPushTimer = 0;
-        wakaAlt = false;
-        // 停在暂停遮罩等待玩家按 P 继续（防恢复即死）：进入 ready 但冻结倒计时
-        state = 'ready';
-        readyTimer = READY_DURATION;
-        isPaused = true;
-        startScreen.style.display = 'none';
-        gameOverScreen.style.display = 'none';
-        pauseScreen.style.display = 'block';
-        if (restoreNote) restoreNote.style.display = 'block'; // 遮罩追加"已恢复上次进度"提示
-        // 刷新 HUD 与画布一帧（此后主循环暂停中仅渲染，逻辑冻结直到玩家按 P）
-        updateHUD();
-        drawLives();
-        draw(performance.now());
-        return true;
-    } catch (e) {
-        // 任何异常（解析失败/字段非法/存储异常）均视为脏数据：清除快照并回退新开局
-        Arcade.removeRaw(SNAPSHOT_KEY); // 存储整体不可用时忽略
-        return false;
-    }
+    return snapPipe.restore();
 }
 
 /**
@@ -931,22 +963,24 @@ function startGame() {
     SFX.bgm.start('pac'); // 开局起播吃豆人 BGM（同名重复调用幂等，死亡/清版后 ready 复播走同一入口）
 }
 
+/* 暂停引擎收口共享库 pause-common.js：遮罩/BGM/音效序列在库内统一，
+ * 游戏侧只注入差异件（守卫、落点） */
+const pausePipe = Pause.create({
+    canToggle: () => state === 'play' || state === 'ready', // start/dying/clear/over 阶段无暂停语义
+    isPaused: () => isPaused,
+    setPaused: (p) => {
+        isPaused = p;
+        // 恢复局继续后"已恢复上次进度"提示完成使命即隐藏
+        if (!p && restoreNote) restoreNote.style.display = 'none';
+    },
+    overlay: pauseScreen
+});
+
 /**
- * 切换暂停状态并同步遮罩显示；BGM 跟随暂停/恢复
+ * 切换暂停状态并同步遮罩显示；BGM 跟随暂停/恢复（守卫在 pausePipe.canToggle，
+ * 键盘分支另有同款前置守卫，遮罩点击仅依赖 canToggle 单层）
  */
-function togglePause() {
-    isPaused = !isPaused;
-    pauseScreen.style.display = isPaused ? 'block' : 'none';
-    // BGM 三态收敛：暂停时挂起、恢复时继续（bgm 内部幂等，重复调用安全）
-    if (isPaused) {
-        SFX.bgm.pause();
-        SFX.uiPause(); // 暂停：下行收束音，与暂停蒙层同步反馈
-    } else {
-        SFX.bgm.resume();
-        SFX.uiResume(); // 继续：上行启动音，恢复对局节奏
-        if (restoreNote) restoreNote.style.display = 'none'; // 恢复局继续后"已恢复上次进度"提示完成使命
-    }
-}
+function togglePause() { pausePipe.toggle(); } // 键盘 P/空格、遮罩点击、失焦调用点保持原名直调
 
 /**
  * 选择难度：读取按钮上的惊惧时长、幽灵速度、分数倍率与无敌标记并持久化选择
@@ -1745,15 +1779,16 @@ Arcade.onTrustedMessage(e => {
     if (d.type === Arcade.MSG.FS) {
         if (d.fs) SFX.crtOn();
         else SFX.crtOff();
-    } else if (d.type === Arcade.MSG.SAVE) {
-        saveSnapshot(); // 父页关闭覆盖层前下发：镜像当前局进度到 localStorage
     }
 });
 
 /* ===================== 进度快照触发点 ===================== */
 
-// 页面隐藏/关闭（含父页移除 iframe、刷新）：进行中/暂停中镜像，未开始/已结束则清除残留快照
-window.addEventListener('pagehide', () => { saveSnapshot(); });
+// 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
+// 与触发点 b（页面卸载兜底：关闭标签页 / 刷新 / 父页移除 iframe 均触发 pagehide）两处
+// 接线收口于 snap-common.js（Snap.bindAutoSave）：进行中/暂停中镜像当前局进度，
+// 未开始/已结束则清除残留快照
+Snap.bindAutoSave(snapPipe);
 
 /* ===================== 输入处理 ===================== */
 
@@ -1842,7 +1877,6 @@ canvas.addEventListener('pointermove', e => {
 });
 canvas.addEventListener('pointerup', endSwipe); // 松手结束手势（capture 保证必送达画布）
 canvas.addEventListener('pointercancel', endSwipe); // 系统接管指针（如来电/系统手势）时兜底终止
-window.addEventListener('blur', endSwipe); // 切窗后系统不会补发 pointerup，防止残留手势恢复后误出招
 
 // 暂停遮罩点击恢复：面板悬浮于画布之上会拦截 pointerdown（不再落到画布滑动手势监听），
 // 点击面板空白处即恢复（空格/失焦自动暂停弹出的遮罩共用同一 DOM，同样适用）；
@@ -1853,10 +1887,17 @@ pauseScreen.addEventListener('pointerdown', e => {
     togglePause(); // 恢复并撤下遮罩（BGM 续播、恢复音、提示行清理均走 togglePause 分支）
 });
 
-// 失焦自动暂停，避免切窗口后回来暴毙
-window.addEventListener('blur', () => {
+/**
+ * 失焦/切后台兜底：清理进行中的滑动手势并自动暂停，避免切窗口后回来暴毙
+ * blur 与 visibilitychange 双通道共用本函数（visibilitychange 兜底移动端切应用
+ * 不触发 blur 的场景；双触发经 isPaused 守卫天然幂等）
+ */
+function handleFocusLoss() {
+    endSwipe(); // 切窗后不会补发 pointerup，残留手势恢复后会误出招
     if ((state === 'play' || state === 'ready') && !isPaused) togglePause();
-});
+}
+// 失焦/切后台双通道接线收口于 snap-common.js（blur + visibilitychange hidden 共用同一清理函数）
+Snap.bindFocusLoss(handleFocusLoss);
 
 /* ===================== 主循环 ===================== */
 

@@ -820,7 +820,7 @@ function endGame() {
         deathFxShown = true;
         gameState = 'over';
         // 游戏已结束：立即清除进行中保存的进度快照，避免下次进入误恢复残局（存储不可用时静默忽略）
-        Arcade.removeRaw(SAVE_KEY);
+        snapPipe.clear();
         // 玩家阵亡立即停止背景音乐，为死亡演出留出声音空间
         SFX.bgm.stop();
         deathFxTimer = DEATH_FX_TIME;
@@ -2359,235 +2359,253 @@ function snapFail() {
 }
 
 /**
- * 保存当前局进度镜像快照到 localStorage（纯数据：数值/字符串/布尔/数组，不含函数与 DOM）。
- * 游戏「进行中或暂停中」（gameState === 'playing'，手动/失焦暂停均不改变该标记）→
- * 组装快照并整体 try/catch 写入（存储不可用等异常静默跳过）；
- * 处于未开始/游戏结束界面 → 移除快照键（结束界面在 endGame 已清除，此处兜底）。
+ * 组装当前局进度镜像快照（纯数据：数值/字符串/布尔/数组，不含函数与 DOM）。
+ * v 为首字段协议版本号，恢复时 v !== 1 即整体弃用；
  * 粒子/尾焰/震屏/飘字等纯视觉对象不入档，恢复后按状态清空重建。
+ * @returns {object} 快照数据对象（字段与 saveSnapshot 时期的字面量一一对应）
+ */
+function buildBeeSnapshot() {
+    return {
+        v: 1,
+        score,
+        lives,
+        wave,
+        player: { x: player.x, y: player.y },
+        weaponLevel,
+        hasShield: !!hasShield,
+        invincibleTimer,
+        facing,
+        dashCount,
+        killCount,
+        dashCdTimer,
+        swarmDir,
+        swarmSpeed,
+        swarmOffsetX,
+        swarmDescend,
+        swarmBaseX,
+        enemyFireTimer,
+        diveTimer,
+        enemyFreezeTimer,
+        magnetTimer,
+        laserTimer,
+        laserTickTimer,
+        comboCount,
+        comboTimer,
+        comboMult,
+        nextLifeScore,
+        livesAtWaveStart,
+        waveEvent,
+        bullets: bullets.map(b => ({ x: b.x, y: b.y, vx: b.vx })),
+        enemyBullets: enemyBullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
+        powerups: powerups.map(p => ({ x: p.x, y: p.y, type: p.type })),
+        bees: bees.map(b => ({
+            col: b.col, row: b.row, type: b.type, hp: b.hp,
+            alive: !!b.alive, diving: !!b.diving, reenter: !!b.reenter,
+            x: b.x, y: b.y, vx: b.vx, vy: b.vy,
+            dropped1: !!b.dropped1, dropped2: !!b.dropped2
+        })),
+        boss: boss ? {
+            x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, t: boss.t,
+            fanTimer: boss.fanTimer, aimTimer: boss.aimTimer,
+            phase: boss.phase, warnTimer: boss.warnTimer, targetY: boss.targetY,
+            flash: boss.flash, enraged: !!boss.enraged
+        } : null
+    };
+}
+
+// 存取管线由共享库 snap-common.js 驱动：游戏「进行中或暂停中」（gameState === 'playing'，
+// 手动/失焦暂停均不改变该标记）→ 写入镜像（存储异常静默跳过）；
+// 未开始/游戏结束界面 → 清除快照键（结束界面在 endGame 已清除，此处兜底）
+const snapPipe = Snap.create({
+    key: SAVE_KEY,
+    canSave: () => gameState === 'playing',
+    build: buildBeeSnapshot,
+    validate: validateBeeSnapshot,
+    apply: applyBeeSnapshot
+});
+
+/**
+ * 保存当前局进度镜像快照到 localStorage（薄壳）：
+ * 进行中保存 / 非进行中清除，组装意外与存储异常整体静默容错；
+ * 读写管线与触发接线由共享库 snap-common.js 统一实现
  */
 function saveSnapshot() {
-    try {
-        // 未开始/已结束界面：快照不应存在，直接移除
-        if (gameState !== 'playing') {
-            Arcade.removeRaw(SAVE_KEY);
-            return;
-        }
-        // 组装纯数据快照：v 为首字段协议版本号，恢复时 v !== 1 即整体弃用
-        const snap = {
-            v: 1,
-            score,
-            lives,
-            wave,
-            player: { x: player.x, y: player.y },
-            weaponLevel,
-            hasShield: !!hasShield,
-            invincibleTimer,
-            facing,
-            dashCount,
-            killCount,
-            dashCdTimer,
-            swarmDir,
-            swarmSpeed,
-            swarmOffsetX,
-            swarmDescend,
-            swarmBaseX,
-            enemyFireTimer,
-            diveTimer,
-            enemyFreezeTimer,
-            magnetTimer,
-            laserTimer,
-            laserTickTimer,
-            comboCount,
-            comboTimer,
-            comboMult,
-            nextLifeScore,
-            livesAtWaveStart,
-            waveEvent,
-            bullets: bullets.map(b => ({ x: b.x, y: b.y, vx: b.vx })),
-            enemyBullets: enemyBullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy })),
-            powerups: powerups.map(p => ({ x: p.x, y: p.y, type: p.type })),
-            bees: bees.map(b => ({
-                col: b.col, row: b.row, type: b.type, hp: b.hp,
-                alive: !!b.alive, diving: !!b.diving, reenter: !!b.reenter,
-                x: b.x, y: b.y, vx: b.vx, vy: b.vy,
-                dropped1: !!b.dropped1, dropped2: !!b.dropped2
-            })),
-            boss: boss ? {
-                x: boss.x, y: boss.y, hp: boss.hp, maxHp: boss.maxHp, t: boss.t,
-                fanTimer: boss.fanTimer, aimTimer: boss.aimTimer,
-                phase: boss.phase, warnTimer: boss.warnTimer, targetY: boss.targetY,
-                flash: boss.flash, enraged: !!boss.enraged
-            } : null
-        };
-        Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用由 saveJSON 静默降级
-    } catch (e) { /* 快照组装异常：静默放弃本次保存，不影响游戏运行 */ }
+    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
 }
 
 /**
- * 从 localStorage 恢复进度镜像快照。整体 try/catch，绝不因脏数据抛错：
- * 读键 → JSON.parse → 校验协议版本号（v !== 1 即弃用）与逐字段类型/范围
- * （画布坐标范围、血量/分数非负有限、敌人数组元素字段齐全、蜂种/Boss 相位/
- * 事件/道具枚举合法），任何异常或非法 → removeItem 并返回 false；
- * 合法 → 覆盖游戏运行状态（const 数组原地重建）、清空纯视觉对象（粒子/飘字/
- * 横幅/震屏等）、刷新 HUD 并渲染一帧，返回 true。
+ * 校验快照逐字段类型/范围：协议版本号（v !== 1 即弃用）、画布坐标范围、
+ * 血量/分数非负有限、敌人数组元素字段齐全、蜂种/Boss 相位/事件/道具枚举合法。
+ * 断言风格：任何非法字段经 snapFail() 抛出统一异常，由快照管线（snap-common.js）
+ * catch 兜底统一弃档，绝不向上抛错。
+ * @param {object} s 待校验的快照对象（Arcade.loadJSON 产出，可能为任意脏数据）
+ */
+function validateBeeSnapshot(s) {
+    // ---- 顶层结构与协议版本校验 ----
+    if (!s || typeof s !== 'object' || s.v !== 1) snapFail();
+    // ---- 标量字段类型/范围校验：分数/生命/波次非负有限 ----
+    if (!snapIsInt(s.score, 0, 1e9) || !snapIsInt(s.lives, 0, MAX_LIVES) || !snapIsInt(s.wave, 1, 9999)) snapFail();
+    // ---- 玩家位置须在画布坐标范围内，武器等级 1~3，护盾为布尔 ----
+    if (!s.player || !snapIsNum(s.player.x, 0, viewW) || !snapIsNum(s.player.y, 0, viewH)) snapFail();
+    if (!snapIsInt(s.weaponLevel, 1, 3) || typeof s.hasShield !== 'boolean') snapFail();
+    if (!snapIsNum(s.invincibleTimer, 0, 3600)) snapFail();
+    if (s.facing !== 1 && s.facing !== -1) snapFail();
+    if (!snapIsInt(s.dashCount, 0, 1e6) || !snapIsInt(s.killCount, 0, 1e6)) snapFail();
+    if (!snapIsNum(s.dashCdTimer, 0, 3600)) snapFail();
+    // ---- 蜂群波次进度状态校验 ----
+    if (s.swarmDir !== 1 && s.swarmDir !== -1) snapFail();
+    if (!snapIsNum(s.swarmSpeed, 0, 1000)) snapFail();
+    if (!snapIsNum(s.swarmOffsetX, -1e5, 1e5) || !snapIsNum(s.swarmDescend, -1e5, 1e5) || !snapIsNum(s.swarmBaseX, -1e5, 1e5)) snapFail();
+    // ---- 各类计时器：非负有限且在合理秒数上限内 ----
+    if (!snapIsNum(s.enemyFireTimer, 0, 3600) || !snapIsNum(s.diveTimer, 0, 3600)) snapFail();
+    if (!snapIsNum(s.enemyFreezeTimer, 0, 3600) || !snapIsNum(s.magnetTimer, 0, 3600) ||
+        !snapIsNum(s.laserTimer, 0, 3600) || !snapIsNum(s.laserTickTimer, 0, 3600)) snapFail();
+    // ---- 连击与里程碑字段校验 ----
+    if (!snapIsInt(s.comboCount, 0, 1e6) || !snapIsNum(s.comboTimer, 0, 3600) || !snapIsInt(s.comboMult, 1, COMBO_MAX_MULT)) snapFail();
+    if (!snapIsNum(s.nextLifeScore, 1, 1e9) || !snapIsInt(s.livesAtWaveStart, 0, MAX_LIVES)) snapFail();
+    // ---- 事件波枚举校验 ----
+    if (s.waveEvent !== null && s.waveEvent !== 'tide' && s.waveEvent !== 'eliteWall') snapFail();
+    // ---- 玩家子弹数组校验：元素字段齐全且坐标在画布容差范围内 ----
+    if (!Array.isArray(s.bullets) || s.bullets.length > 200) snapFail();
+    for (const b of s.bullets) {
+        if (!b || !snapIsNum(b.x, -100, viewW + 100) || !snapIsNum(b.y, -100, viewH + 100) || !snapIsNum(b.vx, -1000, 1000)) snapFail();
+    }
+    // ---- 敌方子弹数组校验 ----
+    if (!Array.isArray(s.enemyBullets) || s.enemyBullets.length > 400) snapFail();
+    for (const b of s.enemyBullets) {
+        if (!b || !snapIsNum(b.x, -100, viewW + 100) || !snapIsNum(b.y, -100, viewH + 100) ||
+            !snapIsNum(b.vx, -1000, 1000) || !snapIsNum(b.vy, -1000, 1000)) snapFail();
+    }
+    // ---- 场上道具数组校验：类型枚举须在 POWERUP_STYLE 表内 ----
+    if (!Array.isArray(s.powerups) || s.powerups.length > 50) snapFail();
+    for (const p of s.powerups) {
+        if (!p || !snapIsNum(p.x, -100, viewW + 100) || !snapIsNum(p.y, -100, viewH + 100) || !POWERUP_STYLE[p.type]) snapFail();
+    }
+    // ---- 敌人数组校验：蜂种枚举合法、编队位在网格内、逐字段类型齐全；
+    //      阵亡蜂允许 hp ≤ 0（击落瞬间残留值），存活蜂必须 hp ≥ 1 ----
+    if (!Array.isArray(s.bees) || s.bees.length > 400) snapFail();
+    for (const b of s.bees) {
+        if (!b) snapFail();
+        if (!snapIsInt(b.col, 0, BEE_COLS - 1) || !snapIsInt(b.row, 0, BEE_ROWS - 1)) snapFail();
+        if (b.type !== 'normal' && b.type !== 'elite' && b.type !== 'splitter' && b.type !== 'bomber' && b.type !== 'mini') snapFail();
+        if (!snapIsInt(b.hp, -99, 99) || (b.alive === true && b.hp < 1)) snapFail();
+        if (typeof b.alive !== 'boolean' || typeof b.diving !== 'boolean' || typeof b.reenter !== 'boolean') snapFail();
+        if (typeof b.dropped1 !== 'boolean' || typeof b.dropped2 !== 'boolean') snapFail();
+        if (!snapIsNum(b.x, -100, viewW + 100) || !snapIsNum(b.y, -100, viewH + 100)) snapFail();
+        if (!snapIsNum(b.vx, -1000, 1000) || !snapIsNum(b.vy, -1000, 1000)) snapFail();
+    }
+    // ---- Boss 状态校验（null 表示非 Boss 波或已击败；相位枚举三选一，hp 不超上限） ----
+    if (s.boss !== null) {
+        const bo = s.boss;
+        if (!bo || typeof bo !== 'object') snapFail();
+        if (bo.phase !== 'warn' && bo.phase !== 'enter' && bo.phase !== 'fight') snapFail();
+        if (!snapIsNum(bo.x, -200, viewW + 200) || !snapIsNum(bo.y, -200, viewH + 200)) snapFail();
+        if (!snapIsInt(bo.hp, 1, 9999) || !snapIsInt(bo.maxHp, 1, 9999) || bo.hp > bo.maxHp) snapFail();
+        if (!snapIsNum(bo.t, 0, 1e7)) snapFail();
+        if (!snapIsNum(bo.fanTimer, 0, 3600) || !snapIsNum(bo.aimTimer, 0, 3600) || !snapIsNum(bo.warnTimer, 0, 3600)) snapFail();
+        if (!snapIsNum(bo.targetY, 0, viewH) || !snapIsNum(bo.flash, 0, 1)) snapFail();
+        if (typeof bo.enraged !== 'boolean') snapFail();
+    }
+}
+
+/**
+ * 将已通过校验的快照覆盖到游戏运行状态：const 数组原地重建，纯视觉对象
+ * （粒子/飘字/横幅/震屏等）清空重建，刷新 HUD 并立即渲染一帧，
+ * 标记「已恢复上次进度」提示（暂停遮罩首见时显示，续玩首帧清除）。
+ * @param {object} s 已通过 validateBeeSnapshot 校验的快照对象
+ * @returns {boolean} 恒返回 true（应用成功；意外抛错由管线兜底弃档）
+ */
+function applyBeeSnapshot(s) {
+    // ---- 覆盖运行状态（bullets 等为 const 数组，须原地重建） ----
+    score = s.score;
+    lives = s.lives;
+    wave = s.wave;
+    player = { x: s.player.x, y: s.player.y };
+    weaponLevel = s.weaponLevel;
+    hasShield = s.hasShield;
+    invincibleTimer = s.invincibleTimer;
+    facing = s.facing;
+    dashCount = s.dashCount;
+    killCount = s.killCount;
+    dashCdTimer = s.dashCdTimer;
+    dashTimer = 0; // 冲刺位移不跨快照恢复：避免恢复瞬间高速漂移，冷却进度保留
+    swarmDir = s.swarmDir;
+    swarmSpeed = s.swarmSpeed;
+    swarmOffsetX = s.swarmOffsetX;
+    swarmDescend = s.swarmDescend;
+    swarmBaseX = s.swarmBaseX;
+    enemyFireTimer = s.enemyFireTimer;
+    diveTimer = s.diveTimer;
+    enemyFreezeTimer = s.enemyFreezeTimer;
+    magnetTimer = s.magnetTimer;
+    laserTimer = s.laserTimer;
+    laserTickTimer = s.laserTickTimer;
+    comboCount = s.comboCount;
+    comboTimer = s.comboTimer;
+    comboMult = s.comboMult;
+    nextLifeScore = s.nextLifeScore;
+    livesAtWaveStart = s.livesAtWaveStart;
+    waveEvent = s.waveEvent;
+    bullets.length = 0;
+    for (const b of s.bullets) bullets.push({ x: b.x, y: b.y, vx: b.vx });
+    enemyBullets.length = 0;
+    for (const b of s.enemyBullets) enemyBullets.push({ x: b.x, y: b.y, vx: b.vx, vy: b.vy });
+    powerups.length = 0;
+    for (const p of s.powerups) powerups.push({ x: p.x, y: p.y, type: p.type });
+    bees.length = 0;
+    for (const b of s.bees) {
+        bees.push({
+            col: b.col, row: b.row, type: b.type, hp: b.hp,
+            alive: b.alive, diving: b.diving, reenter: b.reenter,
+            x: b.x, y: b.y, vx: b.vx, vy: b.vy,
+            dropped1: b.dropped1, dropped2: b.dropped2
+        });
+    }
+    boss = s.boss ? {
+        x: s.boss.x, y: s.boss.y, hp: s.boss.hp, maxHp: s.boss.maxHp, t: s.boss.t,
+        fanTimer: s.boss.fanTimer, aimTimer: s.boss.aimTimer,
+        phase: s.boss.phase, warnTimer: s.boss.warnTimer, targetY: s.boss.targetY,
+        flash: s.boss.flash, enraged: s.boss.enraged
+    } : null;
+    bossHurtFlash = 0;
+    // ---- 纯视觉对象不入档：恢复后清空重建，避免残留上一会话的演出残影 ----
+    particlePool.clear();
+    floatTexts.length = 0;
+    dashGhosts.length = 0;
+    explosions.length = 0;
+    waveBanner = null;
+    freezeTimer = 0;
+    shakeTime = 0;
+    shakeMag = 0;
+    hurtFlashTimer = 0;
+    goldPulseTimer = 0;
+    bombFlashTimer = 0;
+    bossShockTimer = 0;
+    deathFxTimer = 0;
+    deathFxShown = false;
+    Ach.close(); // 成就墙强制收起：恢复存档从干净界面开始（常态已关则空操作）
+    fireCooldown = 0;
+    isNewRecord = false;
+    // 键鼠输入态清零：恢复后从静止开始，避免残留方向脉冲或开火态
+    for (const k in keys) delete keys[k];
+    mouseDir = 0;
+    mouseDirTimer = 0;
+    mouseDx = 0;
+    mouseFire = false;
+    // 刷新 HUD 数值并立即渲染一帧，遮罩停留形态由调用方决定
+    updateHud();
+    render();
+    restoredNotice = ' · 已恢复上次进度';
+    return true;
+}
+
+/**
+ * 从 localStorage 恢复进度镜像快照（薄壳）：读档 → 校验 → 应用的管线与
+ * 失败清档兜底由共享库 snap-common.js 统一实现，绝不因脏数据抛错。
  * @returns {boolean} 是否成功恢复（true 表示已进入可续玩的恢复态）
  */
 function restoreSnapshot() {
-    try {
-        const s = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        // 无存档或已损坏：按新局处理
-        if (!s) return false;
-        // ---- 顶层结构与协议版本校验 ----
-        if (!s || typeof s !== 'object' || s.v !== 1) snapFail();
-        // ---- 标量字段类型/范围校验：分数/生命/波次非负有限 ----
-        if (!snapIsInt(s.score, 0, 1e9) || !snapIsInt(s.lives, 0, MAX_LIVES) || !snapIsInt(s.wave, 1, 9999)) snapFail();
-        // ---- 玩家位置须在画布坐标范围内，武器等级 1~3，护盾为布尔 ----
-        if (!s.player || !snapIsNum(s.player.x, 0, viewW) || !snapIsNum(s.player.y, 0, viewH)) snapFail();
-        if (!snapIsInt(s.weaponLevel, 1, 3) || typeof s.hasShield !== 'boolean') snapFail();
-        if (!snapIsNum(s.invincibleTimer, 0, 3600)) snapFail();
-        if (s.facing !== 1 && s.facing !== -1) snapFail();
-        if (!snapIsInt(s.dashCount, 0, 1e6) || !snapIsInt(s.killCount, 0, 1e6)) snapFail();
-        if (!snapIsNum(s.dashCdTimer, 0, 3600)) snapFail();
-        // ---- 蜂群波次进度状态校验 ----
-        if (s.swarmDir !== 1 && s.swarmDir !== -1) snapFail();
-        if (!snapIsNum(s.swarmSpeed, 0, 1000)) snapFail();
-        if (!snapIsNum(s.swarmOffsetX, -1e5, 1e5) || !snapIsNum(s.swarmDescend, -1e5, 1e5) || !snapIsNum(s.swarmBaseX, -1e5, 1e5)) snapFail();
-        // ---- 各类计时器：非负有限且在合理秒数上限内 ----
-        if (!snapIsNum(s.enemyFireTimer, 0, 3600) || !snapIsNum(s.diveTimer, 0, 3600)) snapFail();
-        if (!snapIsNum(s.enemyFreezeTimer, 0, 3600) || !snapIsNum(s.magnetTimer, 0, 3600) ||
-            !snapIsNum(s.laserTimer, 0, 3600) || !snapIsNum(s.laserTickTimer, 0, 3600)) snapFail();
-        // ---- 连击与里程碑字段校验 ----
-        if (!snapIsInt(s.comboCount, 0, 1e6) || !snapIsNum(s.comboTimer, 0, 3600) || !snapIsInt(s.comboMult, 1, COMBO_MAX_MULT)) snapFail();
-        if (!snapIsNum(s.nextLifeScore, 1, 1e9) || !snapIsInt(s.livesAtWaveStart, 0, MAX_LIVES)) snapFail();
-        // ---- 事件波枚举校验 ----
-        if (s.waveEvent !== null && s.waveEvent !== 'tide' && s.waveEvent !== 'eliteWall') snapFail();
-        // ---- 玩家子弹数组校验：元素字段齐全且坐标在画布容差范围内 ----
-        if (!Array.isArray(s.bullets) || s.bullets.length > 200) snapFail();
-        for (const b of s.bullets) {
-            if (!b || !snapIsNum(b.x, -100, viewW + 100) || !snapIsNum(b.y, -100, viewH + 100) || !snapIsNum(b.vx, -1000, 1000)) snapFail();
-        }
-        // ---- 敌方子弹数组校验 ----
-        if (!Array.isArray(s.enemyBullets) || s.enemyBullets.length > 400) snapFail();
-        for (const b of s.enemyBullets) {
-            if (!b || !snapIsNum(b.x, -100, viewW + 100) || !snapIsNum(b.y, -100, viewH + 100) ||
-                !snapIsNum(b.vx, -1000, 1000) || !snapIsNum(b.vy, -1000, 1000)) snapFail();
-        }
-        // ---- 场上道具数组校验：类型枚举须在 POWERUP_STYLE 表内 ----
-        if (!Array.isArray(s.powerups) || s.powerups.length > 50) snapFail();
-        for (const p of s.powerups) {
-            if (!p || !snapIsNum(p.x, -100, viewW + 100) || !snapIsNum(p.y, -100, viewH + 100) || !POWERUP_STYLE[p.type]) snapFail();
-        }
-        // ---- 敌人数组校验：蜂种枚举合法、编队位在网格内、逐字段类型齐全；
-        //      阵亡蜂允许 hp ≤ 0（击落瞬间残留值），存活蜂必须 hp ≥ 1 ----
-        if (!Array.isArray(s.bees) || s.bees.length > 400) snapFail();
-        for (const b of s.bees) {
-            if (!b) snapFail();
-            if (!snapIsInt(b.col, 0, BEE_COLS - 1) || !snapIsInt(b.row, 0, BEE_ROWS - 1)) snapFail();
-            if (b.type !== 'normal' && b.type !== 'elite' && b.type !== 'splitter' && b.type !== 'bomber' && b.type !== 'mini') snapFail();
-            if (!snapIsInt(b.hp, -99, 99) || (b.alive === true && b.hp < 1)) snapFail();
-            if (typeof b.alive !== 'boolean' || typeof b.diving !== 'boolean' || typeof b.reenter !== 'boolean') snapFail();
-            if (typeof b.dropped1 !== 'boolean' || typeof b.dropped2 !== 'boolean') snapFail();
-            if (!snapIsNum(b.x, -100, viewW + 100) || !snapIsNum(b.y, -100, viewH + 100)) snapFail();
-            if (!snapIsNum(b.vx, -1000, 1000) || !snapIsNum(b.vy, -1000, 1000)) snapFail();
-        }
-        // ---- Boss 状态校验（null 表示非 Boss 波或已击败；相位枚举三选一，hp 不超上限） ----
-        if (s.boss !== null) {
-            const bo = s.boss;
-            if (!bo || typeof bo !== 'object') snapFail();
-            if (bo.phase !== 'warn' && bo.phase !== 'enter' && bo.phase !== 'fight') snapFail();
-            if (!snapIsNum(bo.x, -200, viewW + 200) || !snapIsNum(bo.y, -200, viewH + 200)) snapFail();
-            if (!snapIsInt(bo.hp, 1, 9999) || !snapIsInt(bo.maxHp, 1, 9999) || bo.hp > bo.maxHp) snapFail();
-            if (!snapIsNum(bo.t, 0, 1e7)) snapFail();
-            if (!snapIsNum(bo.fanTimer, 0, 3600) || !snapIsNum(bo.aimTimer, 0, 3600) || !snapIsNum(bo.warnTimer, 0, 3600)) snapFail();
-            if (!snapIsNum(bo.targetY, 0, viewH) || !snapIsNum(bo.flash, 0, 1)) snapFail();
-            if (typeof bo.enraged !== 'boolean') snapFail();
-        }
-        // ---- 校验全部通过：覆盖运行状态（bullets 等为 const 数组，须原地重建） ----
-        score = s.score;
-        lives = s.lives;
-        wave = s.wave;
-        player = { x: s.player.x, y: s.player.y };
-        weaponLevel = s.weaponLevel;
-        hasShield = s.hasShield;
-        invincibleTimer = s.invincibleTimer;
-        facing = s.facing;
-        dashCount = s.dashCount;
-        killCount = s.killCount;
-        dashCdTimer = s.dashCdTimer;
-        dashTimer = 0; // 冲刺位移不跨快照恢复：避免恢复瞬间高速漂移，冷却进度保留
-        swarmDir = s.swarmDir;
-        swarmSpeed = s.swarmSpeed;
-        swarmOffsetX = s.swarmOffsetX;
-        swarmDescend = s.swarmDescend;
-        swarmBaseX = s.swarmBaseX;
-        enemyFireTimer = s.enemyFireTimer;
-        diveTimer = s.diveTimer;
-        enemyFreezeTimer = s.enemyFreezeTimer;
-        magnetTimer = s.magnetTimer;
-        laserTimer = s.laserTimer;
-        laserTickTimer = s.laserTickTimer;
-        comboCount = s.comboCount;
-        comboTimer = s.comboTimer;
-        comboMult = s.comboMult;
-        nextLifeScore = s.nextLifeScore;
-        livesAtWaveStart = s.livesAtWaveStart;
-        waveEvent = s.waveEvent;
-        bullets.length = 0;
-        for (const b of s.bullets) bullets.push({ x: b.x, y: b.y, vx: b.vx });
-        enemyBullets.length = 0;
-        for (const b of s.enemyBullets) enemyBullets.push({ x: b.x, y: b.y, vx: b.vx, vy: b.vy });
-        powerups.length = 0;
-        for (const p of s.powerups) powerups.push({ x: p.x, y: p.y, type: p.type });
-        bees.length = 0;
-        for (const b of s.bees) {
-            bees.push({
-                col: b.col, row: b.row, type: b.type, hp: b.hp,
-                alive: b.alive, diving: b.diving, reenter: b.reenter,
-                x: b.x, y: b.y, vx: b.vx, vy: b.vy,
-                dropped1: b.dropped1, dropped2: b.dropped2
-            });
-        }
-        boss = s.boss ? {
-            x: s.boss.x, y: s.boss.y, hp: s.boss.hp, maxHp: s.boss.maxHp, t: s.boss.t,
-            fanTimer: s.boss.fanTimer, aimTimer: s.boss.aimTimer,
-            phase: s.boss.phase, warnTimer: s.boss.warnTimer, targetY: s.boss.targetY,
-            flash: s.boss.flash, enraged: s.boss.enraged
-        } : null;
-        bossHurtFlash = 0;
-        // ---- 纯视觉对象不入档：恢复后清空重建，避免残留上一会话的演出残影 ----
-        particlePool.clear();
-        floatTexts.length = 0;
-        dashGhosts.length = 0;
-        explosions.length = 0;
-        waveBanner = null;
-        freezeTimer = 0;
-        shakeTime = 0;
-        shakeMag = 0;
-        hurtFlashTimer = 0;
-        goldPulseTimer = 0;
-        bombFlashTimer = 0;
-        bossShockTimer = 0;
-        deathFxTimer = 0;
-        deathFxShown = false;
-        Ach.close(); // 成就墙强制收起：恢复存档从干净界面开始（常态已关则空操作）
-        fireCooldown = 0;
-        isNewRecord = false;
-        // 键鼠输入态清零：恢复后从静止开始，避免残留方向脉冲或开火态
-        for (const k in keys) delete keys[k];
-        mouseDir = 0;
-        mouseDirTimer = 0;
-        mouseDx = 0;
-        mouseFire = false;
-        // 刷新 HUD 数值并立即渲染一帧，遮罩停留形态由调用方决定
-        updateHud();
-        render();
-        restoredNotice = ' · 已恢复上次进度';
-        return true;
-    } catch (e) {
-        // 快照缺失/损坏/校验不过：移除存档键并按无存档处理，绝不向上抛错
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用时忽略
-        return false;
-    }
+    return snapPipe.restore();
 }
 
 /* ===================== 主循环与输入 ===================== */
@@ -2665,6 +2683,22 @@ document.addEventListener('mousemove', e => {
         mouseDx = 0;
     }
 });
+/* 暂停引擎收口共享库 pause-common.js：BGM/音效序列在库内统一，游戏侧注入差异件——
+ * 双标记落点（blurPaused 只在失焦来源置真，供遮罩区分失焦/手动文案）与动态文案
+ * 遮罩自理（overlay 不传，显隐收口在 syncPauseOverlay） */
+const pausePipe = Pause.create({
+    isPaused: () => blurPaused || paused, // 双标记合并读取：失焦或手动任一即暂停态
+    canToggle: () => gameState === 'playing' && !Ach.isOpen(), // 手动切换准入（成就面板展开时不响应，避免面板开关状态错乱）
+    setPaused: (p, byBlur) => {
+        paused = p;
+        blurPaused = p && byBlur; // 失焦来源置真：syncPauseOverlay 依此区分失焦/手动提示文案
+        // 暂停与恢复瞬间都清空键鼠状态，防止切窗/暂停期间残留的移动/开火输入"卡住"
+        for (const k in keys) delete keys[k];
+        mouseFire = false;
+        syncPauseOverlay(); // 同步暂停遮罩显隐与文案（手动/失焦提示区分）
+    }
+});
+
 // 左键按下（监听 document）：游戏进行中在页面任意处按下均可持续射击，移出画布不中断；
 // 点在按钮/链接上时不触发射击，避免误开 UI 功能
 document.addEventListener('mousedown', e => {
@@ -2673,13 +2707,9 @@ document.addEventListener('mousedown', e => {
     // 否则暂停中点返回会先误恢复运行、快照存成运行态再退出
     if (e.target.closest('button, a')) return;
     // 暂停中（失焦或手动）：点击画布/空白处恢复并一次清空双标记，本次点击不作为射击输入
+    // （恢复序列收口共享库：双标记清空 + BGM 续播 + UI 恢复音 + 遮罩同步）
     if (blurPaused || paused) {
-        blurPaused = false;
-        paused = false;
-        // 恢复：BGM 续播 + UI 恢复音
-        SFX.bgm.resume();
-        SFX.uiResume();
-        syncPauseOverlay(); // 同步隐藏暂停遮罩
+        pausePipe.resume();
         return;
     }
     mouseFire = true;
@@ -2716,21 +2746,19 @@ canvas.addEventListener('pointermove', e => {
 canvas.addEventListener('pointerup', () => { touchLastX = null; mouseDx = 0; });
 canvas.addEventListener('pointercancel', () => { touchLastX = null; mouseDx = 0; });
 // 窗口失焦：清空键鼠状态，防止切窗期间按键"卡住"、回来后自动漂移/自动开火；
-// 游戏进行中同时进入失焦暂停，由主循环挂起逻辑并绘制暂停遮罩
-window.addEventListener('blur', () => {
+// 游戏进行中同时进入失焦暂停（静默不发声，与历史行为一致），由主循环挂起逻辑并绘制暂停遮罩。
+// blur 与 visibilitychange 双通道接线由共享库 snap-common.js 统一注册
+//（visibilitychange 兜底移动端切应用不触发 blur 的场景；双触发经 autoPause 幂等守卫天然去重）
+function handleFocusLoss() {
     for (const k in keys) delete keys[k];
     mouseFire = false;
     mouseDir = 0;
     mouseDirTimer = 0;
     mouseDx = 0;
     touchLastX = null; // 触屏转向手势同步终止：切窗后不会补发 pointerup
-    if (gameState === 'playing') {
-        blurPaused = true;
-        // 失焦暂停同步挂起 BGM，与手动暂停保持一致
-        SFX.bgm.pause();
-        syncPauseOverlay(); // 同步显示暂停遮罩（失焦文案）
-    }
-});
+    if (gameState === 'playing') pausePipe.autoPause(); // 静默失焦暂停：失焦侧 historically 无 UI 暂停音
+}
+Snap.bindFocusLoss(handleFocusLoss);
 
 // 键盘按下：记录按键状态；空格/方向键阻止页面滚动，Shift 冲刺，V 成就面板（任意状态含手动/失焦暂停可用），Esc 关墙，P 手动暂停/继续
 document.addEventListener('keydown', e => {
@@ -2745,34 +2773,15 @@ document.addEventListener('keydown', e => {
     // bee 双标记体系下需显式豁免，否则切窗回来的首次按 V 会被"任意键继续"消费掉弹不出墙）
     const isAchKey = e.code === 'KeyV' || (e.code === 'Escape' && Ach.isOpen());
     // 失焦暂停中：按任意键恢复并一次清空双标记，本次按键不作为游戏输入（防误触发冲刺/成就面板）
+    // （恢复序列收口共享库：双标记清空 + BGM 续播 + UI 恢复音 + 遮罩同步）
     if (blurPaused && gameState === 'playing' && !isAchKey) {
-        for (const k in keys) delete keys[k];
-        blurPaused = false;
-        paused = false;
-        // 失焦恢复：BGM 续播 + UI 恢复音
-        SFX.bgm.resume();
-        SFX.uiResume();
-        syncPauseOverlay(); // 同步隐藏暂停遮罩
+        pausePipe.resume();
         return;
     }
-    // P 键手动暂停/继续：与失焦暂停相互独立；成就面板展开时不响应，避免面板开关状态错乱；
-    // 暂停瞬间清空键鼠状态，防止恢复后残留的移动/开火输入"卡住"
+    // P 键手动暂停/继续：与失焦暂停相互独立；守卫（游戏进行中 + 成就面板未展开）收口在
+    // pausePipe.canToggle；!e.repeat 防长按连发反复切换暂停
     if (e.code === 'KeyP') {
-        if (!e.repeat && gameState === 'playing' && !Ach.isOpen()) { // !e.repeat 防长按连发反复切换暂停
-            paused = !paused;
-            if (paused) {
-                for (const k in keys) delete keys[k];
-                mouseFire = false;
-                // 手动暂停：BGM 挂起 + UI 暂停音
-                SFX.bgm.pause();
-                SFX.uiPause();
-            } else {
-                // 手动继续：BGM 续播 + UI 恢复音
-                SFX.bgm.resume();
-                SFX.uiResume();
-            }
-            syncPauseOverlay(); // 同步暂停遮罩显隐与文案（手动/失焦提示区分）
-        }
+        if (!e.repeat) pausePipe.toggle();
         return;
     }
     // V 开墙 / Esc 关墙由共享库 ach-common.js 的窗口级键盘接线处理，本监听不再重复接管
@@ -2803,14 +2812,13 @@ Arcade.onTrustedMessage(e => {
         if (d.fs) SFX.crtOn();
         else SFX.crtOff();
     }
-    // 游戏厅父页在关闭 iframe 覆盖层前下发存档指令：保存当前局进度快照
-    if (d && d.type === Arcade.MSG.SAVE) saveSnapshot();
 });
 
-// 页面卸载（关闭/刷新/父页移除 iframe）兜底保存：仅在游戏进行中（含暂停态）写入快照
-window.addEventListener('pagehide', () => {
-    if (gameState === 'playing') saveSnapshot();
-});
+// 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
+// 与触发点 b（页面卸载兜底：关闭/刷新/父页移除 iframe 均触发）两处接线收口于 snap-common.js
+// （Snap.bindAutoSave）：进行中写入快照，非进行中清除残留（快照管线内部按 canSave 分流；
+// 游戏结束界面已清档，触发时仅幂等兜底）
+Snap.bindAutoSave(snapPipe);
 
 // 进度镜像快照恢复：核心状态创建完成后、进入默认新局（开始画面等待）前尝试恢复上次进度。
 // 成功 → 进入「进行中 + 手动暂停」态：隐藏开始遮罩，停在暂停遮罩面板上等待玩家继续

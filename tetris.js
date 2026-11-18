@@ -685,6 +685,7 @@ function hardDrop() {
         trails.push({ matrix: piece.matrix, x: piece.x, y0: piece.y, typeIndex: piece.typeIndex, t: TRAIL_TIME });
     }
     score += (gy - piece.y) * 2;
+    updateHud(); // 硬降距离分即时刷新 HUD（软降每格同口径；若随后消行 finishClear 结算后还会再刷一次，调用幂等无害）
     if (gy !== piece.y) lastActionRotate = false; // 实际发生位移才清旋转标志（原地硬降保留，支持「旋转 + 硬降」T-Spin）
     piece.y = gy;
     dropCounter = 0;
@@ -1109,34 +1110,35 @@ function draw() {
  * 更新 HUD 显示
  */
 function updateHud() {
-    Ach.trackRunStat('score', score); // 成就上报：单局得分（updateHud 是全部得分变动的唯一汇合点，软降/硬降/消行/T-Spin 全部经此）
+    Ach.trackRunStat('score', score); // 成就上报：单局得分（随 updateHud 调用汇合；无消行的普通硬降只加分不加调本函数，得分顺延至下一次任意调用才上报）
     FX.tweenNumber(scoreEl, score, 128); // 分数滚动补间：从当前显示值平滑滚到新值（reduced-motion 自动降级直写）
     levelEl.textContent = level;
     linesEl.textContent = totalLines;
     highEl.textContent = highScore;
 }
 
+/* 暂停引擎收口共享库 pause-common.js：守卫/遮罩/BGM/音效序列在库内统一，
+ * 游戏侧只注入差异件（守卫、落点、恢复补起播曲名） */
+const pausePipe = Pause.create({
+    canToggle: () => running, // 开始前不生效；成就墙守卫并入下方（见 onToggle 说明）
+    isPaused: () => paused,
+    setPaused: (p) => {
+        paused = p;
+        // 恢复时重置计时基准，防止瞬间连降（快照恢复路径同样受益于 toggle 前置）
+        if (!p) lastTime = performance.now();
+    },
+    overlay: pauseScreen,
+    // 快照续玩局此前从未起播 BGM（恢复流程不经 startGame）：恢复侧 start 同名幂等补起播
+    resumeBgmStart: 'tetris'
+});
+
 /**
- * 暂停 / 恢复切换
+ * 暂停 / 恢复切换。成就墙打开期间暂停键不生效：墙面本身已冻结局面
+ * （见 Ach.init 的 onToggle），此时按 P 会让墙面悬停时底下局面重新开跑，造成双状态冲突
  */
 function togglePause() {
-    if (!running) return;
-    // 成就墙打开期间暂停键不生效：墙面本身已冻结局面（见 Ach.init 的 onToggle），
-    // 此时按 P 会让墙面悬停时底下局面重新开跑，造成双状态冲突
-    if (Ach.isOpen()) return;
-    paused = !paused;
-    pauseScreen.style.display = paused ? 'block' : 'none';
-    if (paused) {
-        SFX.uiPause();    // 暂停音效
-        SFX.bgm.pause();  // 背景音乐暂停（保留进度）
-    } else {
-        SFX.uiResume();   // 恢复音效
-        // 快照续玩局此前从未起播 BGM（恢复流程不经 startGame）：start 同名幂等，
-        // 未播时补起播、已在播时不受影响；随后 resume 接续手动暂停保留的进度
-        SFX.bgm.start('tetris');
-        SFX.bgm.resume(); // 背景音乐恢复
-        lastTime = performance.now(); // 恢复时重置计时基准，防止瞬间连降
-    }
+    if (Ach.isOpen()) return; // 成就墙冻结期对暂停引擎整体闭锁（含遮罩点击与失焦自动暂停）
+    pausePipe.toggle();
 }
 
 /**
@@ -1243,7 +1245,7 @@ function startGame() {
  */
 function gameOver() {
     running = false;
-    Arcade.removeRaw(SAVE_KEY); // 存储不可用时静默——游戏结束：本局进度快照作废，下次进入按新开局（清除失败不中断结算）
+    snapPipe.clear(); // 游戏结束：本局进度快照作废，下次进入按新开局（清除失败不中断结算）
     finalScoreEl.textContent = score;
     const isRecord = score > highScore;
     if (isRecord) {
@@ -1380,8 +1382,8 @@ function handleFocusLoss() {
     stopAllTouchRepeats(); // 触屏按钮连发计时同步清空（对齐失焦清理惯例）
     if (running && !paused) togglePause();
 }
-window.addEventListener('blur', handleFocusLoss);
-document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
+// 失焦/切后台双通道接线收口于 snap-common.js（blur + visibilitychange hidden 共用同一清理函数）
+Snap.bindFocusLoss(handleFocusLoss);
 
 // 暂停遮罩点击恢复（参照华容道 / 蜜蜂机台）：遮罩悬浮于画布之上会拦截点击，
 // 点击遮罩空白处即恢复（与 P 键同走 togglePause；失焦自动暂停弹出的遮罩同样适用，
@@ -1543,9 +1545,42 @@ Ach.init({
     }
 });
 
-// ---------- 进度镜像快照 ----------
+// ---------- 进度镜像快照存档键 ----------
 /** 进度快照存档键（localStorage）：返回游戏厅 / 页面卸载 / 父页下发保存指令时写入，下次进入游戏页时恢复 */
 const SAVE_KEY = 'arcade_save_tetris';
+
+/* ---------- 进度镜像快照（存取骨架与触发接线收口于共享库 snap-common.js） ---------- */
+
+/**
+ * 构建当前局纯数据快照：数组/数值/布尔，不含函数与 DOM 引用；
+ * 首字段固定版本号 v=1，恢复时校验
+ * @returns {Object} 快照对象
+ */
+function buildTetrisSnapshot() {
+    return {
+        v: 1,                                                        // 格式版本号
+        board: board.map(row => row.slice()),                        // 棋盘深拷贝（0 空 / 1-7 方块色索引）
+        piece: { type: piece.typeIndex, rot: piece.rot, x: piece.x, y: piece.y }, // 当前方块类型/旋转态/坐标
+        nextQueue: nextQueue.slice(),                                // NEXT 预览队列（3 项）
+        bag: bag.slice(),                                            // 7-bag 随机器剩余队列
+        holdType: holdType,                                          // HOLD 暂存块（-1 为空）
+        holdUsed: holdUsed,                                          // 当前方块落子周期内是否已换持（spawnPiece 时重置）
+        score: score,                                                // 分数
+        level: level,                                                // 等级
+        totalLines: totalLines                                       // 累计消行数
+    };
+}
+
+// 快照管线实例：保存/清除分流（进行中或暂停中才保存，开始/结算界面清除）与
+// 恢复管线（isValidSnapshot 校验失败 / 组合碰撞冲突 / 抛错一律清档回退新开局）
+// 由 Snap.create 统一实现
+const snapPipe = Snap.create({
+    key: SAVE_KEY,
+    canSave: () => running || paused,
+    build: buildTetrisSnapshot,
+    validate: isValidSnapshot,
+    apply: applyTetrisSnapshot
+});
 
 /**
  * 保存当前局进度镜像快照到 localStorage（纯数据：数组/数值/布尔，不含函数与 DOM 引用）：
@@ -1553,27 +1588,7 @@ const SAVE_KEY = 'arcade_save_tetris';
  * 整体 try/catch 静默容错，存储异常（隐私模式 / 超容量等）不中断游戏流程
  */
 function saveSnapshot() {
-    try {
-        // 未开始（开始界面）或已结束（结算界面）：快照失去意义，直接清除旧存档
-        if (!running && !paused) {
-            Arcade.removeRaw(SAVE_KEY);
-            return;
-        }
-        // 组装纯数据快照：首字段固定版本号 v=1，恢复时校验
-        const snapshot = {
-            v: 1,                                                        // 格式版本号
-            board: board.map(row => row.slice()),                        // 棋盘深拷贝（0 空 / 1-7 方块色索引）
-            piece: { type: piece.typeIndex, rot: piece.rot, x: piece.x, y: piece.y }, // 当前方块类型/旋转态/坐标
-            nextQueue: nextQueue.slice(),                                // NEXT 预览队列（3 项）
-            bag: bag.slice(),                                            // 7-bag 随机器剩余队列
-            holdType: holdType,                                          // HOLD 暂存块（-1 为空）
-            holdUsed: holdUsed,                                          // 本周目是否已换持
-            score: score,                                                // 分数
-            level: level,                                                // 等级
-            totalLines: totalLines                                       // 累计消行数
-        };
-        Arcade.saveJSON(SAVE_KEY, snapshot); // 存储失败由 saveJSON 降级跳过（同键仅首次控制台告警），不中断游戏
-    } catch (e) { /* 快照组装异常：静默跳过，不影响游戏 */ }
+    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
 }
 
 /**
@@ -1622,63 +1637,64 @@ function isValidSnapshot(s) {
 }
 
 /**
- * 从 localStorage 恢复进度快照：读键 → JSON.parse → 逐字段校验（含棋盘与方块位置的组合碰撞检测）；
- * 合法则覆盖游戏核心状态，Lock Delay / DAS-ARR 等输入时序状态复位为默认值，
- * 特效与 T-Spin / B2B / COMBO 状态清零，下落间隔按恢复后的等级重新推导；
- * 随后进入暂停遮罩等待玩家按 P 继续（防恢复即死）；任何异常或非法数据一律
+ * 应用快照到游戏状态（管线应用钩子，调用前 isValidSnapshot 已全部通过）：
+ * 覆盖核心状态（棋盘 + 按保存的旋转态从初始矩阵旋转出当前姿态），
+ * Lock Delay / DAS-ARR 等输入时序状态复位为默认值，特效与 T-Spin / B2B /
+ * COMBO 状态清零，下落间隔按恢复后的等级重新推导；随后进入暂停遮罩等待玩家
+ * 按 P 继续（防恢复即死）
+ * @param {*} s 已通过校验的快照对象
+ * @returns {boolean} 恢复位置与棋盘无冲突返回 true（已应用）；冲突返回 false（管线清档走新局）
+ */
+function applyTetrisSnapshot(s) {
+    // —— 覆盖核心状态：棋盘 + 按保存的旋转态从初始矩阵旋转出当前姿态 ——
+    board = s.board.map(row => row.slice());
+    let matrix = PIECES[s.piece.type].matrix;
+    for (let i = 0; i < s.piece.rot; i++) matrix = rotate(matrix);
+    piece = { x: s.piece.x, y: s.piece.y, rot: s.piece.rot, typeIndex: s.piece.type, matrix };
+    // 组合校验：恢复位置与棋盘冲突视为非法（防恢复即卡死），返回 false 由管线清除快照走新局
+    if (collide(piece.x, piece.y, piece.matrix)) return false;
+    nextQueue = s.nextQueue.slice();
+    bag = s.bag.slice();
+    holdType = s.holdType;
+    holdUsed = s.holdUsed;
+    score = s.score;
+    level = s.level;
+    totalLines = s.totalLines;
+    dropInterval = levelDropInterval(level); // 下落速度按恢复后的等级重新推导
+    resetTransientState(); // 输入时序 / 特效 / 连锁状态复位为默认值（与开始新局共用）
+    // —— 进入暂停遮罩等待玩家继续（防恢复即死） ——
+    running = true;
+    paused = true;
+    lastTime = performance.now(); // 重置计时基准，防止恢复瞬间 delta 暴涨导致连降
+    startScreen.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    pauseScreen.style.display = 'block';
+    pauseRestoredEl.style.display = 'block'; // 遮罩追加「已恢复上次进度」提示
+    // 刷新 HUD / HOLD / NEXT 预览与画布一帧
+    updateHud();
+    drawHold();
+    drawNext();
+    draw();
+    return true;
+}
+
+/**
+ * 从 localStorage 恢复进度快照：读键 → 逐字段校验（含棋盘与方块位置的组合碰撞检测）；
+ * 合法则覆盖游戏核心状态并停在暂停遮罩等待玩家继续；任何异常或非法数据一律
  * 清除快照并返回 false，走默认新开局，绝不因脏数据抛错
  * @returns {boolean} 是否成功恢复（true = 已恢复并暂停；false = 无快照或快照非法）
  */
 function restoreSnapshot() {
-    try {
-        const s = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        if (!s) return false; // 无存档或已损坏：按新开局处理
-        if (!isValidSnapshot(s)) {
-            Arcade.removeRaw(SAVE_KEY); // 脏数据：弃用并清除
-            return false;
-        }
-        // —— 覆盖核心状态：棋盘 + 按保存的旋转态从初始矩阵旋转出当前姿态 ——
-        board = s.board.map(row => row.slice());
-        let matrix = PIECES[s.piece.type].matrix;
-        for (let i = 0; i < s.piece.rot; i++) matrix = rotate(matrix);
-        piece = { x: s.piece.x, y: s.piece.y, rot: s.piece.rot, typeIndex: s.piece.type, matrix };
-        // 组合校验：恢复位置与棋盘冲突视为非法（防恢复即卡死），清除快照走新局
-        if (collide(piece.x, piece.y, piece.matrix)) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        nextQueue = s.nextQueue.slice();
-        bag = s.bag.slice();
-        holdType = s.holdType;
-        holdUsed = s.holdUsed;
-        score = s.score;
-        level = s.level;
-        totalLines = s.totalLines;
-        dropInterval = levelDropInterval(level); // 下落速度按恢复后的等级重新推导
-        resetTransientState(); // 输入时序 / 特效 / 连锁状态复位为默认值（与开始新局共用）
-        // —— 进入暂停遮罩等待玩家继续（防恢复即死） ——
-        running = true;
-        paused = true;
-        lastTime = performance.now(); // 重置计时基准，防止恢复瞬间 delta 暴涨导致连降
-        startScreen.style.display = 'none';
-        gameOverScreen.style.display = 'none';
-        pauseScreen.style.display = 'block';
-        pauseRestoredEl.style.display = 'block'; // 遮罩追加「已恢复上次进度」提示
-        // 刷新 HUD / HOLD / NEXT 预览与画布一帧
-        updateHud();
-        drawHold();
-        drawNext();
-        draw();
-        return true;
-    } catch (e) {
-        // 任何异常：清除可疑存档（removeRaw 自带静默兜底，异常处理路径不会被二次中断），按新开局处理
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用时无视：本就按新开局处理
-        return false;
-    }
+    // 读档→校验（isValidSnapshot）→应用（applyTetrisSnapshot）管线与异常清档兜底
+    // 由 Snap.create 统一实现
+    return snapPipe.restore();
 }
 
-// 页面卸载（刷新 / 关闭 / 父页移除 iframe）：进行中或暂停中的局写入快照（未开始/已结束由 saveSnapshot 内部清除）
-window.addEventListener('pagehide', () => saveSnapshot());
+// 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
+// 与触发点 b（页面卸载兜底：刷新 / 关闭 / 父页移除 iframe 均触发 pagehide）两处接线
+// 收口于 snap-common.js（Snap.bindAutoSave）：进行中或暂停中的局写入快照
+//（未开始/已结束由管线内部清除）
+Snap.bindAutoSave(snapPipe);
 
 // ---------- CRT 开关机音效双监听 ----------
 let embedFsLast = null; // iframe 嵌入模式下最近一次全屏状态（null=尚未同步，首条消息静默）
@@ -1689,9 +1705,9 @@ document.addEventListener('fullscreenchange', () => {
     else SFX.crtOff();
 });
 
-// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）；跨源伪造的 arcade:fs / arcade:save
-// 指令在守卫处丢弃，防止干扰全屏音效或诱导覆写存档
+// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态
+// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）；跨源伪造的 arcade:fs
+// 指令在守卫处丢弃，防止干扰全屏音效
 Arcade.onTrustedMessage(e => {
     const d = e.data;
     if (!d || typeof d !== 'object') return;
@@ -1703,8 +1719,6 @@ Arcade.onTrustedMessage(e => {
             else SFX.crtOff();
         }
         embedFsLast = fs;
-    } else if (d.type === Arcade.MSG.SAVE) {
-        saveSnapshot(); // 父页关闭覆盖层前下发：保存进度镜像快照
     }
 });
 

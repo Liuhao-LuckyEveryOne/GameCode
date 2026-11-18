@@ -518,7 +518,8 @@ const FX = (() => {
      * 游玩时长追踪器（单例）：累计页面可见时长（rAF 驱动，隐藏页自动不计），
      * 每 15 秒冲账一次 + pagehide 兜底冲账。嵌入模式（?embed 且运行于 iframe）下经
      * postMessage 上报父页 {type:'arcade:playtime', id, seconds} 由大厅统一落盘；
-     * 独立运行直接写 localStorage 键 arcade_playtime_<id>（秒累加，读写均 try-catch）
+     * 独立运行直接写 localStorage 键 arcade_playtime_<id>（秒累加，读写经 Arcade 原语内部兜底：
+ * 读失败按 0 计、写失败静默放弃）
      * @returns {{init: Function}} playtime 对象：init(gameId) 传入游戏 id（与卡片/存档键 id 一致），
      *          幂等可重复调用（游戏侧统一按 FX.playtime.init('id') 对象形状调用）
      */

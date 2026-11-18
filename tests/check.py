@@ -8,6 +8,7 @@
   1. 引用完整性   —— 所有 HTML 中的本地 src=/href= 引用必须指向真实存在的文件
   2. 缓存指纹     —— 本地 .js/.css/.html 引用必须携带 ?v= 版本参数（手动破缓存策略）
   3. 公共库加载序 —— 每页必须按 arcade-common.js → audio.js → fx.js → fullscreen.js → 业务 js 顺序加载公共库
+                     （游戏页额外要求 ach-common.js / snap-common.js / pause-common.js 三共享层齐全）
   4. 危险模式扫描 —— 全站禁止 eval( / new Function( / document.write(
   5. 存储/消息收口 —— 全站禁止绕过 Arcade 存储 API 裸调 localStorage，禁止裸写跨帧
                      消息类型字面量 arcade:*（两者仅允许 arcade-common.js 实现层/定义处
@@ -25,6 +26,10 @@
                      （成就墙锁定卡按「分类 · 尚未达成」渲染，缺失即显示 undefined）
   12. 入口版本一致 —— 大厅卡片入口 X.html?v= 版本不得落后于同名业务 js 当前版本
                      （只升不降不变量；tools/bump-versions.py 自动同步，本项兜底守护）
+  13. 大厅数据同步 —— index.js 的 ACH_DEFS 成就表与 BEST_DEFS 最高分键表须与七游戏
+                     js 实际定义一致（成就 id 双向比对 / 存档键 arcade_ach_* 一致 /
+                     最高分键集合比对，klotski 模板拼键按 DIFF_IDS×LAYOUTS 静态展开；
+                     防游戏侧增删成就或改键后大厅殿堂/角标漏同步）
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
@@ -111,9 +116,12 @@ GAMES = [
     ("1024.html", "1024.js"),
 ]
 
-# 游戏页专属公共库：成就系统共享层（ach-common.js），七游戏页必须加载且排在
-# fullscreen.js 之后、业务 js 之前；大厅 index.html 不开成就墙故不在此列
-GAME_LIB_ORDER = ["ach-common.js"]
+# 游戏页专属公共库（七游戏页必须加载且排在 fullscreen.js 之后、业务 js 之前；
+# 大厅 index.html 不开成就墙/无进度快照故不在此列）：
+#   ach-common.js —— 成就系统共享层（存档迁移/解锁/成就墙渲染）
+#   snap-common.js —— 进度快照共享层（快照存取管线/触发与失焦接线）
+#   pause-common.js —— 暂停引擎共享层（守卫/遮罩/BGM/音效公共序列）
+GAME_LIB_ORDER = ["ach-common.js", "snap-common.js", "pause-common.js"]
 GAME_PAGES = {html for html, _js in GAMES}
 
 # 检查项 11：成就条目锚与分类字段（在去噪骨架上匹配，键名为标识符不受字符串剥离影响）。
@@ -122,6 +130,17 @@ GAME_PAGES = {html for html, _js in GAMES}
 ACH_ANCHOR_RE = re.compile(r"\brarity\s*:")
 ACH_CAT_RE = re.compile(r"\bcat\s*:")
 ACH_DECL_RE = re.compile(r"\bconst\s+\w*ACHIEVEMENTS\w*\s*=\s*\[")
+
+# 检查项 13：大厅两表声明锚与游戏侧提取锚。字符串字面量提取须在
+# strip_comment_tails 剥注释保字符串的文本上进行（strip_js_code 会剥掉字面量内容
+# 导致正则无处匹配）；数组体/条目切片与检查项 11 同技法（括号深度配对）
+BEST_DEFS_DECL_RE = re.compile(r"\bconst\s+BEST_DEFS\s*=\s*\[")
+ACH_DEFS_DECL_RE = re.compile(r"\bconst\s+ACH_DEFS\s*=\s*\[")
+DIFF_IDS_DECL_RE = re.compile(r"\bconst\s+DIFF_IDS\s*=\s*\[([^\]]*)\]")
+LAYOUTS_DECL_RE = re.compile(r"\bconst\s+LAYOUTS\s*=\s*\[")
+HIGH_SCORE_LIT_RE = re.compile(r"['\"](\w*(?:HighScore|BestScore))['\"]")
+ACH_KEY_LIT_RE = re.compile(r"['\"](arcade_ach_\w+)['\"]")
+KLOTSKI_KEY_PREFIX_LIT = "'klotskiBest_'"
 
 # 检查项 12：YYYYMMDD-N 版本号解析（fullmatch，用于入口/业务 js 版本元组比较）
 VER_NUM_RE = re.compile(r"(\d{8})-(\d+)")
@@ -216,7 +235,8 @@ def check_version_problems():
 def check_lib_order_problems():
     """检查项 3：每页公共库齐全且顺序 arcade-common → audio → fx → fullscreen → 业务 js。
 
-    游戏页额外要求：ach-common.js（成就共享层）必须存在且排在 fullscreen.js 之后。
+    游戏页额外要求：ach-common.js（成就共享层）、snap-common.js（快照共享层）与 pause-common.js
+    （暂停共享层）必须存在且排在 fullscreen.js 之后。
 
     返回:
         失败明细列表（空列表 = 通过）
@@ -244,7 +264,7 @@ def check_lib_order_problems():
             biz = [i for i, r in enumerate(refs) if r not in LIB_ORDER and r not in GAME_LIB_ORDER]
             if biz and min(biz) < pos[-1]:
                 problems.append(f"{page.name} 业务 js 早于 fullscreen.js 加载: {refs}")
-        # 游戏页专属公共库：存在性 + 必须晚于 fullscreen.js（ach-common 依赖 audio/fx 的挂载）
+        # 游戏页专属公共库：存在性 + 必须晚于 fullscreen.js（ach-common/snap-common 依赖前置库的挂载）
         if page.name in GAME_PAGES:
             for lib in GAME_LIB_ORDER:
                 if lib not in refs:
@@ -599,7 +619,7 @@ def check_compat_problems():
     扫描范围：HTML 全文（CSS 内嵌于 <style> 块与内联样式属性）+ 全部 js 文件
     （防未来 js 动态设置样式引入无前缀属性）。规则：
       a. 文本出现前缀敏感属性的无前缀形式 → 同文件必须存在对应 -webkit- 前缀形式
-      b. 文本出现 AudioContext → 同文件必须存在 webkitAudioContext 回退
+      b. 出现 AudioContext 构造用法 → 同文件必须存在 webkitAudioContext 回退（注释提及不约束）
 
     返回:
         失败明细列表（空列表 = 通过）
@@ -727,32 +747,14 @@ def check_ach_cat_problems():
             continue  # 文件缺失由检查项 6 报告，本项不重复
         skel = strip_js_code(path.read_text(encoding="utf-8"))
         for decl in ACH_DECL_RE.finditer(skel):
-            start = decl.end()  # 数组体起点（'[' 之后）
-            depth, i = 1, start
-            while i < len(skel) and depth:
-                if skel[i] == "[":
-                    depth += 1
-                elif skel[i] == "]":
-                    depth -= 1
-                i += 1
-            if depth != 0:
+            # 数组体/条目切片复用检查项 13 辅助区的同技法函数（消除双份内联实现）
+            body = _slice_array_body(skel, decl.end())
+            if body is None:
                 problems.append(f"{js_name} 成就数组未闭合: {decl.group(0)}")
                 continue
-            body = skel[start:i - 1]
-            # 拆顶层条目：花括号深度 0→1→0 的 {...} 片段即为单条成就定义
-            bdepth, bstart = 0, None
-            for j, ch in enumerate(body):
-                if ch == "{":
-                    if bdepth == 0:
-                        bstart = j
-                    bdepth += 1
-                elif ch == "}":
-                    bdepth -= 1
-                    if bdepth == 0 and bstart is not None:
-                        entry = body[bstart:j + 1]
-                        if ACH_ANCHOR_RE.search(entry) and not ACH_CAT_RE.search(entry):
-                            problems.append(f"{js_name} 成就条目缺 cat 分类字段: {entry.strip()[:60]}")
-                        bstart = None
+            for entry in _split_top_objects(body):
+                if ACH_ANCHOR_RE.search(entry) and not ACH_CAT_RE.search(entry):
+                    problems.append(f"{js_name} 成就条目缺 cat 分类字段: {entry.strip()[:60]}")
     return problems
 
 
@@ -788,8 +790,271 @@ def check_entry_version_problems():
     return problems
 
 
+# ---------- 检查项 11/13 共用与第 13 项专属辅助：数组切片 + 大厅两表静态提取 ----------
+
+def _strip_comments_keep_strings(raw):
+    """整文剥注释保字符串：strip_comment_tails 的逐行状态机包装。
+
+    参数:
+        raw: js 全文
+    返回:
+        剥注释后的整文（字符串/模板串字面量内容保留，供字面量级正则提取）
+    """
+    state = {"block": False, "tmpl": False}
+    return "\n".join(strip_comment_tails(line, state)[0] for line in raw.split("\n"))
+
+
+def _slice_array_body(text, decl_end):
+    """从数组声明结尾起方括号深度配对切片数组体（检查项 11/13 共用）。
+
+    参数:
+        text: 剥注释后的 js 文本
+        decl_end: 声明 match.end()（'[' 之后的位置）
+    返回:
+        数组体文本（不含两端括号）；未闭合时 None
+    """
+    depth, i = 1, decl_end
+    while i < len(text) and depth:
+        if text[i] == "[":
+            depth += 1
+        elif text[i] == "]":
+            depth -= 1
+        i += 1
+    return None if depth else text[decl_end:i - 1]
+
+
+def _split_top_objects(body):
+    """拆数组体内花括号深度 0→1→0 的顶层 {...} 条目（检查项 11/13 共用）。
+
+    参数:
+        body: 数组体文本
+    返回:
+        顶层条目文本列表（保持出现顺序）
+    """
+    entries, depth, bstart = [], 0, None
+    for j, ch in enumerate(body):
+        if ch == "{":
+            if depth == 0:
+                bstart = j
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and bstart is not None:
+                entries.append(body[bstart:j + 1])
+                bstart = None
+    return entries
+
+
+def _field_str(entry, field):
+    """条目内提取 field: 'xxx' 形态的字符串字面量值（首个命中）。
+
+    参数:
+        entry: 顶层条目文本
+        field: 字段名（如 id / key）
+    返回:
+        字段值字符串；缺失时 None
+    """
+    m = re.search(r"\b" + field + r"\s*:\s*['\"]([\w-]+)['\"]", entry)
+    return m.group(1) if m else None
+
+
+def _string_array(entry, field):
+    """条目内提取 field: ['a', 'b', ...] 形态的字符串数组值。
+
+    参数:
+        entry: 顶层条目文本
+        field: 字段名（BEST_DEFS 的 keys，元素全为简单字符串字面量）
+    返回:
+        字符串列表；字段缺失时空列表
+    """
+    m = re.search(r"\b" + field + r"\s*:\s*\[([^\]]*)\]", entry)
+    return re.findall(r"['\"]([\w-]+)['\"]", m.group(1)) if m else []
+
+
+def _photo_ids(entry):
+    """成就殿堂条目内提取 photos 相片表各子数组首元素（成就 id 序列）。
+
+    子数组五元组 [id, 名称, emoji, 稀有度, 描述] 的首元素即 id；
+    从 photos: 起扫描避免条目内其它字段干扰。
+
+    参数:
+        entry: 顶层条目文本
+    返回:
+        成就 id 列表；条目缺 photos 字段时 None
+    """
+    m = re.search(r"\bphotos\s*:", entry)
+    if not m:
+        return None
+    return re.findall(r"\[\s*['\"](\w+)['\"]\s*,", entry[m.start():])
+
+
+def _diff_set(problems, left_label, left, right_label, right):
+    """集合双向 diff 报错（顺序不敏感：大厅相片墙与游戏侧解锁表仅要求 id 对应），
+    并对两侧序列做内部重复检测。
+
+    参数:
+        problems: 失败明细列表（原地追加）
+        left_label: 左侧（大厅侧）报告标签
+        left: 左侧 id 序列
+        right_label: 右侧（游戏侧）报告标签
+        right: 右侧 id 序列
+    """
+    ls, rs = set(left), set(right)
+    for extra in sorted(ls - rs):
+        problems.append(f"{left_label} 多出而 {right_label} 缺失: {extra}")
+    for missing in sorted(rs - ls):
+        problems.append(f"{right_label} 多出而 {left_label} 缺失: {missing}")
+    if len(left) != len(set(left)):
+        problems.append(f"{left_label} 存在重复 id")
+    if len(right) != len(set(right)):
+        problems.append(f"{right_label} 存在重复 id")
+
+
+def _klotski_expected_keys(text, js_name, problems):
+    """klotski 最高分键静态展开：DIFF_IDS × LAYOUTS 笛卡尔积 + 旧版布局键。
+
+    klotski.js 的 bestKey 以 'klotskiBest_' + diffId + '_' + layoutId 模板拼键
+    （另有旧版 'klotskiBest_' + layoutId），键名不存在字面量，须按难度与布局
+    id 表展开成期望键集合再与大厅 keys 数组比对。
+
+    参数:
+        text: 剥注释后的 klotski.js 文本
+        js_name: 报告用文件名
+        problems: 失败明细列表（形态漂移类报错原地追加）
+    返回:
+        期望键集合（排序后列表）；形态超出静态解析预期时 None（已报错）
+    """
+    if KLOTSKI_KEY_PREFIX_LIT not in text:
+        problems.append(f"{js_name} bestKey 拼键前缀 {KLOTSKI_KEY_PREFIX_LIT} 未找到"
+                        f"（模板形态漂移，需同步本检查器）")
+        return None
+    diff_m = DIFF_IDS_DECL_RE.search(text)
+    lay_m = LAYOUTS_DECL_RE.search(text)
+    if not diff_m or not lay_m:
+        problems.append(f"{js_name} 未找到 DIFF_IDS/LAYOUTS 声明（形态漂移，需同步本检查器）")
+        return None
+    lay_body = _slice_array_body(text, lay_m.end())
+    if lay_body is None:
+        problems.append(f"{js_name} LAYOUTS 数组未闭合")
+        return None
+    diffs = re.findall(r"['\"](\w+)['\"]", diff_m.group(1))
+    layouts = [i for i in (_field_str(e, "id") for e in _split_top_objects(lay_body)) if i]
+    if not diffs or not layouts:
+        problems.append(f"{js_name} DIFF_IDS/LAYOUTS id 提取为空（形态漂移，需同步本检查器）")
+        return None
+    expected = {f"klotskiBest_{d}_{l}" for d in diffs for l in layouts}
+    expected |= {f"klotskiBest_{l}" for l in layouts}  # 旧版（无难度维度）键：进阶档回读
+    return sorted(expected)
+
+
+def check_lobby_defs_problems():
+    """检查项 13：大厅 ACH_DEFS/BEST_DEFS 与七游戏实际定义同步。
+
+    大厅成就殿堂（ACH_DEFS：photos 相片表 id + 存档键 key）与卡片 BEST 角标
+    （BEST_DEFS：各游戏最高分 localStorage 键）是游戏侧定义的镜像拷贝，游戏侧
+    增删成就或改键后漏同步会静默劣化大厅展示（相片墙缺卡/多卡、BEST 角标
+    NaN 或漏读）。本项做静态双向比对：①成就 id 集合（photos 首元素 ↔ 游戏侧
+    ACHIEVEMENTS 条目 id，含两侧内部重复检测）；②存档键（游戏侧 arcade_ach_*
+    字面量 ↔ 大厅 key 字段）；③最高分键（游戏侧 *HighScore/*BestScore 字面量
+    ↔ 大厅 keys 数组；klotski 模板拼键按 DIFF_IDS × LAYOUTS 静态展开 18 新键
+    + 6 旧版布局键核对）。
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    problems = []
+    index_path = ROOT / "index.js"
+    if not index_path.exists():
+        return problems  # 大厅脚本齐全性由检查项 6 把关，本项不重复
+    index_text = _strip_comments_keep_strings(index_path.read_text(encoding="utf-8"))
+
+    # ---- 大厅侧两表提取：BEST_DEFS id->键列表；ACH_DEFS id->(存档键, photos id 序列) ----
+    best_decl = BEST_DEFS_DECL_RE.search(index_text)
+    ach_decl = ACH_DEFS_DECL_RE.search(index_text)
+    if not best_decl or not ach_decl:
+        problems.append("index.js 未找到 BEST_DEFS/ACH_DEFS 声明（形态漂移，需同步本检查器）")
+        return problems
+    best_defs, ach_defs = {}, {}
+    for entry in _split_top_objects(_slice_array_body(index_text, best_decl.end())):
+        gid = _field_str(entry, "id")
+        keys = _string_array(entry, "keys")
+        if gid and keys:
+            best_defs[gid] = keys
+        else:
+            problems.append(f"index.js BEST_DEFS 条目缺 id/keys 字段: {entry.strip()[:60]}")
+    for entry in _split_top_objects(_slice_array_body(index_text, ach_decl.end())):
+        gid = _field_str(entry, "id")
+        if gid:
+            ach_defs[gid] = (_field_str(entry, "key"), _photo_ids(entry))
+        else:
+            problems.append(f"index.js ACH_DEFS 条目缺 id 字段: {entry.strip()[:60]}")
+
+    # ---- 逐游戏三段比对（id 集合 / 存档键 / 最高分键）----
+    for _html, js_name in GAMES:
+        path = ROOT / js_name
+        if not path.exists():
+            continue  # 文件缺失由检查项 6 报告，本项不重复
+        text = _strip_comments_keep_strings(path.read_text(encoding="utf-8"))
+        stem = path.stem  # 游戏 id：大厅两表键与 js 文件名同名约定
+
+        # ① 成就 id 集合：游戏侧 ACHIEVEMENTS 条目 id 提取
+        decl = ACH_DECL_RE.search(text)
+        game_ids = None
+        if not decl:
+            problems.append(f"{js_name} 未找到 ACHIEVEMENTS 数组声明（形态漂移，需同步本检查器）")
+        else:
+            body = _slice_array_body(text, decl.end())
+            if body is None:
+                problems.append(f"{js_name} 成就数组未闭合")
+            else:
+                game_ids = [i for i in (_field_str(e, "id") for e in _split_top_objects(body)) if i]
+                if not game_ids:
+                    problems.append(f"{js_name} 成就数组条目 id 提取为空（形态漂移，需同步本检查器）")
+                    game_ids = None
+        hall = ach_defs.get(stem)
+        if hall is None:
+            problems.append(f"index.js ACH_DEFS 缺少 {stem} 条目（游戏侧成就表存在）")
+        elif game_ids is not None:
+            hall_key, photo_ids = hall
+            if photo_ids is None:
+                problems.append(f"index.js ACH_DEFS[{stem}] 缺 photos 相片表")
+            else:
+                _diff_set(problems, f"index.js ACH_DEFS[{stem}] photos", photo_ids,
+                          f"{js_name} 成就表", game_ids)
+
+            # ② 存档键：游戏侧 arcade_ach_* 字面量 ↔ 大厅 key 字段
+            game_keys = set(ACH_KEY_LIT_RE.findall(text))
+            if game_keys and hall_key:
+                if game_keys != {hall_key}:
+                    problems.append(f"{js_name} 存档键 {sorted(game_keys)} 与大厅 "
+                                    f"ACH_DEFS[{stem}].key '{hall_key}' 不一致")
+            elif not game_keys:
+                problems.append(f"{js_name} 未找到 arcade_ach_* 存档键字面量")
+            else:
+                problems.append(f"index.js ACH_DEFS[{stem}] 缺 key 字段")
+
+        # ③ 最高分键：游戏侧字面量 ↔ 大厅 keys 数组（klotski 静态展开）
+        hall_keys = best_defs.get(stem)
+        if hall_keys is None:
+            problems.append(f"index.js BEST_DEFS 缺少 {stem} 条目（游戏侧最高分读写存在）")
+            continue
+        if stem == "klotski":
+            expected = _klotski_expected_keys(text, js_name, problems)
+            if expected is not None:
+                _diff_set(problems, "index.js BEST_DEFS[klotski].keys", hall_keys,
+                          f"{js_name} bestKey 展开键集", expected)
+        else:
+            game_lits = set(HIGH_SCORE_LIT_RE.findall(text))
+            if not game_lits:
+                problems.append(f"{js_name} 未找到 *HighScore/*BestScore 最高分键字面量")
+            else:
+                _diff_set(problems, f"index.js BEST_DEFS[{stem}].keys", hall_keys,
+                          f"{js_name} 最高分键字面量", game_lits)
+    return problems
+
+
 def main():
-    """主流程：依次运行十二项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十三项检查，汇总结果并按退出码约定返回。"""
     targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
@@ -804,6 +1069,7 @@ def main():
         ("去噪自检", check_doctest_problems),
         ("成就cat完整", check_ach_cat_problems),
         ("入口版本一致", check_entry_version_problems),
+        ("大厅成就/最高分同步", check_lobby_defs_problems),
     ]
     all_ok = True
     for label, fn in checks:

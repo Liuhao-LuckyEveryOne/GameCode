@@ -657,7 +657,7 @@ function updatePhysics(dt) {
  * 先沿连心线把两球各推出一半重叠量校正位置防粘连，再按等质量弹性碰撞公式
  * 交换法向速度分量（恢复系数 BALL_RESTITUTION，切向分量保留）；
  * 仅在两球相互接近（相对速度朝向彼此）时响应，避免贴合状态下重复弹开；
- * 法向接近速度达 BALL_HIT_MIN_VN 才出反馈（碰撞中点火花 + 撞墙音节流复用 + 计分喂连击），
+ * 法向接近速度达 BALL_HIT_MIN_VN 才出反馈（碰撞中点火花 + 复用撞墙音色，无节流靠本阈值过滤 + 计分喂连击），
  * 慢速搭接只做物理分离，防止静止贴靠持续刷分爆音
  */
 function collideBalls() {
@@ -1043,7 +1043,7 @@ function startGame() {
 function gameOver() {
     state = 'over';
     flushHighScore(); // 结算落盘：本局破纪录值在此统一持久化（原来由 addScore 实时写入，现改为结算时机）
-    Arcade.removeRaw(SAVE_KEY); // 本局已终结：清除进度快照，下次进入按新局处理；存储不可用时静默跳过，确保结算面板与音效不受存储异常中断
+    snapPipe.clear(); // 本局已终结：清除进度快照，下次进入按新局处理；存储不可用时静默跳过，确保结算面板与音效不受存储异常中断
     finalScoreElement.textContent = score;
     newRecordElement.style.display = isNewRecord ? 'block' : 'none';
     gameOverScreen.style.display = 'block';
@@ -1051,163 +1051,186 @@ function gameOver() {
     SFX.gameOver();
 }
 
+/* 暂停引擎（共享库 pause-common.js）：守卫准入 → 写标志 → 遮罩显隐 → BGM 挂起/接续
+ * → 暂停/恢复音效的公共序列下沉，本文件只注入差异件——ready/play 准入（含成就墙
+ * 闭锁）与恢复侧撤下进度恢复提示行 */
+const pausePipe = Pause.create({
+    isPaused: () => isPaused,
+    canToggle: () => (state === 'play' || state === 'ready') && !Ach.isOpen(), // 成就墙打开中：暂停键不生效，避免与墙面冻结叠加出双层遮罩
+    setPaused: (paused) => {
+        isPaused = paused;
+        if (!paused) pauseRestoreTip.style.display = 'none'; // 进度恢复引入的暂停：玩家继续后撤下提示，常规暂停不显示
+    },
+    overlay: pauseScreen,
+});
+
 /**
- * 切换暂停：仅在进行中（ready/play）且成就墙未打开时生效（成就墙打开期间局面已冻结，
- * 暂停键不响应，关闭墙面后局面原样继续），暂停时显示遮罩、冻结物理更新，
- * 并接入暂停/恢复音效与 BGM 暂停续播
+ * 切换暂停：仅在进行中（ready/play）且成就墙未打开时生效（守卫见 pausePipe.canToggle），
+ * 暂停时显示遮罩、冻结物理更新，公共序列（遮罩/BGM/音效）委托共享暂停引擎
  */
 function togglePause() {
-    if (state !== 'play' && state !== 'ready') return;
-    if (Ach.isOpen()) return; // 成就墙打开中：暂停键不生效，避免与墙面冻结叠加出双层遮罩
-    isPaused = !isPaused;
-    pauseScreen.style.display = isPaused ? 'block' : 'none';
-    if (isPaused) {
-        SFX.bgm.pause();
-        SFX.uiPause();
-    } else {
-        pauseRestoreTip.style.display = 'none'; // 进度恢复引入的暂停：玩家继续后撤下提示，常规暂停不显示
-        SFX.bgm.resume();
-        SFX.uiResume();
-    }
+    pausePipe.toggle();
 }
 
 /* ===================== 进度快照：保存与恢复 ===================== */
 
 /**
- * 保存当前局进度快照到 localStorage（键 arcade_save_pinball）：
- * 仅在「进行中（ready/play）或暂停中」时组装纯数据快照写入（只含数值/字符串/布尔/数组，
- * 不含函数与 DOM 引用）；处于开始界面 / 失球演出 / 结算界面时清除已有快照，
- * 避免下次进入恢复到过期进度。全程 try/catch 静默，存储不可用（隐私模式等）不影响游戏。
- * 快照内容：版本号 / 状态与暂停标记 / 分数 / 剩余球数 / 难度参数（倍率·重力·挡板长·无敌档）/
- * Jackpot 武装标记 / 连击状态 / 各目标灯点亮状态 / 各球位置与速度向量；
- * 挡板角度、拖尾、火花、飘字等纯视觉或瞬态对象不保存（恢复时按默认重建）。
+ * 组装当前局进度快照（纯数据：数值/字符串/布尔/数组，不含函数与 DOM 引用）。
+ * 仅在「进行中（ready/play）或暂停中」时被管线调用；挡板角度、拖尾、火花、
+ * 飘字等纯视觉或瞬态对象不保存（恢复时按默认重建）。
+ * @returns {object} 快照数据对象（版本号 / 状态与暂停标记 / 分数 / 剩余球数 /
+ *          难度参数（倍率·重力·挡板长·无敌档）/ Jackpot 武装标记 / 连击状态 /
+ *          各目标灯点亮状态 / 各球位置与速度向量）
+ */
+function buildPinballSnapshot() {
+    return {
+        v: 1,                          // 快照格式版本号，恢复时校验（v !== 1 即弃用）
+        state: state,                  // 保存时刻的游戏状态（ready 待发射 / play 进行中）
+        paused: !!isPaused,            // 保存时刻是否处于暂停
+        score: score,                  // 当前分数
+        lives: lives,                  // 剩余球数（含在场球）
+        mult: mult,                    // 难度计分倍率
+        gravity: gravity,              // 难度重力加速度
+        flipperLen: flipperLen,        // 难度挡板长度
+        invincible: !!invincibleMode,  // 是否无敌档
+        jackpotArmed: !!jackpotArmed,  // Jackpot 武装标记（清板后待触发大奖）
+        comboHits: comboHits,          // 连击累计次数
+        comboMult: comboMult,          // 当前连击倍率
+        comboTimer: comboTimer,        // 连击窗口剩余秒数
+        targetLit: targets.map(t => !!t.lit), // 各目标灯点亮状态（数组与台面目标一一对应）
+        balls: balls.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy })) // 各球位置与速度向量
+    };
+}
+
+// 存取管线由共享库 snap-common.js 驱动：进行中（ready/play）或暂停中写入镜像，
+// 处于开始界面 / 失球演出 / 结算界面时清除已有快照，避免下次进入恢复到过期进度；
+// canSave 顺带补写脏最高分——保持与原 saveSnapshot 相同的落盘时机
+//（两个存档钩子 arcade:save / pagehide 都会先 flush 再按状态分流）。
+// 组装意外与存储异常（隐私模式 / 配额满）由管线整体 try/catch 静默，不影响游戏
+const snapPipe = Snap.create({
+    key: SAVE_KEY,
+    canSave: () => {
+        flushHighScore(); // 存档钩子时机统一落盘脏最高分，避免中途刷新丢纪录（clear 路径亦保持原顺序）
+        return state === 'play' || state === 'ready';
+    },
+    build: buildPinballSnapshot,
+    validate: validatePinballSnapshot,
+    apply: applyPinballSnapshot
+});
+
+/**
+ * 保存当前局进度快照到 localStorage（键 arcade_save_pinball，薄壳）：
+ * 进行中或暂停中写入 / 其余界面清除，读写管线与触发接线由 snap-common.js 统一实现
  */
 function saveSnapshot() {
-    try {
-        flushHighScore(); // 复用既有存档钩子（arcade:save / pagehide）顺带补写脏最高分，避免中途刷新丢纪录
-        if (state !== 'play' && state !== 'ready') {
-            Arcade.removeRaw(SAVE_KEY); // 未开始 / 已结束：清除残留快照
-            return;
-        }
-        const snap = {
-            v: 1,                          // 快照格式版本号，恢复时校验（v !== 1 即弃用）
-            state: state,                  // 保存时刻的游戏状态（ready 待发射 / play 进行中）
-            paused: !!isPaused,            // 保存时刻是否处于暂停
-            score: score,                  // 当前分数
-            lives: lives,                  // 剩余球数（含在场球）
-            mult: mult,                    // 难度计分倍率
-            gravity: gravity,              // 难度重力加速度
-            flipperLen: flipperLen,        // 难度挡板长度
-            invincible: !!invincibleMode,  // 是否无敌档
-            jackpotArmed: !!jackpotArmed,  // Jackpot 武装标记（清板后待触发大奖）
-            comboHits: comboHits,          // 连击累计次数
-            comboMult: comboMult,          // 当前连击倍率
-            comboTimer: comboTimer,        // 连击窗口剩余秒数
-            targetLit: targets.map(t => !!t.lit), // 各目标灯点亮状态（数组与台面目标一一对应）
-            balls: balls.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy })) // 各球位置与速度向量
-        };
-        Arcade.saveJSON(SAVE_KEY, snap); // 存储写入失败（隐私模式 / 配额满）由 saveJSON 静默降级
-    } catch (err) {
-        // 快照组装异常：静默忽略，不打断游戏
+    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
+}
+
+/**
+ * 校验快照版本号与逐字段类型 / 范围：球坐标与速度必须有限且在台面合理范围、
+ * 球数 1~3、分数非负有限等。内联 throw 断言风格：任何非法字段抛出统一异常，
+ * 由快照管线（snap-common.js）catch 兜底弃档，绝不向游戏层抛错。
+ * @param {object} s 待校验的快照对象（Arcade.loadJSON 产出，可能为任意脏数据）
+ */
+function validatePinballSnapshot(s) {
+    // 版本校验：首字段 v !== 1 视为过期 / 异构快照，直接弃用
+    if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) throw new Error('bad version');
+    // 状态与暂停标记：仅接受 ready / play 两种可恢复状态
+    if ((s.state !== 'ready' && s.state !== 'play') || typeof s.paused !== 'boolean') throw new Error('bad state');
+    // 分数：非负有限
+    if (!Number.isFinite(s.score) || s.score < 0) throw new Error('bad score');
+    // 剩余球数：1 ~ 单局总球数（0 球即已结算，不存在合法快照）
+    if (!Number.isInteger(s.lives) || s.lives < 1 || s.lives > TOTAL_BALLS) throw new Error('bad lives');
+    // 难度参数：与四档按钮的 data 取值范围一致
+    if (!Number.isInteger(s.mult) || s.mult < 1 || s.mult > 3) throw new Error('bad mult');
+    if (!Number.isFinite(s.gravity) || s.gravity <= 0 || s.gravity > 5000) throw new Error('bad gravity');
+    if (!Number.isFinite(s.flipperLen) || s.flipperLen <= 0 || s.flipperLen > WORLD_W) throw new Error('bad flipper');
+    if (typeof s.invincible !== 'boolean' || typeof s.jackpotArmed !== 'boolean') throw new Error('bad flags');
+    // 连击状态：累计次数非负整数、倍率 1 ~ 封顶、窗口剩余时长非负有限
+    if (!Number.isInteger(s.comboHits) || s.comboHits < 0) throw new Error('bad comboHits');
+    if (!Number.isInteger(s.comboMult) || s.comboMult < 1 || s.comboMult > COMBO_MAX_MULT) throw new Error('bad comboMult');
+    if (!Number.isFinite(s.comboTimer) || s.comboTimer < 0) throw new Error('bad comboTimer');
+    // 目标灯：布尔数组且长度与台面目标数一致
+    if (!Array.isArray(s.targetLit) || s.targetLit.length !== targets.length ||
+        !s.targetLit.every(x => typeof x === 'boolean')) throw new Error('bad targets');
+    // 弹球：1 ~ MAX_BALLS 颗，坐标有限且在台面合理范围、合速度不超上限
+    if (!Array.isArray(s.balls) || s.balls.length < 1 || s.balls.length > MAX_BALLS) throw new Error('bad balls');
+    for (const b of s.balls) {
+        if (!b || typeof b !== 'object') throw new Error('bad ball');
+        if (!Number.isFinite(b.x) || b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2) throw new Error('bad ball x');
+        if (!Number.isFinite(b.y) || b.y < -BALL_R * 2 || b.y > WORLD_H + DRAIN_DEPTH) throw new Error('bad ball y');
+        if (!Number.isFinite(b.vx) || !Number.isFinite(b.vy) || Math.hypot(b.vx, b.vy) > MAX_SPEED) throw new Error('bad ball v');
     }
 }
 
 /**
- * 从 localStorage 恢复上次进度快照（键 arcade_save_pinball）：
- * 读取 → JSON 解析 → 版本号与逐字段类型 / 范围校验（球坐标与速度必须有限且在台面合理范围、
- * 球数 1~3、分数非负有限等），任何异常或非法数据一律清除快照并返回 false，绝不因脏数据抛错；
- * 校验通过后覆盖游戏状态（含难度参数 / 目标灯 / Jackpot / 连击 / 多球位置速度），
+ * 将已通过校验的快照覆盖游戏状态（含难度参数 / 目标灯 / Jackpot / 连击 / 多球位置速度），
  * 挡板复位默认角度、清空瞬态演出对象，刷新 HUD 与画布一帧，
  * 并停回暂停遮罩（追加"已恢复上次进度"提示）等待玩家按 P 或点击遮罩继续——不立即开跑。
+ * @param {object} s 已通过 validatePinballSnapshot 校验的快照对象
+ * @returns {boolean} 恒返回 true（应用成功；意外抛错由管线兜底弃档）
+ */
+function applyPinballSnapshot(s) {
+    /* ---- 校验全部通过：覆盖游戏状态 ---- */
+    score = s.score;
+    lives = s.lives;
+    mult = s.mult;
+    gravity = s.gravity;
+    flipperLen = s.flipperLen;
+    invincibleMode = s.invincible;
+    jackpotArmed = s.jackpotArmed;
+    jackpotFxTimer = 0;      // JACKPOT 大字属纯视觉演出，不恢复
+    comboHits = s.comboHits;
+    comboMult = s.comboMult;
+    comboTimer = s.comboTimer;
+    isNewRecord = false;     // 破纪录标记按本会话重新沿检测（快照分数不会超已持久化的最高分）
+    isPaused = true;         // 恢复后先冻结物理，等待玩家按键继续
+    state = s.state;
+    lostBall = null;         // 失球演出坠落球引用不跨会话保留
+    charging = false;        // 蓄力为瞬态输入，恢复时复位
+    charge = 0;
+    accumulator = 0;         // 物理累加器清零，避免残留帧时长
+    floatTexts.length = 0;   // 飘字 / 火花 / 拖尾等纯视觉对象清空
+    sparkPool.clear();
+    for (const t of targets) { t.cool = 0; t.flash = 0; } // 碰撞冷却与闪光复位
+    targets.forEach((t, i) => { t.lit = s.targetLit[i]; }); // 恢复目标灯点亮进度
+    for (const f of flippers) { f.pressed = false; f.glow = 0; }
+    rebuildFlippers();       // 挡板恢复默认收拢角度，长度随快照难度重建
+    balls.length = 0;
+    for (const b of s.balls) balls.push(makeBall(b.x, b.y, b.vx, b.vy)); // 重建各球（拖尾为空）
+    // 同步难度按钮高亮，使其与快照实际难度参数一致（视觉与玩法参数统一）
+    document.querySelectorAll('.difficulty-btn').forEach(btn => {
+        btn.classList.toggle('active',
+            parseFloat(btn.dataset.gravity) === gravity &&
+            parseFloat(btn.dataset.flip) === flipperLen &&
+            parseInt(btn.dataset.mult, 10) === mult &&
+            (btn.dataset.invincible === '1') === invincibleMode);
+    });
+    // 刷新 HUD 与画布一帧：侧栏分数 / 倍率 / 剩余球数 + 台面快照画面
+    FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡到续玩分数
+    multElement.textContent = '×' + mult;
+    drawBalls();
+    draw(performance.now());
+    // 停回暂停遮罩等待玩家输入（开始遮罩隐藏，不立即开跑），并亮出恢复提示
+    startScreen.style.display = 'none';
+    gameOverScreen.style.display = 'none';
+    pauseScreen.style.display = 'block';
+    pauseRestoreTip.style.display = 'block';
+    // 预置 BGM 曲目并保持暂停态：玩家按 P 继续时由 togglePause 的 resume 正常响起
+    //（音频尚未解锁时保持静默待命，待玩家按 P 恢复时随手势解锁照常响起）
+    SFX.bgm.start('pinball');
+    SFX.bgm.pause();
+    return true;
+}
+
+/**
+ * 从 localStorage 恢复上次进度快照（键 arcade_save_pinball，薄壳）：
+ * 读取 → 校验 → 应用的管线与失败清档兜底由共享库 snap-common.js 统一实现，
+ * 任何异常或非法数据一律清除快照并返回 false，绝不因脏数据抛错。
  * @returns {boolean} true 表示已成功恢复快照；false 表示无快照或快照非法（维持默认新局）
  */
 function restoreSnapshot() {
-    try {
-        const s = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        if (!s) return false; // 无存档或已损坏：按新局处理
-        // 版本校验：首字段 v !== 1 视为过期 / 异构快照，直接弃用
-        if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) throw new Error('bad version');
-        // 状态与暂停标记：仅接受 ready / play 两种可恢复状态
-        if ((s.state !== 'ready' && s.state !== 'play') || typeof s.paused !== 'boolean') throw new Error('bad state');
-        // 分数：非负有限
-        if (!Number.isFinite(s.score) || s.score < 0) throw new Error('bad score');
-        // 剩余球数：1 ~ 单局总球数（0 球即已结算，不存在合法快照）
-        if (!Number.isInteger(s.lives) || s.lives < 1 || s.lives > TOTAL_BALLS) throw new Error('bad lives');
-        // 难度参数：与四档按钮的 data 取值范围一致
-        if (!Number.isInteger(s.mult) || s.mult < 1 || s.mult > 3) throw new Error('bad mult');
-        if (!Number.isFinite(s.gravity) || s.gravity <= 0 || s.gravity > 5000) throw new Error('bad gravity');
-        if (!Number.isFinite(s.flipperLen) || s.flipperLen <= 0 || s.flipperLen > WORLD_W) throw new Error('bad flipper');
-        if (typeof s.invincible !== 'boolean' || typeof s.jackpotArmed !== 'boolean') throw new Error('bad flags');
-        // 连击状态：累计次数非负整数、倍率 1 ~ 封顶、窗口剩余时长非负有限
-        if (!Number.isInteger(s.comboHits) || s.comboHits < 0) throw new Error('bad comboHits');
-        if (!Number.isInteger(s.comboMult) || s.comboMult < 1 || s.comboMult > COMBO_MAX_MULT) throw new Error('bad comboMult');
-        if (!Number.isFinite(s.comboTimer) || s.comboTimer < 0) throw new Error('bad comboTimer');
-        // 目标灯：布尔数组且长度与台面目标数一致
-        if (!Array.isArray(s.targetLit) || s.targetLit.length !== targets.length ||
-            !s.targetLit.every(x => typeof x === 'boolean')) throw new Error('bad targets');
-        // 弹球：1 ~ MAX_BALLS 颗，坐标有限且在台面合理范围、合速度不超上限
-        if (!Array.isArray(s.balls) || s.balls.length < 1 || s.balls.length > MAX_BALLS) throw new Error('bad balls');
-        for (const b of s.balls) {
-            if (!b || typeof b !== 'object') throw new Error('bad ball');
-            if (!Number.isFinite(b.x) || b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2) throw new Error('bad ball x');
-            if (!Number.isFinite(b.y) || b.y < -BALL_R * 2 || b.y > WORLD_H + DRAIN_DEPTH) throw new Error('bad ball y');
-            if (!Number.isFinite(b.vx) || !Number.isFinite(b.vy) || Math.hypot(b.vx, b.vy) > MAX_SPEED) throw new Error('bad ball v');
-        }
-        /* ---- 校验全部通过：覆盖游戏状态 ---- */
-        score = s.score;
-        lives = s.lives;
-        mult = s.mult;
-        gravity = s.gravity;
-        flipperLen = s.flipperLen;
-        invincibleMode = s.invincible;
-        jackpotArmed = s.jackpotArmed;
-        jackpotFxTimer = 0;      // JACKPOT 大字属纯视觉演出，不恢复
-        comboHits = s.comboHits;
-        comboMult = s.comboMult;
-        comboTimer = s.comboTimer;
-        isNewRecord = false;     // 破纪录标记按本会话重新沿检测（快照分数不会超已持久化的最高分）
-        isPaused = true;         // 恢复后先冻结物理，等待玩家按键继续
-        state = s.state;
-        lostBall = null;         // 失球演出坠落球引用不跨会话保留
-        charging = false;        // 蓄力为瞬态输入，恢复时复位
-        charge = 0;
-        accumulator = 0;         // 物理累加器清零，避免残留帧时长
-        floatTexts.length = 0;   // 飘字 / 火花 / 拖尾等纯视觉对象清空
-        sparkPool.clear();
-        for (const t of targets) { t.cool = 0; t.flash = 0; } // 碰撞冷却与闪光复位
-        targets.forEach((t, i) => { t.lit = s.targetLit[i]; }); // 恢复目标灯点亮进度
-        for (const f of flippers) { f.pressed = false; f.glow = 0; }
-        rebuildFlippers();       // 挡板恢复默认收拢角度，长度随快照难度重建
-        balls.length = 0;
-        for (const b of s.balls) balls.push(makeBall(b.x, b.y, b.vx, b.vy)); // 重建各球（拖尾为空）
-        // 同步难度按钮高亮，使其与快照实际难度参数一致（视觉与玩法参数统一）
-        document.querySelectorAll('.difficulty-btn').forEach(btn => {
-            btn.classList.toggle('active',
-                parseFloat(btn.dataset.gravity) === gravity &&
-                parseFloat(btn.dataset.flip) === flipperLen &&
-                parseInt(btn.dataset.mult, 10) === mult &&
-                (btn.dataset.invincible === '1') === invincibleMode);
-        });
-        // 刷新 HUD 与画布一帧：侧栏分数 / 倍率 / 剩余球数 + 台面快照画面
-        FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡到续玩分数
-        multElement.textContent = '×' + mult;
-        drawBalls();
-        draw(performance.now());
-        // 停回暂停遮罩等待玩家输入（开始遮罩隐藏，不立即开跑），并亮出恢复提示
-        startScreen.style.display = 'none';
-        gameOverScreen.style.display = 'none';
-        pauseScreen.style.display = 'block';
-        pauseRestoreTip.style.display = 'block';
-        // 预置 BGM 曲目并保持暂停态：玩家按 P 继续时由 togglePause 的 resume 正常响起
-        //（音频尚未解锁时保持静默待命，待玩家按 P 恢复时随手势解锁照常响起）
-        SFX.bgm.start('pinball');
-        SFX.bgm.pause();
-        return true;
-    } catch (err) {
-        // 任何解析 / 校验异常：清除非法快照，按无存档处理（绝不向游戏层抛错）
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用：忽略
-        return false;
-    }
+    return snapPipe.restore();
 }
 
 /* ===================== 成就系统：接入共享成就引擎（ach-common.js） ===================== */
@@ -2044,16 +2067,21 @@ pauseScreen.addEventListener('pointerdown', e => {
     togglePause(); // 恢复并撤下遮罩（BGM 续播、恢复音、提示行清理均走 togglePause 分支）
 });
 
-// 切出窗口时自动暂停，避免回来时球已落底白白损失；同时取消未完成的蓄力防状态卡死
-window.addEventListener('blur', () => {
+/**
+ * 失焦/切后台兜底：取消未完成的蓄力并清理挡板/触屏按下态后自动暂停，
+ * 避免回来时球已落底白白损失；blur 与 visibilitychange 双通道由 Snap.bindFocusLoss
+ * 统一注册（visibilitychange 兜底移动端切应用不触发 blur 的场景，双触发经暂停守卫幂等）
+ */
+function handleFocusLoss() {
     charging = false;
     charge = 0;
     // 清空挡板按下态：切窗期间系统不会补发 keyup，不清则回来后挡板无键自抬（卡键）
     for (const f of flippers) f.pressed = false;
     // 触屏按下态并入同一处清理：跟踪表残留会使回窗后的抬手指误复位/误发射（挡板/蓄力实体态已在上两行复位）
     touchZones.clear();
-    if ((state === 'play' || state === 'ready') && !isPaused && !Ach.isOpen()) togglePause(); // 成就墙已冻结局面：不再叠加暂停遮罩
-});
+    if ((state === 'play' || state === 'ready') && !isPaused) togglePause(); // 成就墙已冻结局面：canToggle 守卫闭锁，不再叠加暂停遮罩
+}
+Snap.bindFocusLoss(handleFocusLoss);
 
 /* ===================== 初始化 ===================== */
 
@@ -2088,7 +2116,7 @@ document.addEventListener('fullscreenchange', () => {
     else SFX.crtOff();
 });
 
-// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态与存档指令
+// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态
 // 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
 Arcade.onTrustedMessage(e => {
     const d = e.data;
@@ -2101,8 +2129,6 @@ Arcade.onTrustedMessage(e => {
             else SFX.crtOff();
         }
         embedFsLast = fs;
-    } else if (d.type === Arcade.MSG.SAVE) {
-        saveSnapshot(); // 父页关闭 iframe 覆盖层前下发：保存当前局进度快照
     }
 });
 
@@ -2113,11 +2139,11 @@ window.addEventListener('resize', () => {
     tableLayerDirty = true; // 画布物理分辨率/DPR 已变：下一帧重建台面静态层
 });
 
-// 页面隐藏 / 关闭（含父页移除 iframe、刷新、关标签）：saveSnapshot 内部自判——
-// 进行中或暂停中写入快照，未开始 / 已结束界面则清除过期快照
-window.addEventListener('pagehide', () => {
-    saveSnapshot();
-});
+// 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
+// 与触发点 b（页面卸载兜底：关闭标签页 / 刷新 / 父页移除 iframe、关标签均触发）两处接线
+// 收口于 snap-common.js（Snap.bindAutoSave）：快照管线内部自判——
+// 进行中或暂停中写入快照，未开始 / 已结束界面则清除过期快照（canSave 先落盘脏最高分）
+Snap.bindAutoSave(snapPipe);
 
 requestAnimationFrame(loop);
 
@@ -2150,10 +2176,10 @@ window.__ARCADE_TESTS__ = [
     } },
     // 挡板尖端：angle=0 收拢位时尖端 = 轴点 ± 侧向长度
     { name: 'flipperTip 收拢位尖端', fn: () => {
-        const tipL = flipperTip({ ax: 80, ay: 100, side: -1, angle: 0, len: 60 });
-        if (tipL.x !== 20 || tipL.y !== 100) throw new Error('左挡板尖端错: ' + tipL.x + ',' + tipL.y);
-        const tipR = flipperTip({ ax: 80, ay: 100, side: 1, angle: 0, len: 60 });
-        if (tipR.x !== 140 || tipR.y !== 100) throw new Error('右挡板尖端错: ' + tipR.x + ',' + tipR.y);
+        const tipL = flipperTip({ ax: 80, ay: 100, side: 1, angle: 0, len: 60 });
+        if (tipL.x !== 140 || tipL.y !== 100) throw new Error('左挡板尖端错: ' + tipL.x + ',' + tipL.y);
+        const tipR = flipperTip({ ax: 80, ay: 100, side: -1, angle: 0, len: 60 });
+        if (tipR.x !== 20 || tipR.y !== 100) throw new Error('右挡板尖端错: ' + tipR.x + ',' + tipR.y);
     } },
     // 触控分区：中线分左右，弹射器区按 PLUNGER_ZONE_Y 分界
     { name: 'zoneAt 左/右/弹射区', fn: () => {

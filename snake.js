@@ -5,7 +5,8 @@
  *          导致 180° 掉头；最高分 localStorage 持久化；空格暂停；
  *          切出窗口自动暂停（防止回来时蛇已撞死）
  * 进度镜像：收到 arcade:save 消息（返回游戏厅）/ 页面卸载时保存本局快照（arcade_save_snake），
- *          下次进入自动校验并恢复续玩（停在暂停遮罩等空格继续），游戏结束清除快照
+ *          下次进入自动校验并恢复续玩（停在暂停遮罩等空格继续），游戏结束清除快照；
+ *          存取管线与触发接线由共享库 snap-common.js 驱动，本文件只保留字段契约
  * 成长节奏：每吃 5 个食物移动间隔 ×0.93（下限 60ms），STATS 面板实时显示速度等级；
  *          连击窗口（3s）内连续进食按 基础分×(1+0.5×(连击-1)) 加成计分，连击递增有专属升调音
  * 视觉特效：暗色网格背景 / 食物呼吸脉冲光晕 + 出生缩放弹入 / 蛇身头亮尾暗渐变 + 朝向眼睛 /
@@ -922,29 +923,27 @@ function selectDifficulty(btn) {
     SFX.uiClick();
 }
 
+/* 暂停引擎收口共享库 pause-common.js：守卫/遮罩/BGM/音效序列在库内统一，
+ * 游戏侧只注入差异件（守卫、落点、恢复补起播曲名） */
+const pausePipe = Pause.create({
+    // 仅在游戏进行中生效（开始前 isRunning=false，死亡演出中 isDying=true，成就墙打开时不接管）
+    canToggle: () => isRunning && !isDying && !Ach.isOpen(),
+    isPaused: () => isPaused,
+    setPaused: (paused) => {
+        isPaused = paused;
+        // 快照恢复提示只在首次续玩前展示，恢复续玩后完成使命即隐藏
+        if (!paused) pauseRestoredElement.style.display = 'none';
+    },
+    overlay: pauseScreen,
+    // 快照续玩局此前从未起播 BGM（恢复流程不经 startGame）：恢复侧 start 同名幂等补起播
+    resumeBgmStart: 'snake'
+});
+
 /**
  * 切换暂停：暂停时冻结逻辑累加器（渲染同步定格）并显示遮罩，恢复时继续推进。
  * 仅在游戏进行中生效（开始前、结束后或死亡演出中调用无效）
  */
-function togglePause() {
-    // 仅在游戏进行中生效（开始前 isRunning=false，死亡演出中 isDying=true，成就墙打开时不接管）
-    if (!isRunning || isDying || Ach.isOpen()) return;
-
-    isPaused = !isPaused;
-    if (isPaused) {
-        pauseScreen.style.display = 'block';
-        SFX.bgm.pause(); // 背景音乐挂起，与暂停遮罩同步
-        SFX.uiPause();
-    } else {
-        pauseScreen.style.display = 'none';
-        pauseRestoredElement.style.display = 'none'; // 快照恢复提示只在首次续玩前展示，续玩后隐藏
-        // 快照续玩局此前从未起播 BGM（恢复流程不经 startGame）：start 同名幂等，
-        // 未播时补起播、已在播时不受影响；随后 resume 接续手动暂停保留的进度
-        SFX.bgm.start('snake');
-        SFX.bgm.resume(); // 恢复背景音乐
-        SFX.uiResume();
-    }
-}
+function togglePause() { pausePipe.toggle(); } // 键盘空格/遮罩点击/失焦调用点保持原名直调
 
 /**
  * 开始游戏：移除按钮焦点（防止随后按空格暂停时误触发按钮）→
@@ -974,7 +973,7 @@ function startGame() {
  */
 function gameOver() {
     isRunning = false; // 停摆逻辑 tick（updateLogic 检测后不再累加）
-    Arcade.removeRaw(SAVE_KEY); // 存储不可用时静默——本局已结束：清除进行中的进度快照（快照仅服务于未打完的局；清除失败不中断结算流程）
+    snapPipe.clear(); // 本局已结束：清除进行中的进度快照（快照仅服务于未打完的局；清除失败不中断结算流程）
     finalScoreElement.textContent = score;
     newRecordElement.style.display = isNewRecord ? 'block' : 'none';
     gameOverScreen.style.display = 'block';
@@ -983,6 +982,157 @@ function gameOver() {
 }
 
 /* ===================== 进度镜像快照 ===================== */
+// 快照存取骨架（保存/清除分流、读档→校验→应用管线、异常清档兜底）与触发接线
+// 收口于共享库 snap-common.js（Snap.create/bindAutoSave），本文件只保留贪吃蛇
+// 特有的快照字段契约：构建 / 校验 / 应用三钩子。
+
+/**
+ * 由当前高亮的难度按钮反推难度档序号（找不到高亮按钮视为状态异常）
+ * @returns {number} 难度档序号（0 无敌 / 1 简单 / 2 中等 / 3 困难；-1 = 状态异常）
+ */
+function currentDifficultyIndex() {
+    return [...document.querySelectorAll('.difficulty-btn')]
+        .indexOf(document.querySelector('.difficulty-btn.active'));
+}
+
+/**
+ * 构建当前局纯数据快照：仅含数组 / 数值 / 字符串，不含任何函数与 DOM 引用，
+ * 可安全 JSON 序列化（字段契约见 saveSnapshot 注释）
+ * @returns {Object} 快照对象（首字段 v 为格式版本号，恢复时校验）
+ */
+function buildSnakeSnapshot() {
+    return {
+        v: 1,
+        diff: currentDifficultyIndex(),
+        cols: boardCols,
+        rows: boardRows,
+        snake: snake.map(s => ({ x: s.x, y: s.y })), // 逐节拷贝，序列化内容与活状态解耦
+        dir: direction,
+        dirQueue: dirQueue.slice(), // 预输入队列快照（浅拷贝数组，序列化内容与活状态解耦）
+        food: { x: food.x, y: food.y },
+        score: score,
+        eaten: eatenCount,
+        maxCombo: maxComboRun, // 本局连击峰值（成就进度随快照延续）
+        gold: goldCountRun     // 本局已捕获金苹果数（成就进度随快照延续）
+    };
+}
+
+/**
+ * 校验快照数据合法性（管线弃档判定钩子）：版本号 / 难度档 / 棋盘规格 /
+ * 蛇身逐节坐标与去重 / 方向枚举与预输入队列 / 食物位置与重叠 / 计数进度
+ * 逐字段核对；任一非法返回 false，由管线统一清档（本函数不清存储）
+ * @param {*} snap 待校验的快照对象（JSON 解析结果）
+ * @returns {boolean} 全部字段合法返回 true，任一非法返回 false
+ */
+function validateSnakeSnapshot(snap) {
+    // 版本号不符（损坏或未来格式）：立即弃用（v1/v2 均兼容读取）
+    if (!snap || typeof snap !== 'object' || (snap.v !== 1 && snap.v !== 2)) return false;
+    // 难度档：非负整数且对应难度按钮真实存在
+    if (!Number.isInteger(snap.diff) || snap.diff < 0 || snap.diff > 3) return false;
+    if (!document.querySelectorAll('.difficulty-btn')[snap.diff]) return false;
+    // 棋盘规格：必须为有限数值且与当前棋盘一致（CSS 锁定 500×500 → 20×20，正常恒等）
+    if (!Number.isFinite(snap.cols) || !Number.isFinite(snap.rows) ||
+        snap.cols !== boardCols || snap.rows !== boardRows) {
+        return false;
+    }
+    // 蛇身：数组且长度合法（开局 3 节只增不减，上限为棋盘总格数）
+    if (!Array.isArray(snap.snake) || snap.snake.length < 3 || snap.snake.length > snap.cols * snap.rows) {
+        return false;
+    }
+    // 蛇身逐节校验：整数坐标且在棋盘内；同步收集坐标键用于去重与食物重叠校验
+    const seen = new Set();
+    for (let i = 0; i < snap.snake.length; i++) {
+        const seg = snap.snake[i];
+        if (!seg || typeof seg !== 'object' ||
+            !Number.isInteger(seg.x) || !Number.isInteger(seg.y) ||
+            seg.x < 0 || seg.x >= snap.cols || seg.y < 0 || seg.y >= snap.rows) {
+            return false;
+        }
+        const key = seg.x + ',' + seg.y;
+        if (seen.has(key)) return false; // 蛇身存在重叠格属于非法状态
+        seen.add(key);
+    }
+    // 方向：当前方向须为合法枚举；预输入队列为数组时逐项校验，旧档缺该字段时回退校验单字段 nextDir
+    const dirs = ['up', 'down', 'left', 'right'];
+    if (!dirs.includes(snap.dir) ||
+        !(Array.isArray(snap.dirQueue)
+            ? snap.dirQueue.every(d => dirs.includes(d))
+            : dirs.includes(snap.nextDir))) {
+        return false;
+    }
+    // 食物：整数坐标在棋盘内，且不与蛇身任何一节重叠
+    if (!snap.food || typeof snap.food !== 'object' ||
+        !Number.isInteger(snap.food.x) || !Number.isInteger(snap.food.y) ||
+        snap.food.x < 0 || snap.food.x >= snap.cols || snap.food.y < 0 || snap.food.y >= snap.rows ||
+        seen.has(snap.food.x + ',' + snap.food.y)) {
+        return false;
+    }
+    // 分数与已吃食物数：有限非负整数
+    if (!Number.isFinite(snap.score) || !Number.isInteger(snap.score) || snap.score < 0 ||
+        !Number.isFinite(snap.eaten) || !Number.isInteger(snap.eaten) || snap.eaten < 0) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 应用快照到游戏状态（管线应用钩子，调用前 validate 已全部通过）：
+ * 覆盖蛇身 / 方向 / 食物 / 分数等核心状态，按恢复后的难度基准与已吃食物数
+ * 重新推导移动间隔（与局内提速公式一致），复位全部特效与瞬态计时，恢复本局
+ * 成就统计，刷新 HUD 并重绘一帧棋面；恢复后的局处于"暂停中"，由调用方显示
+ * 暂停遮罩，玩家按空格（原有继续输入）即恢复运行
+ * @param {*} snap 已通过校验的快照对象
+ * @returns {boolean} 恒返回 true（应用即成功，无二次失败路径）
+ */
+function applySnakeSnapshot(snap) {
+    selectDifficulty(document.querySelectorAll('.difficulty-btn')[snap.diff]); // 恢复难度档（基准速度/食物得分/无敌模式 + 按钮高亮；加载期 uiClick 无声无害）
+    snake = snap.snake.map(s => ({ x: s.x, y: s.y })); // 逐节拷贝，与快照对象隔离
+    prevSnake = snake.slice(); // 插值基准与当前位置重合，恢复首帧不做插值滑动
+    direction = snap.dir;
+    // 预输入队列恢复：有 dirQueue 数组字段直接采用，旧档缺该字段时将单字段 nextDir 包装为单元素队列；
+    // 过滤与当前方向相反的意图（异常存档），防止续玩第一步 180° 掉头即死
+    dirQueue = (Array.isArray(snap.dirQueue) ? snap.dirQueue : [snap.nextDir])
+        .filter(d => d !== opposites[direction]);
+    food = { x: snap.food.x, y: snap.food.y };
+    score = snap.score;
+    eatenCount = snap.eaten;
+    syncDangerLayer(); // 续玩长蛇直接进入危险分层，与恢复后的局面匹配
+    // 按恢复后的速度等级重新推导移动计时节奏（与局内每吃 SPEED_STEP 个提速一档的公式一致）
+    gameSpeed = Math.max(SPEED_MIN, Math.round(baseSpeed * Math.pow(SPEED_FACTOR, eatenCount / SPEED_STEP)));
+    // 复位特效与瞬态状态：恢复出的是"干净的进行中局面"
+    moveAcc = 0;        // 累加器清零：续玩后先等满一个完整 gameSpeed 再迈第一步
+    foodAge = 1;        // 跳过食物出生弹入动画（foodAge≥0.2 后恒为满尺寸）
+    goldApple = null;   // 金苹果为限时瞬态，不入快照，恢复后自然重新判定
+    comboCount = 0;
+    comboTimer = 0;
+    headFlash = 0;
+    flashTime = 0;
+    shakeTime = 0;
+    isDying = false;
+    deathTimer = 0;
+    isNewRecord = false;
+    particlePool.clear();
+    floatTexts.length = 0;
+    Ach.close(); // 成就墙为瞬态 UI，不入快照，恢复后强制关闭
+    // 恢复本局成就统计（旧版快照无 maxCombo/gold 字段，类型校验不通过时回退 0，进度不虚报）
+    maxComboRun = typeof snap.maxCombo === 'number' && Number.isFinite(snap.maxCombo) && snap.maxCombo > 0 ? snap.maxCombo : 0;
+    goldCountRun = typeof snap.gold === 'number' && Number.isFinite(snap.gold) && snap.gold > 0 ? snap.gold : 0;
+    // 刷新 HUD：分数与速度等级与恢复后的状态一致（最高分键与逻辑不变）
+    FX.tweenNumber(scoreElement, score, 128, v => 'SCORE ' + v); // 分数滚动补间：从当前显示值平滑滚到新值（reduced-motion 自动降级直写）
+    speedLevelElement.textContent = `LV ${1 + Math.floor(eatenCount / SPEED_STEP)}`;
+    draw(performance.now(), 0); // 立即重绘一帧：暂停遮罩下方即呈现恢复后的棋面
+    return true;
+}
+
+// 快照管线实例：保存/清除分流（进行中且非死亡演出且难度高亮正常才保存）与
+// 恢复管线（校验失败 / 应用失败 / 抛错一律清档回退新开局）由 Snap.create 统一实现
+const snapPipe = Snap.create({
+    key: SAVE_KEY,
+    canSave: () => isRunning && !isDying && currentDifficultyIndex() >= 0,
+    build: buildSnakeSnapshot,
+    validate: validateSnakeSnapshot,
+    apply: applySnakeSnapshot
+});
 
 /**
  * 将当前局进度镜像为纯数据快照写入 localStorage（键 arcade_save_snake）：
@@ -1003,35 +1153,7 @@ function gameOver() {
  *   gold          本局已捕获金苹果数（成就"淘金高手"进度；更早版本快照无此字段，恢复时回退 0）
  */
 function saveSnapshot() {
-    // 进行中（空格暂停亦算，isRunning 不因暂停改变）且未进入死亡演出 → 保存；否则清除
-    if (isRunning && !isDying) {
-        // 由当前高亮的难度按钮反推难度档序号（找不到高亮按钮视为状态异常，走清除分支）
-        const diffIndex = [...document.querySelectorAll('.difficulty-btn')]
-            .indexOf(document.querySelector('.difficulty-btn.active'));
-        if (diffIndex < 0) {
-            Arcade.removeRaw(SAVE_KEY); // 存储不可用时静默
-            return;
-        }
-        // 组装纯数据快照：仅含数组 / 数值 / 字符串，不含任何函数与 DOM 引用，可安全 JSON 序列化
-        const snap = {
-            v: 1,
-            diff: diffIndex,
-            cols: boardCols,
-            rows: boardRows,
-            snake: snake.map(s => ({ x: s.x, y: s.y })), // 逐节拷贝，序列化内容与活状态解耦
-            dir: direction,
-            dirQueue: dirQueue.slice(), // 预输入队列快照（浅拷贝数组，序列化内容与活状态解耦）
-            food: { x: food.x, y: food.y },
-            score: score,
-            eaten: eatenCount,
-            maxCombo: maxComboRun, // 本局连击峰值（成就进度随快照延续）
-            gold: goldCountRun     // 本局已捕获金苹果数（成就进度随快照延续）
-        };
-        Arcade.saveJSON(SAVE_KEY, snap); // 存储不可用时静默放弃，不影响游戏
-    } else {
-        // 未开始 / 游戏结束 / 死亡演出中：不留快照
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用时静默
-    }
+    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
 }
 
 /**
@@ -1046,119 +1168,9 @@ function saveSnapshot() {
  * @returns {boolean} 快照合法并已恢复返回 true；无快照或快照非法返回 false
  */
 function restoreSnapshot() {
-    try {
-        const snap = Arcade.loadJSON(SAVE_KEY); // 键缺失 / JSON 损坏 / 存储不可用统一返回 null
-        if (!snap) return false; // 无快照或已损坏：正常新开局，无需清理
-        // 版本号不符（损坏或未来格式）：立即弃用并清除
-        if (!snap || typeof snap !== 'object' || (snap.v !== 1 && snap.v !== 2)) { // v1/v2 均兼容读取
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 难度档：非负整数且对应难度按钮真实存在
-        if (!Number.isInteger(snap.diff) || snap.diff < 0 || snap.diff > 3) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        const diffBtn = document.querySelectorAll('.difficulty-btn')[snap.diff];
-        if (!diffBtn) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 棋盘规格：必须为有限数值且与当前棋盘一致（CSS 锁定 500×500 → 20×20，正常恒等）
-        if (!Number.isFinite(snap.cols) || !Number.isFinite(snap.rows) ||
-            snap.cols !== boardCols || snap.rows !== boardRows) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 蛇身：数组且长度合法（开局 3 节只增不减，上限为棋盘总格数）
-        if (!Array.isArray(snap.snake) || snap.snake.length < 3 || snap.snake.length > snap.cols * snap.rows) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 蛇身逐节校验：整数坐标且在棋盘内；同步收集坐标键用于去重与食物重叠校验
-        const seen = new Set();
-        for (let i = 0; i < snap.snake.length; i++) {
-            const seg = snap.snake[i];
-            if (!seg || typeof seg !== 'object' ||
-                !Number.isInteger(seg.x) || !Number.isInteger(seg.y) ||
-                seg.x < 0 || seg.x >= snap.cols || seg.y < 0 || seg.y >= snap.rows) {
-                Arcade.removeRaw(SAVE_KEY);
-                return false;
-            }
-            const key = seg.x + ',' + seg.y;
-            if (seen.has(key)) { // 蛇身存在重叠格属于非法状态
-                Arcade.removeRaw(SAVE_KEY);
-                return false;
-            }
-            seen.add(key);
-        }
-        // 方向：当前方向须为合法枚举；预输入队列为数组时逐项校验，旧档缺该字段时回退校验单字段 nextDir
-        const dirs = ['up', 'down', 'left', 'right'];
-        if (!dirs.includes(snap.dir) ||
-            !(Array.isArray(snap.dirQueue)
-                ? snap.dirQueue.every(d => dirs.includes(d))
-                : dirs.includes(snap.nextDir))) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 食物：整数坐标在棋盘内，且不与蛇身任何一节重叠
-        if (!snap.food || typeof snap.food !== 'object' ||
-            !Number.isInteger(snap.food.x) || !Number.isInteger(snap.food.y) ||
-            snap.food.x < 0 || snap.food.x >= snap.cols || snap.food.y < 0 || snap.food.y >= snap.rows ||
-            seen.has(snap.food.x + ',' + snap.food.y)) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-        // 分数与已吃食物数：有限非负整数
-        if (!Number.isFinite(snap.score) || !Number.isInteger(snap.score) || snap.score < 0 ||
-            !Number.isFinite(snap.eaten) || !Number.isInteger(snap.eaten) || snap.eaten < 0) {
-            Arcade.removeRaw(SAVE_KEY);
-            return false;
-        }
-
-        // ---------- 校验全部通过：覆盖游戏状态 ----------
-        selectDifficulty(diffBtn); // 恢复难度档（基准速度/食物得分/无敌模式 + 按钮高亮；加载期 uiClick 无声无害）
-        snake = snap.snake.map(s => ({ x: s.x, y: s.y })); // 逐节拷贝，与快照对象隔离
-        prevSnake = snake.slice(); // 插值基准与当前位置重合，恢复首帧不做插值滑动
-        direction = snap.dir;
-        // 预输入队列恢复：有 dirQueue 数组字段直接采用，旧档缺该字段时将单字段 nextDir 包装为单元素队列；
-        // 过滤与当前方向相反的意图（异常存档），防止续玩第一步 180° 掉头即死
-        dirQueue = (Array.isArray(snap.dirQueue) ? snap.dirQueue : [snap.nextDir])
-            .filter(d => d !== opposites[direction]);
-        food = { x: snap.food.x, y: snap.food.y };
-        score = snap.score;
-        eatenCount = snap.eaten;
-        syncDangerLayer(); // 续玩长蛇直接进入危险分层，与恢复后的局面匹配
-        // 按恢复后的速度等级重新推导移动计时节奏（与局内每吃 SPEED_STEP 个提速一档的公式一致）
-        gameSpeed = Math.max(SPEED_MIN, Math.round(baseSpeed * Math.pow(SPEED_FACTOR, eatenCount / SPEED_STEP)));
-        // 复位特效与瞬态状态：恢复出的是"干净的进行中局面"
-        moveAcc = 0;        // 累加器清零：续玩后先等满一个完整 gameSpeed 再迈第一步
-        foodAge = 1;        // 跳过食物出生弹入动画（foodAge≥0.2 后恒为满尺寸）
-        goldApple = null;   // 金苹果为限时瞬态，不入快照，恢复后自然重新判定
-        comboCount = 0;
-        comboTimer = 0;
-        headFlash = 0;
-        flashTime = 0;
-        shakeTime = 0;
-        isDying = false;
-        deathTimer = 0;
-        isNewRecord = false;
-        particlePool.clear();
-        floatTexts.length = 0;
-        Ach.close(); // 成就墙为瞬态 UI，不入快照，恢复后强制关闭
-        // 恢复本局成就统计（旧版快照无 maxCombo/gold 字段，类型校验不通过时回退 0，进度不虚报）
-        maxComboRun = typeof snap.maxCombo === 'number' && Number.isFinite(snap.maxCombo) && snap.maxCombo > 0 ? snap.maxCombo : 0;
-        goldCountRun = typeof snap.gold === 'number' && Number.isFinite(snap.gold) && snap.gold > 0 ? snap.gold : 0;
-        // 刷新 HUD：分数与速度等级与恢复后的状态一致（最高分键与逻辑不变）
-        FX.tweenNumber(scoreElement, score, 128, v => 'SCORE ' + v); // 分数滚动补间：从当前显示值平滑滚到新值（reduced-motion 自动降级直写）
-        speedLevelElement.textContent = `LV ${1 + Math.floor(eatenCount / SPEED_STEP)}`;
-        draw(performance.now(), 0); // 立即重绘一帧：暂停遮罩下方即呈现恢复后的棋面
-        return true;
-    } catch (e) {
-        // 任何异常（JSON 损坏 / 存储不可用等）：清除快照并按无存档处理，绝不向上抛错
-        Arcade.removeRaw(SAVE_KEY); // 存储不可用时静默
-        return false;
-    }
+    // 读档→校验（validateSnakeSnapshot）→应用（applySnakeSnapshot）管线与
+    // 异常清档兜底由 Snap.create 统一实现
+    return snapPipe.restore();
 }
 
 /* ===================== 输入与窗口事件 ===================== */
@@ -1259,8 +1271,8 @@ function handleFocusLoss() {
     endSwipe(); // 切窗后不会补发 pointerup，残留手势恢复后会误出招
     if (isRunning && !isDying && !isPaused) togglePause();
 }
-window.addEventListener('blur', handleFocusLoss);
-document.addEventListener('visibilitychange', () => { if (document.hidden) handleFocusLoss(); });
+// 失焦/切后台双通道接线收口于 snap-common.js（blur + visibilitychange hidden 共用同一清理函数）
+Snap.bindFocusLoss(handleFocusLoss);
 
 // 暂停遮罩点击恢复：点遮罩空白处续玩，与键盘空格等效；
 // 失焦自动暂停与快照续玩等待确认共用同一遮罩，点击同样适用
@@ -1272,17 +1284,10 @@ pauseScreen.addEventListener('pointerdown', (e) => {
 /* ---------- 进度镜像快照：两处保存触发点 ---------- */
 
 // 触发点 a：父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度
-// （saveSnapshot 内部自行区分：进行中/暂停中保存，未开始/已结束则清除快照）
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
-Arcade.onTrustedMessage((e) => {
-    if (e.data && e.data.type === Arcade.MSG.SAVE) saveSnapshot();
-});
-
 // 触发点 b：页面卸载兜底（关闭标签页 / 刷新 / 父页移除 iframe 均触发）
-// —— 进行中或暂停中保存快照；未开始 / 已结束则由 saveSnapshot 清除
-window.addEventListener('pagehide', () => {
-    saveSnapshot();
-});
+// —— 两处接线（消息来源守卫 + pagehide）均收口至 snap-common.js（Snap.bindAutoSave）；
+//    saveSnapshot 内部自行区分：进行中/暂停中保存，未开始/已结束则清除快照
+Snap.bindAutoSave(snapPipe);
 
 /* ===================== 主循环 ===================== */
 

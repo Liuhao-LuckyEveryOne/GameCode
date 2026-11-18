@@ -4,7 +4,8 @@
 
 将 .trae-html-share-packages/ 下的分享包与仓库源文件重建为一致：
   - <page>.html.zip × N（每个根页面一个）：全站快照
-    （根目录非点文件平铺 + docs/ 全部 + tests/ 全部；不含分享包自身与临时产物）
+    （根目录非点文件平铺 + docs/、tests/ 一级目录全部文件，不递归子目录；
+    不含分享包自身与临时产物）
   - tests/<page>.html.zip × N（每个 tests 页面一个）：tests 目录快照
 
 zip 采用确定性输出（条目固定时间戳 + 固定顺序）：源文件不变时重复执行产出
