@@ -30,7 +30,7 @@ const lobbyFx = { active: false };
 // ---------- 减少动态效果：跟随系统 prefers-reduced-motion ----------
 // 为真时 JS 侧动画循环（星空/7 个预览 canvas 等）只绘制静态首帧后终止调度，
 // CSS 侧由 @media (prefers-reduced-motion: reduce) 停用循环动画，两侧保持一致
-const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const REDUCED_MOTION = Arcade.prefersReducedMotion; // 探测收口于 arcade-common.js，本库只消费
 
 // ---------- CRT 开机层：白线展开动画播完后移除覆盖层，还原可交互页面 ----------
 (function () {
@@ -326,8 +326,7 @@ function refreshBest() {
  * 刷新「上次游玩」角标：仅 arcade_last 记录对应的卡片加 .is-last 显示角标
  */
 function refreshLastBadge() {
-    let lastId = null;
-    lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无纪录处理
+    const lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无纪录处理
     const cards = document.querySelectorAll('.card');
     for (let i = 0; i < cards.length; i++) {
         cards[i].classList.toggle('is-last', cardGameId(cards[i].getAttribute('href')) === lastId);
@@ -347,8 +346,7 @@ function refreshLastBadge() {
     refreshLastBadge();
     refreshTimeBadges();
     // 存在「上次游玩」记录：把初始键盘焦点放到对应卡片，进场即可空格续玩
-    let lastId = null;
-    lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无记录处理
+    const lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无记录处理
     if (lastId) {
         const cards = document.querySelectorAll('.card');
         for (let i = 0; i < cards.length; i++) {
@@ -531,6 +529,45 @@ let trophyClosedAt = -1e9;
     // 全屏模式下 Esc 会被浏览器优先接管用于退出全屏，V 是不受影响的开合键
     document.addEventListener('keydown', e => { if (e.code === 'KeyV' && !e.repeat) toggle(); });
     document.getElementById('thClose').addEventListener('click', close);
+    // ---------- 全站重置进度（th-foot 入口）：武装态二次点击确认，不使用弹窗 ----------
+    // 完整恢复出厂：清空 58 项成就 + 七游戏最高分/评级 + 每日挑战达成标记 + 进行中快照 +
+    // 游玩时长 + 「上次游玩」记录；音控/演出强度/难度/布局等设置类存档不在清除清单内，
+    // 天然保留。监听置于殿堂模块内：确认后可直接 render(false) 重渲染殿堂零进度状态
+    const resetBtn = document.getElementById('thReset');
+    let resetArmed = false, resetTimer = 0;
+    /** 退出武装态：摘红色警示样式、还原按钮文案、撤销超时回落定时器 */
+    function disarmReset() {
+        resetArmed = false;
+        clearTimeout(resetTimer);
+        resetBtn.classList.remove('armed');
+        resetBtn.textContent = '重置进度';
+    }
+    resetBtn.addEventListener('click', () => {
+        // 武装态（第一次点击转红提示）：3 秒内再点才真正执行，超时自动回落防误触
+        if (!resetArmed) {
+            resetArmed = true;
+            resetBtn.classList.add('armed');
+            resetBtn.textContent = '再点一次确认清除';
+            resetTimer = setTimeout(disarmReset, 3000);
+            return;
+        }
+        disarmReset();
+        // 清除三类：① 前缀族键（成就/进行中快照/每日挑战/游玩时长/华容道最高分与评级）
+        // ② BEST_DEFS 全量最高分精确键（含 klotskiBest_ 之外的六游戏高分键，前缀键重复删除无害）
+        // ③ 零散进度键（bee 旧成就迁移键/华容道每日/华容道进行中/吃豆旧累计/上次游玩）
+        ['arcade_ach_', 'arcade_save_', 'arcade_daily_', 'arcade_playtime_', 'klotskiBest_', 'klotskiRank_']
+            .forEach(p => Arcade.removeByPrefix(p));
+        BEST_DEFS.forEach(def => def.keys.forEach(k => Arcade.removeRaw(k)));
+        ['beeAchievements', 'klotskiDaily', 'klotskiProgress', 'pacDotsTotal', LAST_PLAYED_KEY]
+            .forEach(k => Arcade.removeRaw(k));
+        // 反馈：CRT 断电音呼应「数据清零」；进度类角标与殿堂即刻归零——
+        // storage 事件只发给同源其它文档，本页清除不会自触发，须主动刷新
+        SFX.crtOff();
+        refreshBest();
+        refreshLastBadge();
+        refreshTimeBadges();
+        render(false);
+    });
     // 点击暗幕（veil）关闭；点击殿堂与入口按钮之外的区域也关闭（pointerdown 覆盖鼠标/触屏）
     hall.querySelector('.th-veil').addEventListener('pointerdown', close);
     document.addEventListener('pointerdown', e => {
@@ -1531,30 +1568,16 @@ document.addEventListener('keydown', e => {
         const el = overlay;
         overlay = null;
         document.body.style.overflow = '';
-        // 通知游戏页保存进度镜像快照：关机动画（0.55s）期间 iframe 仍存活，
-        // 子页在该消息处理器内同步写 localStorage，随后才随覆盖层移除，保存无感完成。
-        // 游戏已结束时子页自行走清除分支，父页无需感知游戏状态
-        const frame = el.querySelector('iframe');
-        if (frame && frame.contentWindow) {
-            // targetOrigin 取 POST_MSG_TARGET（见本脚本顶部定义）：http(s) 同源收紧为 '/'，file:// 直开回退 '*' 维持跨帧通信
-            try { frame.contentWindow.postMessage({ type: Arcade.MSG.SAVE }, POST_MSG_TARGET); } catch (e) { /* 忽略 */ }
-        }
-        // 关气回流缩略：截取游戏画布末帧，CRT 坍缩为过曝亮线后缩略图接棒绽放、缩放飞回
-        // 对应卡片（叙事闭环——"画面装回卡带"）。截图/动画全链路 try-catch，任何失败
-        // （跨源、画布为空、LOADING 中关闭）静默跳过，退回原 CRT 关机演出；减动效不启动
-        flyBackSnapshot(frame, openedCard);
-        const backCard = openedCard; // 焦点回流目标先暂存：下方置空后 remove 回调仍需引用
-        openedCard = null; // 落点引用用后即清，防止异常路径残留
-        // 关机演出启动前先恢复大厅动效与 BGM：演出进行到黑底开始淡出（64%）时，
-        // 露出的大厅已处于活动状态，BGM 恰在演出结束前后淡入，衔接无缝
-        document.body.classList.remove('game-open');
-        lobbyFx.active = true;
-        SFX.bgm.resume(); // 恢复大厅迎宾曲（音效总开关关闭或未请求播放时为无害空操作）
-        el.classList.add('overlay-out');
+        // ACK 握手状态机：摘层条件 = 关机动画走完（animDone）+ 收到子页存档回执
+        // （saveAcked）两者齐备；任一侧缺席（LOADING 中关闭 / 子页卡死 / 系统禁动画）
+        // 均有超时兜底，不阻塞摘层
         let removed = false;
+        let animDone = false;
+        let saveAcked = false;
         const remove = () => {
             if (removed) return;
             removed = true;
+            pendingSaveAck = null; // 回执回调用后即清：摘层后到达的迟到回执不再触发逻辑
             el.remove();
             // 焦点回流：iframe 移除后焦点随其销毁落到 body，键盘导航因 activeElement
             // 不在卡片上而整体失灵（索引查询恒为 -1）；把焦点还给来源卡片，
@@ -1570,11 +1593,39 @@ document.addEventListener('keydown', e => {
             if ((totalBeforeOpen || 0) < (totalNow || 0)) SFX.newRecord();
             totalBeforeOpen = null; // 快照用后即清，防止异常路径误触发
         };
+        // 摘层闸门：关机动画与存档回执齐备才真正移除节点
+        const tryRemove = () => { if (animDone && saveAcked) remove(); };
+        // 通知游戏页保存进度镜像快照（ACK 握手）：关机动画（0.55s）期间 iframe 仍存活，
+        // 子页在该消息处理器内同步写 localStorage 后回发 arcade:saved 回执（snap-common.js），
+        // 本页收到回执才摘除 iframe，消除原"时间窗赌子页已写完"的竞态。游戏已结束时子页
+        // 自行走清除分支（同样回执），父页无需感知游戏状态
+        const frame = el.querySelector('iframe');
+        if (frame && frame.contentWindow) {
+            // targetOrigin 取 POST_MSG_TARGET（见本脚本顶部定义）：http(s) 同源收紧为 '/'，file:// 直开回退 '*' 维持跨帧通信
+            try { frame.contentWindow.postMessage({ type: Arcade.MSG.SAVE }, POST_MSG_TARGET); } catch (e) { /* 忽略 */ }
+        }
+        // 登记存档回执回调：文件底部全局 onTrustedMessage 收到 arcade:saved 时触发（槽位声明见该处）
+        pendingSaveAck = () => { saveAcked = true; tryRemove(); };
+        // 关气回流缩略：截取游戏画布末帧，CRT 坍缩为过曝亮线后缩略图接棒绽放、缩放飞回
+        // 对应卡片（叙事闭环——"画面装回卡带"）。截图/动画全链路 try-catch，任何失败
+        // （跨源、画布为空、LOADING 中关闭）静默跳过，退回原 CRT 关机演出；减动效不启动
+        flyBackSnapshot(frame, openedCard);
+        const backCard = openedCard; // 焦点回流目标先暂存：下方置空后 remove 回调仍需引用
+        openedCard = null; // 落点引用用后即清，防止异常路径残留
+        // 关机演出启动前先恢复大厅动效与 BGM：演出进行到黑底开始淡出（64%）时，
+        // 露出的大厅已处于活动状态，BGM 恰在演出结束前后淡入，衔接无缝
+        document.body.classList.remove('game-open');
+        lobbyFx.active = true;
+        SFX.bgm.resume(); // 恢复大厅迎宾曲（音效总开关关闭或未请求播放时为无害空操作）
+        el.classList.add('overlay-out');
         // 演出结束后再移除节点；只认覆盖层自身的 animationend——返回按钮 0.15s 快速隐去、
         // iframe 坍缩等子元素动画的 animationend 会冒泡上来，按 target 过滤避免提前摘层
-        el.addEventListener('animationend', e => { if (e.target === el) remove(); });
-        // 兜底：系统禁用动画、后台标签暂停等极端场景下超时强制移除
-        setTimeout(remove, 600);
+        el.addEventListener('animationend', e => { if (e.target === el) { animDone = true; tryRemove(); } });
+        // 兜底一：系统禁用动画、后台标签暂停等极端场景下超时视同动画走完
+        setTimeout(() => { animDone = true; tryRemove(); }, 600);
+        // 兜底二：子页主线程卡顿（回执迟到）或 LOADING 中关闭（尚无监听器）时按最迟预算
+        // 摘层；iframe 移除仍触发子页 pagehide，保存兜底不丢失
+        setTimeout(() => { saveAcked = true; tryRemove(); }, 900);
     }
 
     /**
@@ -1731,6 +1782,10 @@ document.addEventListener('keydown', e => {
         });
     });
 
+    // 存档回执握手槽位：closeGame 发出 arcade:save 后登记回调，收到 arcade:saved 回执
+    // 时置位摘层状态机（ACK 握手）。槽位全局唯一、用后即清，多次开关游戏复用同一槽位；
+    // 摘层时置 null，迟到回执不再触发任何逻辑
+    let pendingSaveAck = null;
     // 子页消息：arcade:playtime = 游玩时长冲账（父页累计落盘 arcade_playtime_<id> 并刷新卡片角标）
     // 来源守卫收口至 arcade-common.js（仅同源 + file:// 豁免；跨源伪造消息在守卫处丢弃）
     Arcade.onTrustedMessage(e => {
@@ -1740,6 +1795,12 @@ document.addEventListener('keydown', e => {
             && typeof d.seconds === 'number' && d.seconds > 0) {
             addPlaytime(d.id, d.seconds);
             refreshTimeBadges();
+        }
+        // 存档回执：子页快照已写盘（保存/清除分支均回执），交还 closeGame 的摘层状态机
+        if (d && d.type === Arcade.MSG.SAVED && pendingSaveAck) {
+            const ack = pendingSaveAck;
+            pendingSaveAck = null;
+            ack();
         }
     });
 })();
@@ -2080,7 +2141,7 @@ document.addEventListener('keydown', e => {
             // V 键是成就殿堂开关（document 级监听已先行开合），与鼠标点入口同理不触发投币
             if (e.code === 'KeyV') return;
             // 焦点在音效/全屏/音量控件或成就殿堂入口按钮上时放行回车/空格：应激活控件本身而非投币
-            if ((k === 'Enter' || k === ' ') && e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #trophyToggle')) return;
+            if ((k === 'Enter' || k === ' ') && e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #trophyToggle, #thReset')) return;
             // 关键修复：阻断按键派发结束后的默认动作——投币会同步摘除 pre-coin 门禁，
             // 若放行默认动作，回车激活聚焦卡片合成的 click 会立刻打开游戏、盖住金币演出
             e.preventDefault();
@@ -2088,7 +2149,7 @@ document.addEventListener('keydown', e => {
             insertCoin();
         } else if (e.key === 'Enter') {
             // 焦点在音效/全屏/音量控件上时放行：回车激活控件本身而非投币
-            if (e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel')) return;
+            if (e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #thReset')) return;
             e.preventDefault(); // 回车让给投币：阻止聚焦卡片的默认启动（大厅启动用空格/鼠标）
             coinDrop(); // 点亮后回车重复投币（纯装饰演出）
         }

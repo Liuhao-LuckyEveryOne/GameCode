@@ -530,7 +530,7 @@ function ghostOnCenter(g) {
     else if (g.mode === 'eyes' && g.cell.x === HOME.x && g.cell.y === HOME.y) {
         g.mode = 'exit';
         g.frightened = false;
-        SFX.beeDashReady(); // 眼睛归巢复活：复用小蜜蜂冲刺就绪清脆双高音（幽灵即将重新出屋）
+        SFX.pacGhostHome(); // 眼睛归巢复活：幽灵回巢专属清脆双高音（幽灵即将重新出屋）
     }
     ghostChooseDir(g);
 }
@@ -989,6 +989,7 @@ const diffCtl = Arcade.bindDifficultyButtons({
     bar: document,
     storageKey: DIFFICULTY_KEY,
     persist: 'index',
+    lockedDuringPlay: () => state === 'play' || state === 'ready', // 对局进行中禁切难度（局中守卫统一收口）
     onChange(btn) {
         frightDur = parseFloat(btn.dataset.fright);
         ghBase = parseFloat(btn.dataset.ghspeed);
@@ -1013,7 +1014,7 @@ function addScore(n) {
         oneUpGiven = true;
         lives++;
         floatTexts.push({ x: centerX(pac.cell.x), y: centerY(pac.cell.y) - CELL, text: '1UP', timer: 1.6 });
-        SFX.beeOneUp(); // 经典四音上行奖励旋律
+        SFX.pacOneUp(); // 经典四音上行奖励旋律
     }
     // 破纪录：实时超越本局开局时的历史最高分（recordBase > 0 避免首局无历史时误触发）
     if (!recordBroken && recordBase > 0 && score > recordBase) {
@@ -1758,7 +1759,7 @@ function checkFruitSpawn() {
     if (pacDotsEaten >= FRUIT_DOT_GOALS[fruitSpawned]) {
         fruitSpawned++;
         fruit = { timer: FRUIT_LIFETIME };
-        SFX.klNear(); // 水果登场：复用华容道临门轻快双哔（限时机会出现，速去拾取）
+        SFX.pacFruitNear(); // 水果登场：奖励水果现身专属轻快双哔（限时机会出现，速去拾取）
     }
 }
 
@@ -1912,8 +1913,7 @@ function loop(now) {
 
 // 难度恢复：页面加载时保持与上一次选择一致（按钮序号：0 无敌 / 1 简单 / 2 中等 / 3 困难，
 // 默认中等即序号 2）；sync 程序化选择不存档不发声，越界序号静默忽略
-let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
-savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
+const savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用（隐私模式/禁用站点数据）时 parse 得 NaN，按默认难度处理不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
         diffCtl.sync(savedDifficultyIndex);

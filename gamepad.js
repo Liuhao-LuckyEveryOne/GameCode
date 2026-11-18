@@ -71,12 +71,26 @@ const GP = window.GP = { connected: false };
     //   阈值取低于行程中点：多数手柄摇杆回中偏硬，轻推即应响应，不必推到底才能转向
     const AXIS_ON = 0.4;
     const AXIS_OFF = 0.25;
+    // 功能按钮触发阈值（模拟量按钮/扳机归一化 0~1）：pressed 或 value≥0.5 判定按下中、
+    // 回落至 value≤0.4 且 pressed=false 判定松开——双阈值滞回（带宽 0.1）防止模拟量按钮
+    //   停在临界值附近时逐帧反复触发「按下/松开」抖动
+    const BUTTON_ON = 0.5;
+    const BUTTON_OFF = 0.4;
+    // 十字键触发阈值（模拟量十字键归一化 0~1，实体十字键恒 pressed=true 直接走按下档）：
+    // 与功能按钮同档双阈值滞回（带宽 0.1），防半行程模拟量十字键停在临界值附近抖动
+    const DPAD_ON = 0.5;
+    const DPAD_OFF = 0.4;
 
     // ---------- 按下状态表：code → 本库是否处于「按下中」（用于边沿判定与卡键兜底释放） ----------
     // 方向键按 code 去重：十字键与左摇杆推同一方向共用一条状态，天然合并互不重复
     const held = Object.create(null);
     // 左摇杆四向的滞回状态（true=该方向处于按下中），与十字键分开记录便于独立判定
     const stick = { up: false, down: false, left: false, right: false };
+    // 功能按钮的滞回状态（按钮索引 → true=按下中）：held 表以 code 为键存合成键名并
+    // 参与 releaseAll 全释放，直接复用会破坏其语义，故仿 stick 独立建表
+    const btnHeld = Object.create(null);
+    // 十字键的滞回状态（按钮索引 → true=按下中）：判定走十字键专属阈值 DPAD_ON/DPAD_OFF
+    const dpadHeld = Object.create(null);
 
     /**
      * 合成并派发一个标准键盘事件到 document
@@ -119,16 +133,18 @@ const GP = window.GP = { connected: false };
     }
 
     /**
-     * 释放全部按下中的键并清零摇杆滞回状态（页面隐藏 / 手柄断开时调用，
+     * 释放全部按下中的键并清零摇杆与按钮滞回状态（页面隐藏 / 手柄断开时调用，
      * 防止 tetris DAS 左右移动等「按住状态」跨场景卡死）
      */
     function releaseAll() {
         for (const code in held) release(code);
         stick.up = stick.down = stick.left = stick.right = false;
+        for (const k in btnHeld) btnHeld[k] = false;
+        for (const k in dpadHeld) dpadHeld[k] = false;
     }
 
     // ---------- 连接提示 toast：样式由本库动态注入（对齐 audio.js 面板模式，页面侧零改动） ----------
-    const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const REDUCED_MOTION = Arcade.prefersReducedMotion; // 探测收口于 arcade-common.js，本库只消费
     let toastEl = null;
     let toastTimer = 0;
 
@@ -193,21 +209,37 @@ const GP = window.GP = { connected: false };
         hadPad = true;
         GP.connected = true;
 
-        // ----- 功能按钮边沿判定：buttons[i].pressed（部分手柄为模拟量，value>0.4 视为按下） -----
+        // ----- 功能按钮边沿判定：pressed 或 value≥BUTTON_ON 视为按下，回落至 value≤BUTTON_OFF
+        // 且 pressed=false 才松开（滞回判定防模拟量按钮在临界值附近反复触发按下/松开） -----
         for (const idx in BUTTON_MAP) {
             const btn = pad.buttons[idx];
-            const isDown = !!(btn && (btn.pressed || btn.value > AXIS_ON));
+            const v = btn ? (btn.value || 0) : 0;
+            let isDown;
+            if (btnHeld[idx]) {
+                // 已处于按下中：仅当 pressed=false 且 value 回落至松开阈值以内才判松开
+                isDown = !!(btn && btn.pressed) || v > BUTTON_OFF;
+            } else {
+                isDown = !!(btn && (btn.pressed || v >= BUTTON_ON));
+            }
             const map = BUTTON_MAP[idx];
-            if (isDown) press(map[0], map[1]);
-            else release(map[1]);
+            if (isDown) { btnHeld[idx] = true; press(map[0], map[1]); }
+            else { btnHeld[idx] = false; release(map[1]); }
         }
 
-        // ----- 十字键边沿判定（与功能按钮同规则） -----
+        // ----- 十字键滞回判定：双阈值 DPAD_ON/DPAD_OFF，防模拟量十字键停在临界值附近
+        // 反复触发按下/松开；实体十字键 pressed 恒真直接命中按下档 -----
         for (const d in DPAD_MAP) {
             const dpad = pad.buttons[d];
-            const dDown = !!(dpad && (dpad.pressed || dpad.value > AXIS_ON));
-            if (dDown) press(DPAD_MAP[d], DPAD_MAP[d]);
-            else release(DPAD_MAP[d]);
+            const v = dpad ? (dpad.value || 0) : 0;
+            let dDown;
+            if (dpadHeld[d]) {
+                // 已处于按下中：仅当 pressed=false 且 value 回落至松开阈值以内才判松开
+                dDown = !!(dpad && dpad.pressed) || v > DPAD_OFF;
+            } else {
+                dDown = !!(dpad && (dpad.pressed || v >= DPAD_ON));
+            }
+            if (dDown) { dpadHeld[d] = true; press(DPAD_MAP[d], DPAD_MAP[d]); }
+            else { dpadHeld[d] = false; release(DPAD_MAP[d]); }
         }
 
         // ----- 左摇杆滞回判定：axes[0] 水平（右正）axes[1] 垂直（下正），触发/释放双阈值 -----

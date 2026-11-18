@@ -97,9 +97,8 @@ let dropCounter = 0;         // 下落计时累加器
 let lastTime = 0;            // 上一帧时间戳
 let running = false;         // 游戏是否进行中
 let paused = false;          // 是否暂停
-let highScore = 0; // 最高分持久化（读取失败回退 0）
-// 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 回退 0），不中断初始化
-highScore = parseInt(Arcade.loadRaw('tetrisHighScore')) || 0;
+// 最高分持久化：隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 回退 0），不中断初始化
+let highScore = parseInt(Arcade.loadRaw('tetrisHighScore')) || 0;
 
 // ---------- T-Spin / B2B 状态 ----------
 let lastActionRotate = false; // 锁定前最后一次成功操作是否为旋转（T-Spin 判定前提：移动/下落会清零，仅旋转置真）
@@ -436,6 +435,10 @@ function detectTSpin() {
  * 锁定前先做 T-Spin 判定（需 merge 前的棋盘与方块姿态）
  */
 function lockPiece() {
+    // 快照检查点：merge 前棋盘与方块位置一致（锁定块尚未并入），此时落盘的镜像完全
+    // 合法——进入消行演出后快照读写被守卫跳过（见 bindAutoSave 处注释），演出窗口内
+    // 关闭页面/大厅时恢复到此镜像仅重放一次落块，整局进度无损
+    snapPipe.save();
     const spin = detectTSpin(); // merge 前判定 T-Spin
     if (spin) {
         // T-Spin 达成：飘字（Full 亮紫 / Mini 灰蓝）+ 专属音效 + Full 轻震
@@ -1148,6 +1151,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
     bar: document.getElementById('difficultySelect'),
     storageKey: DIFFICULTY_KEY,
     persist: 'index',
+    lockedDuringPlay: () => running, // 对局进行中禁切难度（局中守卫统一收口）
     onChange: (btn) => {
         dropBase = parseInt(btn.dataset.drop, 10);
         scoreMult = parseInt(btn.dataset.mult, 10);
@@ -1569,12 +1573,14 @@ function buildTetrisSnapshot() {
     };
 }
 
-// 快照管线实例：保存/清除分流（进行中或暂停中才保存，开始/结算界面清除）与
-// 恢复管线（isValidSnapshot 校验失败 / 组合碰撞冲突 / 抛错一律清档回退新开局）
-// 由 Snap.create 统一实现
+// 快照管线实例：保存/清除分流（进行中或暂停中才保存，开始/结算界面清除；消行演出期
+// 不保存——此时锁定块已并入棋盘而 piece 仍指向它，保存的镜像恢复时必然组合碰撞冲突、
+// 被恢复管线当作坏档清除。演出窗口由 bindAutoSave 外层守卫整体跳过读写，一致镜像已在
+// lockPiece 开头提前落盘，窗口内关闭不丢档）与恢复管线（isValidSnapshot 校验失败 /
+// 组合碰撞冲突 / 抛错一律清档回退新开局）由 Snap.create 统一实现
 const snapPipe = Snap.create({
     key: SAVE_KEY,
-    canSave: () => running || paused,
+    canSave: () => (running || paused) && !clearing,
     build: buildTetrisSnapshot,
     validate: isValidSnapshot,
     apply: applyTetrisSnapshot
@@ -1582,7 +1588,8 @@ const snapPipe = Snap.create({
 
 /**
  * 保存当前局进度镜像快照到 localStorage（纯数据：数组/数值/布尔，不含函数与 DOM 引用）：
- * 仅在游戏进行中或暂停中写入；处于开始界面 / 结算界面时清除已有快照；
+ * 仅在游戏进行中或暂停中写入（消行演出期除外，原因见 snapPipe 处注释）；
+ * 处于开始界面 / 结算界面时清除已有快照；
  * 整体 try/catch 静默容错，存储异常（隐私模式 / 超容量等）不中断游戏流程
  */
 function saveSnapshot() {
@@ -1691,8 +1698,14 @@ function restoreSnapshot() {
 // 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
 // 与触发点 b（页面卸载兜底：刷新 / 关闭 / 父页移除 iframe 均触发 pagehide）两处接线
 // 收口于 snap-common.js（Snap.bindAutoSave）：进行中或暂停中的局写入快照
-//（未开始/已结束由管线内部清除）
-Snap.bindAutoSave(snapPipe);
+//（未开始/已结束由管线内部清除）。此处包一层消行演出期守卫：演出窗口内触发时直接
+// 跳过（不写入也不清除）——此时锁定块已并入棋盘而 piece 仍指向它，写入必产组合碰撞
+// 坏档、按管线分流走清除又会误删 lockPiece 开头已落盘的一致镜像，跳过即回退锁定前
+Snap.bindAutoSave({
+    save: () => { if (!clearing) snapPipe.save(); }, // 演出期跳过，其余状态照常分流保存/清除
+    restore: snapPipe.restore, // 完整镜像传参：恢复/清除不经演出守卫（游戏结束清档仍直连 snapPipe）
+    clear: snapPipe.clear
+});
 
 // ---------- CRT 开关机音效 ----------
 // 全屏状态真实翻转时播 CRT 开关机音：本地 fullscreenchange 与 iframe 嵌入模式
@@ -1840,4 +1853,4 @@ window.__ARCADE_TESTS__ = [
         }
     } },
 ];
-FX.behavior('tetris', window.__ARCADE_TESTS__);
+try { FX.behavior('tetris', window.__ARCADE_TESTS__); } catch (e) { /* 测试钩子不可用：静默跳过 */ }

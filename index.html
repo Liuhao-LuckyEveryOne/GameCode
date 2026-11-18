@@ -1014,6 +1014,26 @@
             border-top: 1px solid rgba(255, 255, 255, 0.06);
         }
         .th-foot b { color: #ffd23e; font-weight: normal; }
+        /* 页脚「重置进度」按钮：默认低调描边，武装态转红警示（二次点击确认才执行清除） */
+        .th-foot #thReset {
+            margin-left: 8px;
+            padding: 2px 10px;
+            font: inherit;
+            font-size: 8px;
+            letter-spacing: 1px;
+            color: #7d87ad;
+            background: transparent;
+            border: 1px solid #3a4252;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        .th-foot #thReset:hover { color: #e8ecf2; border-color: #8a93a5; }
+        .th-foot #thReset.armed { color: #ff5d5d; border-color: #ff5d5d; }
+        .th-foot #thReset.armed:hover { color: #ff8585; border-color: #ff8585; }
         /* 减少动态效果：殿堂全部装饰动画停用、过渡瞬时（面板直显、进度环直接到位、相片直接就位） */
         @media (prefers-reduced-motion: reduce) {
             .th-veil, .th-panel, #trophyHall.is-perfect .th-panel,
@@ -1940,7 +1960,7 @@
          不再有卡片逐一浮现的过程；每张卡片含一个 160×160 Canvas，由 index.js 驱动对应的预览动画 -->
     <div class="cards">
         <!-- 贪吃蛇卡片：预览 id=snakePreview，霓虹绿色 -->
-        <a class="card" href="snake.html?v=20261118-3" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
+        <a class="card" href="snake.html?v=20261118-4" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-snake" hidden></span>
             <canvas id="snakePreview" width="160" height="160"></canvas>
@@ -1950,7 +1970,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 俄罗斯方块卡片：预览 id=tetrisPreview，霓虹青色 -->
-        <a class="card" href="tetris.html?v=20261118-6" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
+        <a class="card" href="tetris.html?v=20261118-7" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-tetris" hidden></span>
             <canvas id="tetrisPreview" width="160" height="160"></canvas>
@@ -1960,7 +1980,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 吃豆人卡片：预览 id=pacPreview，霓虹黄色 -->
-        <a class="card" href="pac.html?v=20261118-4" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
+        <a class="card" href="pac.html?v=20261118-5" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pac" hidden></span>
             <canvas id="pacPreview" width="160" height="160"></canvas>
@@ -1970,7 +1990,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 小蜜蜂卡片：预览 id=beePreview，霓虹粉色 -->
-        <a class="card" href="bee.html?v=20261118-3" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
+        <a class="card" href="bee.html?v=20261118-4" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-bee" hidden></span>
             <canvas id="beePreview" width="160" height="160"></canvas>
@@ -1980,7 +2000,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 3D弹球卡片：预览 id=pinballPreview，霓虹紫色 -->
-        <a class="card" href="pinball.html?v=20261118-5" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
+        <a class="card" href="pinball.html?v=20261118-6" style="--glow: 193, 123, 255; animation-delay: 0.25s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pinball" hidden></span>
             <canvas id="pinballPreview" width="160" height="160"></canvas>
@@ -1990,7 +2010,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 华容道卡片：预览 id=klotskiPreview，霓虹赤红色（与游戏墙体色同源） -->
-        <a class="card" href="klotski.html?v=20261118-5" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
+        <a class="card" href="klotski.html?v=20261118-6" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-klotski" hidden></span>
             <canvas id="klotskiPreview" width="160" height="160"></canvas>
@@ -2000,7 +2020,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 1024卡片：预览 id=n1024Preview，霓虹橙色（数字方块合并玩法，三档难度） -->
-        <a class="card" href="1024.html?v=20261118-2" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
+        <a class="card" href="1024.html?v=20261118-3" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-1024" hidden></span>
             <canvas id="n1024Preview" width="160" height="160"></canvas>
@@ -2061,18 +2081,18 @@
                 </div>
             </div>
             <div class="th-scroll"><div class="th-grid" id="thGrid"></div></div>
-            <div class="th-foot">集齐 58 项成就点亮满环 · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂</div>
+            <div class="th-foot">集齐 58 项成就点亮满环 · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂<button id="thReset" type="button" title="清除全部进度数据（成就/最高分/评级/每日挑战/进行中快照/游玩时长/上次游玩），声音、演出、难度等设置保留；点击后需再次点击确认">重置进度</button></div>
         </div>
     </div>
     <!-- 脚本加载顺序：arcade-common.js 提供 Arcade（跨帧消息统一来源守卫，其余公共库均依赖它）；
          audio.js 提供全局 SFX（音效开关按钮、卡片音效与 index.js 都依赖它），
          fullscreen.js 提供全局 FS（仅供本页全屏按钮使用）；index.js 依赖 SFX，须放在其之后 -->
-    <script src="arcade-common.js?v=20261118-1"></script>
-    <script src="audio.js?v=20261118-1"></script>
-    <script src="fx.js?v=20261118-1"></script>
-    <script src="fullscreen.js?v=20261118-1"></script>
+    <script src="arcade-common.js?v=20261118-2"></script>
+    <script src="audio.js?v=20261118-2"></script>
+    <script src="fx.js?v=20261118-2"></script>
+    <script src="fullscreen.js?v=20261118-2"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，大厅键位零改动获得手柄支持 -->
-    <script src="gamepad.js?v=20261118-1"></script>
-    <script src="index.js?v=20261118-1"></script>
+    <script src="gamepad.js?v=20261118-2"></script>
+    <script src="index.js?v=20261118-3"></script>
 </body>
 </html>

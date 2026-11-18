@@ -241,8 +241,7 @@ const DIFFICULTIES = {
     hard: { name: '困难', lives: 2, bullet: 1.15, fire: 1.35, swarm: 1.15, dive: 1.3, bossHp: 1.25 }
 };
 /** 当前难度 key（启动时从 localStorage 恢复，非法值回退普通） */
-let difficulty = null;
-difficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储被禁（隐私模式/禁 Cookie）时按未存档处理
+let difficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储被禁（隐私模式/禁 Cookie）时按未存档处理
 if (!DIFFICULTIES[difficulty]) difficulty = 'normal';
 /** 当前难度的参数配置（各处计算经它取乘数，避免散落硬编码） */
 let diffCfg = DIFFICULTIES[difficulty];
@@ -570,6 +569,7 @@ const diffCtl = Arcade.bindDifficultyButtons({
     persist: 'data-diff',
     activeClass: 'selected', // 本页按钮高亮类与默认 'active' 不同
     canPick: (_btn, _idx, key) => !!DIFFICULTIES[key] && key !== difficulty,
+    lockedDuringPlay: () => gameState === 'playing', // 对局进行中禁切难度（局中守卫统一收口）
     onChange(_btn, _idx, key) {
         difficulty = key;
         diffCfg = DIFFICULTIES[key];
@@ -1205,8 +1205,9 @@ function killBee(b) {
 /**
  * 击中 Boss：扣血、闪白与火花反馈；血量过半触发一次性狂暴
  * （弹幕加速、身体变红）；血量归零则连环殉爆后击败结算
+ * @param {boolean} [silent] 静音本次受击音（全屏炸弹批量结算时避免受击音连续叠播）
  */
-function hitBoss() {
+function hitBoss(silent) {
     boss.hp--;
     score += 5;
     boss.flash = 0.06;
@@ -1214,7 +1215,7 @@ function hitBoss() {
     bossHurtFlash = BOSS_HURT_FLASH_TIME;
     // 受击火花（小而快，区别于击杀爆裂）
     spawnBurst(boss.x + BOSS_W / 2 + (Math.random() - 0.5) * BOSS_W, boss.y + BOSS_H / 2, '#e8e8ff', 3, 120);
-    SFX.beeArmorHit();
+    if (!silent) SFX.beeArmorHit();
     // 低血狂暴：血量首次跌破一半时一次性触发，警示音 + 飘字 + 震动
     if (!boss.enraged && boss.hp > 0 && boss.hp <= boss.maxHp * 0.5) {
         boss.enraged = true;
@@ -1231,8 +1232,8 @@ function hitBoss() {
         addFloatText(boss.x + BOSS_W / 2, boss.y, `BOSS +${bonus}`, '#ff3ea5', 1.4);
         spawnBurst(boss.x + BOSS_W / 2, boss.y + BOSS_H / 2, '#ffd23e', 40, 320);
         freezeTimer = Math.max(freezeTimer, 0.35);
-        shakeTime = 0.4;
-        shakeMag = 6;
+        shakeTime = Math.max(shakeTime, 0.4); // 取 max 不覆盖进行中的更强震动
+        shakeMag = Math.max(shakeMag, 6);
         SFX.beeBossDie();
         // 连环殉爆：Boss 躯体范围内预排 5 个延时爆炸点，
         // 在击败顿帧结束后依次爆开，形成"大爆 → 殉爆"节奏
@@ -1411,18 +1412,22 @@ function detonateBomb(x, y) {
             spawnBurst(b.x + wOf(b) / 2, b.y + hOf(b) / 2, '#e8e8ff', 3, 100);
         }
     }
-    // Boss 按点数结算（复用 hitBoss 的受击/击败逻辑，击败后 boss 为 null 自动停止）
-    for (let i = 0; i < BOMB_BOSS_DAMAGE && boss; i++) hitBoss();
+    // Boss 按点数结算（复用 hitBoss 的受击/击败逻辑，击败后 boss 为 null 自动停止；
+    // 传 silent 批量静音受击音，只留炸弹本身的爆轰音）
+    for (let i = 0; i < BOMB_BOSS_DAMAGE && boss; i++) hitBoss(true);
     // 蜂群自爆引发的弹幕与原有敌弹一并清空（必须在伤害结算后执行）
     enemyBullets.length = 0;
     // 成就统计：跨局炸弹使用数推进（累计值入 best 存档，挂靠的 bomb10 由共享层连带解锁）
     trackCumulativeStat('totalBombs', 1);
+    // 同一波炸弹连击合并反馈：白闪窗口内重复引爆不重复震屏与音效，震屏维持首次最强值
+    if (bombFlashTimer <= 0) {
+        shakeTime = Math.max(shakeTime, 0.35);
+        shakeMag = Math.max(shakeMag, 6);
+        SFX.beeBomb();
+    }
     bombFlashTimer = BOMB_FLASH_TIME;
-    shakeTime = Math.max(shakeTime, 0.35);
-    shakeMag = Math.max(shakeMag, 6);
     freezeTimer = Math.max(freezeTimer, 0.12);
     addFloatText(x, y - 10, '全屏轰炸!', '#ff5533', 1.2);
-    SFX.beeBomb();
 }
 
 /**
@@ -1828,7 +1833,7 @@ function updateBoss(dt) {
                 p.color = Math.random() < 0.5 ? '#cfd8ea' : '#8a93a8';
                 p.size = 2 + Math.random() * 2;
             }
-            FX.shake(canvas, 4, 260); // Boss 落地全屏震动（强烈冲击感）
+            // 全屏震动已由上方 shakeTime/shakeMag（BOSS_LAND_SHAKE_*）承担，不再叠加 FX.shake
             SFX.beeBossLand();
         }
         return;

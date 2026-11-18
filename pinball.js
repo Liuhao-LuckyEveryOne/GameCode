@@ -837,7 +837,7 @@ function clearBoard() {
         t.flash = 0.3;
     }
     jackpotArmed = true; // 武装 Jackpot
-    SFX.beeWaveClear();
+    SFX.pinClear();
     spawnMultiball(); // 清板奖励：掉落多球
 }
 
@@ -851,7 +851,7 @@ function triggerJackpot() {
     jackpotFxTimer = JACKPOT_FX_TIME; // 启动金色大字演出（drawJackpotFx 渲染）
     FX.hitstop(80); // 顿帧强化大奖冲击感（减少动态偏好时库内自动跳过）
     FX.shake(canvas, 5, 280); // 大奖全屏震动（强烈冲击感）
-    SFX.klRankS();
+    SFX.pinRankS();
     Ach.unlock('jackpot');
 }
 
@@ -910,7 +910,7 @@ function loseBall(b) {
     comboTimer = 0;
     comboMult = 1;
     lives--;
-    drawBalls();
+    drawAllBalls();
     loseTimer = 0;
     state = 'lost';
     lostBall = b; // 记录坠落球引用，供失球演出继续渲染坠落
@@ -977,6 +977,7 @@ const diffCtl = Arcade.bindDifficultyButtons({
     bar: document,
     storageKey: DIFFICULTY_KEY,
     persist: 'index',
+    lockedDuringPlay: () => state === 'play' || state === 'ready', // 对局进行中禁切难度（局中守卫统一收口）
     onChange(btn) {
         gravity = parseFloat(btn.dataset.gravity);
         flipperLen = parseFloat(btn.dataset.flip);
@@ -1029,7 +1030,7 @@ function startGame() {
     scoreElement.textContent = '0';
     rebuildFlippers();
     resetBall();
-    drawBalls();
+    drawAllBalls();
     state = 'ready';
     SFX.start();
     SFX.bgm.start('pinball'); // 启动弹珠台 BGM 循环
@@ -1209,7 +1210,7 @@ function applyPinballSnapshot(s) {
     // 刷新 HUD 与画布一帧：侧栏分数 / 倍率 / 剩余球数 + 台面快照画面
     FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡到续玩分数
     multElement.textContent = '×' + mult;
-    drawBalls();
+    drawAllBalls();
     draw(performance.now());
     // 停回暂停遮罩等待玩家输入（开始遮罩隐藏，不立即开跑），并亮出恢复提示
     startScreen.style.display = 'none';
@@ -1571,7 +1572,7 @@ function drawFlippers() {
  * @param {number} now 当前帧时间戳（毫秒）
  * @param {{x:number,y:number,vx:number,vy:number,trail:Array}} b 待绘制的弹球对象
  */
-function drawBall(now, b) {
+function drawOneBall(now, b) {
     const p = project(b.x, b.y);
     const r = BALL_R * p.s;
     // 台面投影阴影（向下偏移，模拟球悬浮在台面上方）
@@ -1716,9 +1717,9 @@ function draw(now) {
     // 多球渲染：逐球绘制拖尾残影与球体（每球独立阴影/渐变），失球演出期改绘坠落球
     for (const b of balls) {
         drawTrail(b.trail);
-        drawBall(now, b);
+        drawOneBall(now, b);
     }
-    if (state === 'lost' && lostBall) drawBall(now, lostBall);
+    if (state === 'lost' && lostBall) drawOneBall(now, lostBall);
     // 蓄力发射充能环：ready 按住空格时围绕首发球绘制进度弧（青色充能 → 满力金色加粗）
     const chargeBall = balls[0];
     if (state === 'ready' && charging && chargeBall) {
@@ -1812,7 +1813,7 @@ function drawJackpotFx() {
 /**
  * 绘制侧栏 BALLS 面板：按剩余球数绘制金属小球图标
  */
-function drawBalls() {
+function drawAllBalls() {
     ballsCtx.clearRect(0, 0, ballsCanvas.width, ballsCanvas.height);
     for (let i = 0; i < lives; i++) {
         const cx = 25 + i * 34, cy = 18, r = 9;
@@ -2108,7 +2109,7 @@ if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
 // （成就墙初始渲染由共享成就引擎在打开墙面时按需完成，启动时无需预渲染）
 highElement.textContent = highScore;
 multElement.textContent = '×' + mult;
-drawBalls();
+drawAllBalls();
 
 // 进度快照恢复：位于核心状态创建之后、默认新局逻辑（开始按钮触发的新局）之前。
 // 恢复成功则停回暂停遮罩等待玩家按 P 或点击遮罩继续（不立即开跑），

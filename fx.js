@@ -19,8 +19,10 @@
  * 全局暴露 FX 对象；所有页面引入 <script src="fx.js?v=..."> 后即可使用，无任何外部依赖
  */
 const FX = (() => {
-    /** 是否偏好减弱动效（系统级设置；各游戏据此跳过粒子/卡帧等纯装饰演出） */
-    const prefersReduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    /** 是否偏好减弱动效（系统级设置；各游戏据此跳过粒子/卡帧等纯装饰演出，探测收口于 arcade-common.js） */
+    const prefersReduced = Arcade.prefersReducedMotion;
+    /** 嵌入判据（本库唯一口径，与 audio.js / fullscreen.js 对齐）：运行于 iframe 且 URL 携带 ?embed 标记 */
+    const EMBED = window.parent !== window && new URLSearchParams(location.search).has('embed');
 
     /**
      * 高清屏适配：按 devicePixelRatio 放大画布物理分辨率，同时以 setTransform 锁定 CSS 逻辑坐标系，
@@ -114,7 +116,7 @@ const FX = (() => {
     function setFxLevel(idx, fromRemote, remoteMode) {
         graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
         // 子页角色：状态权威在大厅，不持久化、不本地广播
-        if (window.parent !== window) {
+        if (EMBED) {
             if (!fromRemote) {
                 // 用户在子页面板点击：转发原始请求（含自动档 3），由父页裁决后广播实际档位
                 try { window.parent.postMessage({ type: Arcade.MSG.FXLEVEL, act: 'set', idx }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
@@ -180,7 +182,7 @@ const FX = (() => {
      * 启动即重锚统计窗口——模式 3→固定→3 往返后账目从零起算，不残留旧窗口时间戳
      */
     function startAutoEngine() {
-        if (autoRaf || window.parent !== window) return;
+        if (autoRaf || EMBED) return;
         autoWinStart = performance.now();
         autoWinFrames = 0;
         const tick = (now) => {
@@ -193,7 +195,7 @@ const FX = (() => {
     }
 
     // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页收父页广播静默应用；父页收子页设档请求后经 setFxLevel 持久化并广播
-    if (window.parent !== window) {
+    if (EMBED) {
         // 子页角色：广播报文无 act 字段，收到即静默应用（不持久化、不回传）
         // 双校验：Arcade.onTrustedMessage 先过 origin 守卫（仅同源 + file:// 豁免），再确认消息确来自直接父页
         Arcade.onTrustedMessage((e) => {
@@ -538,7 +540,7 @@ const FX = (() => {
             acc = 0;
             if (secs <= 0) return;
             // 嵌入模式：上报父页统一落盘（大厅是持久化唯一方，与音控协议同思路）
-            if (window.parent !== window && new URLSearchParams(location.search).has('embed')) {
+            if (EMBED) {
                 try { window.parent.postMessage({ type: Arcade.MSG.PLAYTIME, id: id, seconds: secs }, POST_MSG_TARGET); } catch (e) { /* 父页不可达时忽略 */ }
             } else {
                 // 独立运行：直接累加写入 localStorage（隐私模式等不可用时静默放弃）

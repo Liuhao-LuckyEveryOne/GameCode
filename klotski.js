@@ -1177,6 +1177,7 @@ const diffCtl = Arcade.bindDifficultyButtons({
     storageKey: DIFF_KEY,
     persist: 'index', // 存 DOM 序号裸串，兼容历史存档格式
     canPick(_btn, idx) { return idx !== diffIndex; }, // 复刻原实现"重复点击不响应"守卫：同档重选不发声不落盘
+    lockedDuringPlay: () => state === 'playing', // 对局进行中禁切难度（局中守卫统一收口）
     onChange(_btn, idx) {
         diffIndex = idx;
         applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮

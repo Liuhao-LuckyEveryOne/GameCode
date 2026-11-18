@@ -113,13 +113,24 @@
      * arcade:save 消息（关闭 iframe 覆盖层前下发）双注册一体完成。还需处理
      * arcade:fs 等复合消息的游戏保留各自既有 Arcade.onTrustedMessage 回调
      * （FS 音效等副作用），SAVE 消息处理一律单点化收口于本函数
-     * （消息来源守卫统一在 onTrustedMessage 收口）
+     * （消息来源守卫统一在 onTrustedMessage 收口）。
+     * 保存完成后向父页回发 arcade:saved 存档回执（ACK）：大厅侧摘除 iframe 前
+     * 等待该回执，消除"关机动画 0.55s 时间窗赌子页已写完"的竞态；子页主线程
+     * 卡顿导致回执迟到时，父页按超时兜底照常摘层（pagehide 兜底仍在）
      * @param {{save: Function}} pipe Snap.create 产出的管线实例
      */
     function bindAutoSave(pipe) {
         bindPageHide(pipe);
         Arcade.onTrustedMessage((e) => {
-            if (e.data && e.data.type === Arcade.MSG.SAVE) pipe.save();
+            if (e.data && e.data.type === Arcade.MSG.SAVE) {
+                pipe.save();
+                // 存档回执（ACK）：快照已落盘（保存/清除分支均算），父页收到后才摘除 iframe
+                try {
+                    if (window.parent && window.parent !== window) {
+                        window.parent.postMessage({ type: Arcade.MSG.SAVED }, Arcade.MSG_TARGET);
+                    }
+                } catch (err) { /* 回执失败不影响存档本身，父页按超时兜底 */ }
+            }
         });
     }
 

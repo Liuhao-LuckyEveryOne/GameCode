@@ -135,6 +135,19 @@ GAMES = [
 GAME_LIB_ORDER = ["ach-common.js", "snap-common.js", "pause-common.js"]
 GAME_PAGES = {html for html, _js in GAMES}
 
+# 游戏页音效分册（v3.5 audio.js 命名空间化拆分）：游戏页 → 专属分册文件。
+# 每个游戏页必须加载自己的分册，位置须在 audio.js 之后、业务 js 之前
+# （分册经 Object.assign(SFX, {...}) 挂载，依赖 audio.js 引擎与内部合成原语）
+AUDIO_BUNDLES = {
+    "snake.html": "audio-snake.js",
+    "tetris.html": "audio-tetris.js",
+    "pac.html": "audio-pac.js",
+    "bee.html": "audio-bee.js",
+    "pinball.html": "audio-pinball.js",
+    "klotski.html": "audio-klotski.js",
+    "1024.html": "audio-1024.js",
+}
+
 # 检查项 11：成就条目锚与分类字段（在去噪骨架上匹配，键名为标识符不受字符串剥离影响）。
 # rarity: 为成就条目专属锚字段（不依赖各游戏 ACHIEVEMENTS 变量命名统一）；cat 后紧跟
 # 冒号，category: 等更长标识符因词边界 + 冒号断言不误匹配
@@ -270,9 +283,11 @@ def check_lib_order_problems():
         # 顺序单调递增校验（仅在本页四件套齐全时才有意义）
         if len(pos) == len(LIB_ORDER) and pos != sorted(pos):
             problems.append(f"{page.name} 公共库加载顺序错误: {refs}")
-        # 业务脚本（公共库之外的首个 js）必须排在 fullscreen.js 之后
+        # 业务脚本（公共库与音效分册之外的首个 js）必须排在 fullscreen.js 之后
+        bundle = AUDIO_BUNDLES.get(page.name)
         if pos:
-            biz = [i for i, r in enumerate(refs) if r not in LIB_ORDER and r not in GAME_LIB_ORDER]
+            biz = [i for i, r in enumerate(refs)
+                   if r not in LIB_ORDER and r not in GAME_LIB_ORDER and r != bundle]
             if biz and min(biz) < pos[-1]:
                 problems.append(f"{page.name} 业务 js 早于 fullscreen.js 加载: {refs}")
         # 游戏页专属公共库：存在性 + 必须晚于 fullscreen.js（ach-common/snap-common 依赖前置库的挂载）
@@ -282,6 +297,14 @@ def check_lib_order_problems():
                     problems.append(f"{page.name} 缺少游戏页公共库 {lib}")
                 elif pos and refs.index(lib) < pos[-1]:
                     problems.append(f"{page.name} 游戏页公共库 {lib} 未排在 fullscreen.js 之后")
+            # 音效分册：存在性 + 必须在 audio.js 之后、业务 js 之前（依赖引擎原语且供业务调用）
+            if bundle:
+                if bundle not in refs:
+                    problems.append(f"{page.name} 缺少音效分册 {bundle}")
+                elif "audio.js" in refs and refs.index(bundle) < refs.index("audio.js"):
+                    problems.append(f"{page.name} 音效分册 {bundle} 未排在 audio.js 之后")
+                elif biz and refs.index(bundle) > min(biz):
+                    problems.append(f"{page.name} 音效分册 {bundle} 晚于业务 js 加载: {refs}")
     return problems
 
 
@@ -788,7 +811,9 @@ def check_entry_version_problems():
         js_path = page.with_suffix(".js")
         if not page.is_file() or not js_path.is_file():
             continue  # 入口与文件对应齐全性由检查项 6 把关
-        js_m = re.search(r'src="[\w./-]*' + re.escape(js_path.name) + r'\?v=([\w-]+)"',
+        # 文件名前只允许「"」或「/」结尾的路径段（(?:[\w./-]*/)? 非可选吞前缀会
+        # 让 audio-1024.js 抢先匹配 1024.js 的版本搜索，误读分册版本）
+        js_m = re.search(r'src="(?:[\w./-]*/)?' + re.escape(js_path.name) + r'\?v=([\w-]+)"',
                          page.read_text(encoding="utf-8"))
         if not js_m:
             continue  # 业务 js 引用带版本规范由检查项 2 把关

@@ -129,8 +129,7 @@ function dailyRand() {
  * 已达成则保持普通模式；徽章可见性由 updateHud 统一刷新
  */
 function setupDailyChallenge() {
-    let done = false;
-    done = !!Arcade.loadRaw(DAILY_KEY); // 存储不可用时视为未达成
+    const done = !!Arcade.loadRaw(DAILY_KEY); // 存储不可用时视为未达成
     dailyMode = !done;
     if (dailyMode) dailyRng = mulberry32(dateSeed(DAILY_DATE));
 }
@@ -324,6 +323,8 @@ let combo = 0;
 let milestones = new Set();
 /** 死局熄灭演出：{ t, dur }，失败瞬间全盘渐暗遮罩的推进状态（null 表示未在演出中） */
 let deathFade = null;
+/** 胜利/失败面板及烟花演出的 setTimeout 句柄池：面板提前关闭时统一 clearTimeout，防止旧定时器到点操作已失效的面板 DOM */
+let panelTimers = [];
 /** 本局是否已庆祝过刷新纪录（首次超越既有最高的瞬间只庆祝一次，重开时复位） */
 let celebratedRecord = false;
 /** 危险预警等级：0 安全 / 1 仅剩 2 空格 / 2 满盘或仅剩 1 空格（驱动红色脉冲边框与警报音） */
@@ -686,10 +687,10 @@ function move(dir, announceBlock = true) {
         SFX.bgm.stop(); // 胜利演出期间静音 BGM，突出烟花与胜利号角（继续挑战时重新响起）
         SFX.n1024Win();
         spawnFireworks(); // 全屏三波烟花秀
-        setTimeout(() => {
+        panelTimers.push(setTimeout(() => {
             winScoreEl.textContent = score;
             showOverlay(winScreen);
-        }, 600); // 拉长到 600ms，给烟花秀留足演出时间
+        }, 600)); // 拉长到 600ms，给烟花秀留足演出时间
         return;
     }
     updateDanger(); // 危险预警：空格告急时升档播警报音，驱动棋盘红色脉冲边框
@@ -700,10 +701,10 @@ function move(dir, announceBlock = true) {
         SFX.bgm.stop(); // 终局静音 BGM，突出熄灭演出（结算面板下撤销救回时重新响起）
         SFX.n1024Fade(); // 熄灭演出伴奏：长下滑音（灯火渐暗的坠落感）
         deathFade = { t: 0, dur: DEATH_FADE_DUR }; // 全盘渐暗遮罩启动
-        setTimeout(() => {
+        panelTimers.push(setTimeout(() => {
             SFX.n1024Over(); // 面板弹出时接失败琶音，与熄灭音错峰两段式
             showGameOver();
-        }, 750); // 等熄灭遮罩播完再出面板（熄灭音 0.7s 略短于遮罩 0.75s，收尾近似同步）
+        }, 750)); // 等熄灭遮罩播完再出面板（熄灭音 0.7s 略短于遮罩 0.75s，收尾近似同步）
         return;
     }
     saveSnapshot(); // 常规有效滑动：镜像当前局面到存档，随时退出页面都能续玩
@@ -778,7 +779,7 @@ function spawnRing(px, py, color, delay = 0) {
 function spawnFireworks() {
     const waves = [0, 240, 480];
     for (let w = 0; w < waves.length; w++) {
-        setTimeout(() => {
+        panelTimers.push(setTimeout(() => {
             const x = 80 + Math.random() * 340; // 烟花中心随机散布在棋盘内
             const y = 70 + Math.random() * 275;
             const color = FIREWORK_COLORS[w % FIREWORK_COLORS.length];
@@ -788,7 +789,7 @@ function spawnFireworks() {
             flash = { t: 0, dur: 0.3, color: '#ffffff' };
             shake = Math.max(shake, 3);
             SFX.n1024Firework();
-        }, waves[w]);
+        }, waves[w]));
     }
 }
 
@@ -1159,6 +1160,7 @@ function doUndo() {
     const snap = history.pop();
     undosLeft--;
     restoreBoard(snap);
+    clearPanelTimers(); // 面板下撤销救回：清掉尚未到点的面板定时器，防止救回后旧定时器到点把面板再弹出来
     // 若正处于胜利/结束面板，撤回后关闭面板继续对局
     hideOverlay(winScreen);
     hideOverlay(gameOverScreen);
@@ -1441,9 +1443,17 @@ function resetBoard() {
     updateGoalHud();
 }
 
+/** 清除胜利/失败面板及烟花演出相关延迟定时器：面板提前关闭（重开/撤销救回）时调用，防止旧定时器到点操作已失效的面板 DOM
+ *  @returns {void} */
+function clearPanelTimers() {
+    for (const t of panelTimers) clearTimeout(t);
+    panelTimers = [];
+}
+
 /** 开始新一局：隐藏全部遮罩并重开棋盘 */
 function startGame() {
     document.activeElement.blur(); // 移除按钮焦点，防止空格/回车误触按钮
+    clearPanelTimers(); // 重开新局：清掉上一局尚未到点的面板/烟花定时器，防止旧定时器到点操作已失效的面板 DOM
     hideOverlay(startScreen);
     hideOverlay(winScreen);
     hideOverlay(gameOverScreen);
@@ -1496,6 +1506,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
     storageKey: DIFFICULTY_KEY,
     persist: 'data-diff',
     canPick: (btn, idx, key) => !!DIFFICULTIES[key] && key !== currentDifficulty,
+    lockedDuringPlay: () => playing, // 对局进行中禁切难度（局中守卫统一收口）
     onChange: (btn, idx, key) => {
         currentDifficulty = key;
         SIZE = DIFFICULTIES[key].size;
@@ -1505,8 +1516,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
         resetBoard(); // 以新尺寸重铺预览棋盘，开始面板背后即时可见
         // 切换难度：若存档属于被放弃的旧难度则清除；初始化恢复难度时存档与新难度一致，不受影响
         // （存储不可用时读取返回 null，跳过旧档清理，不中断难度切换）
-        let stale = null;
-        stale = Arcade.loadRaw(SAVE_KEY); // 存储不可用时静默跳过
+        const stale = Arcade.loadRaw(SAVE_KEY); // 存储不可用时静默跳过
         if (stale) {
             try {
                 if (JSON.parse(stale).diff !== key) clearProgress();
@@ -1530,7 +1540,7 @@ function updateRepeat(dt) {
 
 /* ---------- 输入事件 ---------- */
 
-// 键盘：方向键 / WASD 滑动；Z/U 撤销；R 对局中重开；P/Space 暂停；Enter/Space 面板确认；V/Esc 成就墙开关（✕ 或点空白处亦可关闭）
+// 键盘：方向键 / WASD 滑动；Z/U 撤销；R 对局中/结算面板重开；P/Space 暂停；Enter/Space 面板确认；V/Esc 成就墙开关（✕ 或点空白处亦可关闭）
 document.addEventListener('keydown', (event) => {
     const dir = KEY_DIRS[event.code];
     if (dir) {
@@ -1555,8 +1565,8 @@ document.addEventListener('keydown', (event) => {
         case 'z': case 'Z': case 'u': case 'U': // 撤销上一步
             doUndo();
             break;
-        case 'r': case 'R': // 对局中立即重开（暂停态重开由 startGame 复位暂停）
-            if (playing) startGame();
+        case 'r': case 'R': // 对局中立即重开（暂停态重开由 startGame 复位暂停）；结算面板下 R 与按钮/Enter 同效
+            if (playing || gameOverScreen.style.display === 'block') startGame();
             break;
         case 'p': case 'P': // 暂停/恢复（键位与 tetris/pinball 的 P 一致）
             if (playing) {
@@ -1721,8 +1731,7 @@ try {
 } catch (e) { /* 存储不可用时最高分按 0 处理 */ }
 // 难度恢复：与上一次选择一致（对齐其他游戏难度记忆；必须先于 restoreSnapshot，否则存档 diff 校验失败）；
 // sync 为程序化恢复路径（高亮+onChange，不存档不发声），外层守卫保持"未知键名/默认难度跳过"原状
-let savedDifficulty = null;
-savedDifficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储不可用时保持 null，走默认难度
+const savedDifficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储不可用时保持 null，走默认难度
 if (DIFFICULTIES[savedDifficulty] && savedDifficulty !== DEFAULT_DIFFICULTY) {
     try {
         difficultyCtl.sync(savedDifficulty);

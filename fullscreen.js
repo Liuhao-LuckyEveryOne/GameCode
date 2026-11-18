@@ -53,8 +53,8 @@ const FS = (() => {
     /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
     const POST_MSG_TARGET = Arcade.MSG_TARGET;
 
-    /** 用户系统偏好"减少动态效果"：为 true 时跳过全屏过渡动画（无障碍适配） */
-    const REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    /** 用户系统偏好"减少动态效果"：为 true 时跳过全屏过渡动画（无障碍适配，探测收口于 arcade-common.js） */
+    const REDUCED = Arcade.prefersReducedMotion;
 
     /** 最近一次同步的全屏态：供窗口尺寸变化时按当前状态重算缩放（嵌入模式下无法实时读取文档全屏态） */
     let lastFs = false;

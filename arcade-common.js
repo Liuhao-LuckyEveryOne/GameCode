@@ -1,13 +1,14 @@
 /* ==========================================================================
  * arcade-common.js —— 街机厅公共基础库（零依赖，须在 audio/fx/fullscreen 等公共库之前加载）
  * 职责一：跨帧 postMessage 统一来源守卫（全项目 message 监听收口于此，策略改动只改本文件）
- *         + 消息类型注册表（MSG 七类型常量表 / MSG_TARGET 投递目标单点定义，业务侧禁止裸写字面量）
+ *         + 消息类型注册表（MSG 八类型常量表 / MSG_TARGET 投递目标单点定义，业务侧禁止裸写字面量）
  * 职责二：localStorage 安全存取（JSON 序列化族 saveJSON/loadJSON/loadJSONState + 裸值族 saveRaw/loadRaw/removeRaw，
  *         两族均降级兜底；JSON 族写失败/读损坏同键仅告警一次，精细读用 loadJSONState；
  *         全站 localStorage 直接调用收口于本文件，业务代码禁止绕过）
  * 职责三：指针捕获守卫（setPointerCapture 对已释放/合成指针抛 NotFoundError 的统一兜底）
  * 职责四：通用难度按钮组绑定（bindDifficultyButtons，收编七游戏 selectDifficulty 同构实现）
- * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons }
+ * 职责五：系统级「减少动态效果」偏好唯一探测点（prefersReducedMotion，fx/fullscreen/gamepad/大厅统一消费）
+ * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, removeByPrefix, capturePointer, bindDifficultyButtons, prefersReducedMotion }
  * ========================================================================== */
 const Arcade = (() => {
     'use strict';
@@ -35,6 +36,7 @@ const Arcade = (() => {
         HELLO: 'arcade:hello',       // 子页就绪报到（fullscreen.js 收发）
         FS: 'arcade:fs',             // 全屏状态广播 / 切换请求（fullscreen.js 收发、klotski 舞台适配跟随）
         SAVE: 'arcade:save',         // 大厅关闭覆盖层前下发进度快照指令（index.js 发、游戏页收）
+        SAVED: 'arcade:saved',       // 快照存档回执 ACK：子页写盘完成后回发，父页收到才摘除 iframe（snap-common.js 发、index.js 收）
         AUDIO: 'arcade:audio',       // 音控状态同步：静音开关 + 双通道档位（audio.js 收发）
         PLAYTIME: 'arcade:playtime', // 游玩时长增量上报（fx.js 发、index.js 收）
         FXLEVEL: 'arcade:fxlevel',   // 演出强度档位同步（fx.js 收发、audio.js 面板转发）
@@ -143,6 +145,20 @@ const Arcade = (() => {
     }
 
     /**
+     * 按前缀批量删键：移除所有以 prefix 开头的键（arcade_ach_* / arcade_save_* 等
+     * 前缀族键的批量清理入口，供「重置进度」类全量清除使用）；存储不可用时静默跳过。
+     * 注意：前缀必须逐字符精确匹配本站自有键命名契约，禁止用宽泛前缀误伤同源其它数据
+     * @param {string} prefix 键名前缀（逐字符精确匹配，非正则）
+     */
+    function removeByPrefix(prefix) {
+        let keys;
+        try { keys = Object.keys(localStorage); } catch (e) { return; } // 存储不可用：静默跳过
+        keys.filter(k => k.startsWith(prefix)).forEach(k => {
+            try { localStorage.removeItem(k); } catch (e) { /* 单键失败跳过，继续清理其余键 */ }
+        });
+    }
+
+    /**
      * 指针捕获守卫：setPointerCapture 在指针已释放（极快点按）、指针 id 失效或
      * 合成事件（如自动化测试派发的假 pointerId）场景下会抛 NotFoundError；
      * 捕获仅是"拖出画布仍跟踪指针"的体验增强，失败无副作用，
@@ -169,6 +185,10 @@ const Arcade = (() => {
      *   点击时序中最先执行，返回 false 则本次点击整体忽略（不 blur/不高亮/不存档/不发声/
      *   不 onChange），供游戏复刻"未知键名或重复选择直接忽略"类前置守卫；缺省无守卫。
      *   仅约束点击路径——sync 程序化恢复不经过守卫（恢复点由游戏侧外层校验把关）
+     * @param {Function} [o.lockedDuringPlay] 对局锁定守卫 ()=>boolean：返回 true 表示对局
+     *   进行中，点击整体忽略（短路语义同 canPick），供游戏声明式禁掉对局中切难度——
+     *   难度参数（速度/倍率/尺寸等）直接影响对局公平性，局中切换会产生作弊面；
+     *   sync 程序化恢复（快照续玩）不受限；缺省不锁定
      * @param {string} [o.activeClass='active'] 高亮类
      * @returns {{sync: Function}} sync(value)：程序化选择（快照恢复/初始化用），按序号或键名
      *   定位按钮→高亮→onChange；不写存档、不发声、不 blur；越界/未知值静默忽略
@@ -200,6 +220,8 @@ const Arcade = (() => {
                 const idx = buttons.indexOf(btn);
                 const key = persist === 'data-diff' ? btn.dataset.diff : null;
                 if (typeof o.canPick === 'function' && !o.canPick(btn, idx, key)) return;
+                // 对局锁定守卫：对局进行中禁切难度（声明式，短路语义同 canPick，缺省不锁定）
+                if (typeof o.lockedDuringPlay === 'function' && o.lockedDuringPlay()) return;
                 if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
                 activate(btn);
                 // 持久化所选难度：index 模式存序号裸串（兼容历史存档格式），data-diff 模式存键名
@@ -228,6 +250,9 @@ const Arcade = (() => {
         };
     }
 
-    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons };
+    // 系统级「减少动态效果」偏好全站唯一探测点：各库/大厅读取本值，禁止各自重复探测
+    const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION };
 })();
 window.Arcade = Arcade;
