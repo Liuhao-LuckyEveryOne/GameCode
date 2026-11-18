@@ -1074,14 +1074,15 @@ async function s20_achEventRender() {
         sfx: { unlock: () => {}, ui: () => {} },
     });
     ok(typeof Ach.renderWall === 'function' && typeof Ach.unlock === 'function', 'Ach.init 后实例 API 未合并到 window.Ach');
-    const cards = () => nodes[1].querySelectorAll('.ach-card');
-    const fill = (i) => nodes[1].querySelectorAll('.ach-prog-fill')[i].style.width;
+    // Wave2 起库内自建整墙（mount 仅 wall 必传、传入 grid 等引用被回填覆盖），渲染产物断言改从 wall 子树查询
+    const cards = () => nodes[0].querySelectorAll('.ach-card');
+    const fill = (i) => nodes[0].querySelectorAll('.ach-prog-fill')[i].style.width;
     const isLocked = (i) => /\blocked\b/.test(cards()[i].className); // 词边界区分 locked / unlocked（后者含前者子串）
     api.renderWall();
 
     // 初始渲染：三卡齐全 + NaN/undefined 零出现（修复前事件卡渲染 NaN/undefined + width:NaN% 假满）
     ok(cards().length === 3, '成就卡数量不符（期望 3，实际 ' + cards().length + '）');
-    const html0 = nodes[1].innerHTML;
+    const html0 = nodes[0].innerHTML;
     ok(!html0.includes('NaN') && !html0.includes('undefined'), '渲染产物含 NaN/undefined（hasProg 兜底失效）');
     ok(html0.includes('事件达成'), '事件型卡未按「事件达成」标注进度文案');
     ok(isLocked(0) && fill(0) === '0%', '锁定事件卡应为锁定态且进度条 0%（实际 ' + fill(0) + '）');
