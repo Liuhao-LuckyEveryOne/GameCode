@@ -368,6 +368,7 @@
         window.addEventListener('keydown', (ev) => {
             const isV = ev.code === 'KeyV' || ev.key === 'v' || ev.key === 'V';
             if (isV) {
+                if (ev.repeat) return; // 防长按连发：系统按键重复率下反复切换成就墙开合
                 // canOpen 守卫缺省恒可开；游戏以回调表达原分支条件（如仅暂停/进行中放行）
                 if (!opts.canOpen || opts.canOpen()) {
                     ev.preventDefault();

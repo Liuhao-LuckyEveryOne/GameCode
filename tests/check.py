@@ -1064,7 +1064,7 @@ def check_lobby_defs_problems():
     return problems
 
 
-# ---------- 检查项 14：smoke.html 白盒面契约 ----------
+# ---------- 检查项 15：smoke.html 白盒面契约 ----------
 # S9~S15 七个 *Core 场景经 iframe.contentWindow 直调页内顶层函数断言核心逻辑
 # （经典脚本顶层 function 声明自动挂 window）。业务 js 重命名/删除这些函数时
 # 白盒断言要等冒烟运行期 TypeError 才变红——本项把「页内函数存在性」前移到静态期。

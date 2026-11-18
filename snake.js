@@ -850,6 +850,7 @@ function moveSnake() {
             return;
         }
     } else {
+        // 契约：pop 尾必须先于下方碰撞判定执行——蛇头移向原尾格（追尾）时尾已弹出，该格为空故不判死
         snake.pop();
     }
 
@@ -1201,7 +1202,7 @@ document.addEventListener('keydown', (event) => {
     if (!newDirection) return;
     event.preventDefault(); // 阻止方向键滚动页面
     if (event.repeat) return; // 防御：按住方向的系统重复键不再入队（队列同向去重已兜底，此处显式拦截语义更清晰）
-    if (isPaused || Ach.isOpen()) return; // 暂停（含切窗自动暂停）/ 成就墙打开期间蛇已冻结：不入队、不播转向音，与触屏手势通道守卫对齐
+    if (!isRunning || isPaused || Ach.isOpen() || isDying) return; // 未开始 / 暂停（含切窗自动暂停）/ 成就墙 / 死亡演出期间蛇不可操作：不入队、不播转向音，与触屏手势通道守卫对齐
     queueDirection(newDirection); // 压入预输入队列：拐双弯的两个意图分属两个 tick 依次生效
 });
 

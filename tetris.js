@@ -1110,7 +1110,7 @@ function draw() {
  * 更新 HUD 显示
  */
 function updateHud() {
-    Ach.trackRunStat('score', score); // 成就上报：单局得分（随 updateHud 调用汇合；无消行的普通硬降只加分不加调本函数，得分顺延至下一次任意调用才上报）
+    Ach.trackRunStat('score', score); // 成就上报：单局得分（随 updateHud 调用汇合；硬降得分也经 hardDrop 内 updateHud 即时上报，无漏报）
     FX.tweenNumber(scoreEl, score, 128); // 分数滚动补间：从当前显示值平滑滚到新值（reduced-motion 自动降级直写）
     levelEl.textContent = level;
     linesEl.textContent = totalLines;
@@ -1149,8 +1149,8 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
     storageKey: DIFFICULTY_KEY,
     persist: 'index',
     onChange: (btn) => {
-        dropBase = parseInt(btn.dataset.drop);
-        scoreMult = parseInt(btn.dataset.mult);
+        dropBase = parseInt(btn.dataset.drop, 10);
+        scoreMult = parseInt(btn.dataset.mult, 10);
         // 无敌模式开关：按钮带 data-invincible="1" 即无敌档，其余档位无此属性视为关闭
         invincibleMode = btn.dataset.invincible === '1';
     }
@@ -1246,7 +1246,7 @@ function gameOver() {
     const isRecord = score > highScore;
     if (isRecord) {
         highScore = score;
-        Arcade.saveRaw('tetrisHighScore', highScore); // 存储不可用时静默，不中断结算面板
+        Arcade.saveRaw('tetrisHighScore', String(highScore)); // 与全站其它游戏统一存字符串（存储不可用时静默，不中断结算面板）
         updateHud();
         SFX.newRecord();  // 破纪录音效
         FX.recordBurst(); // 破纪录全屏金色烟花（内置减弱动效降级）

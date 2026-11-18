@@ -10,10 +10,10 @@
   "klotski.js": "ddd1f1e942d3aa12105140fbf9f68e6f4bb2848f",
   "pac.js": "bd3f119298f04d3885369d6d675d23fa31ddf2fe",
   "pinball.js": "64946a3695ee8201674c9380c7d31beb60648f1b",
-  "snake.js": "0b5cee9422ed7f91759eeee2fa7803435cab2d76",
-  "tetris.js": "4d1d6abe294fc9c549561df9314c57282371b6fe",
+  "snake.js": "036e738ef7a35d262094ce3857a3dd726a992d92",
+  "tetris.js": "a17b0eb0bc55b8d7c5cda99e1691dc942e07c9f6",
   "arcade-common.js": "321ede80f2fcad4d40ba0b47eb41763da3429186",
-  "ach-common.js": "90b13191b440086955c7276271e35fed39ead3fb",
+  "ach-common.js": "64c585433a3dad93e39d9fe3f0bb8c25936f9cf2",
   "snap-common.js": "429efb1c8bb3c474f05d24244605bc3ecd44284b",
   "pause-common.js": "194d0f7ed0daec6bebf8d0e6fe118d1e24247a59"
 }
