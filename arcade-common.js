@@ -6,7 +6,8 @@
  *         两族均降级兜底；JSON 族写失败/读损坏同键仅告警一次，精细读用 loadJSONState；
  *         全站 localStorage 直接调用收口于本文件，业务代码禁止绕过）
  * 职责三：指针捕获守卫（setPointerCapture 对已释放/合成指针抛 NotFoundError 的统一兜底）
- * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer }
+ * 职责四：通用难度按钮组绑定（bindDifficultyButtons，收编七游戏 selectDifficulty 同构实现）
+ * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons }
  * ========================================================================== */
 const Arcade = (() => {
     'use strict';
@@ -153,6 +154,80 @@ const Arcade = (() => {
         try { el.setPointerCapture(pointerId); } catch (e) { /* 无活动指针：忽略 */ }
     }
 
-    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer };
+    /**
+     * 通用难度按钮组绑定：收编七游戏 selectDifficulty 的同构实现，统一点击时序
+     * （blur 防空格误触 → 清全部高亮/点亮当前 → saveRaw 持久化 → SFX 点击音 → onChange）
+     * @param {Object} o 参数
+     * @param {string|Element} o.bar 按钮组容器（选择器或元素）
+     * @param {string} [o.btnSelector='.difficulty-btn'] 按钮选择器
+     * @param {string} o.storageKey 存档键（经 Arcade.saveRaw 持久化）
+     * @param {'index'|'data-diff'} [o.persist='index'] 'index' 存按钮序号（tetris/snake 现状）；
+     *   'data-diff' 存 btn.dataset.diff 键名（1024 现状）
+     * @param {Function} o.onChange 选中回调（含恢复路径）：(btn, idx, key)=>void，游戏读自身
+     *   data-* 写自家难度变量；idx 为按钮序号，key 为 data-diff 键名（data-diff 模式）否则 null
+     * @param {Function} [o.canPick] 点击守卫 (btn, idx, key)=>boolean，idx/key 定义同 onChange：
+     *   点击时序中最先执行，返回 false 则本次点击整体忽略（不 blur/不高亮/不存档/不发声/
+     *   不 onChange），供游戏复刻"未知键名或重复选择直接忽略"类前置守卫；缺省无守卫。
+     *   仅约束点击路径——sync 程序化恢复不经过守卫（恢复点由游戏侧外层校验把关）
+     * @param {string} [o.activeClass='active'] 高亮类
+     * @returns {{sync: Function}} sync(value)：程序化选择（快照恢复/初始化用），按序号或键名
+     *   定位按钮→高亮→onChange；不写存档、不发声、不 blur；越界/未知值静默忽略
+     */
+    function bindDifficultyButtons(o) {
+        if (!o || !o.bar || !o.storageKey || typeof o.onChange !== 'function') {
+            throw new Error('[Arcade] bindDifficultyButtons 缺少必传参数：bar / storageKey / onChange');
+        }
+        const persist = o.persist || 'index';
+        const activeClass = o.activeClass || 'active';
+        const btnSelector = o.btnSelector || '.difficulty-btn';
+        const bar = typeof o.bar === 'string' ? document.querySelector(o.bar) : o.bar;
+        if (!bar) throw new Error('[Arcade] bindDifficultyButtons 未找到按钮组容器: ' + o.bar);
+        const buttons = Array.from(bar.querySelectorAll(btnSelector));
+
+        /** 高亮指定按钮并回调 onChange（供点击与 sync 共用；落盘/发声/blur 由调用方差异化） */
+        function activate(btn) {
+            const idx = buttons.indexOf(btn);
+            const key = persist === 'data-diff' ? btn.dataset.diff : null;
+            buttons.forEach(b => b.classList.remove(activeClass));
+            btn.classList.add(activeClass);
+            o.onChange(btn, idx, key);
+        }
+
+        // 逐钮绑定点击：完整收编 tetris 行为（含 blur），snake 缺失的 blur 在此补齐；
+        // canPick 守卫最先执行（缺省跳过），拒绝时整条时序短路，等同未点击
+        buttons.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = buttons.indexOf(btn);
+                const key = persist === 'data-diff' ? btn.dataset.diff : null;
+                if (typeof o.canPick === 'function' && !o.canPick(btn, idx, key)) return;
+                if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+                activate(btn);
+                // 持久化所选难度：index 模式存序号裸串（兼容历史存档格式），data-diff 模式存键名
+                saveRaw(o.storageKey, persist === 'data-diff' ? key : String(idx));
+                // SFX 由 audio.js 先于业务 js 加载，点击期必然已就绪，直接调用
+                SFX.uiClick();
+            });
+        });
+
+        return {
+            /**
+             * 程序化选择：index 模式按序号（number 或数字串）定位，data-diff 模式按键名匹配
+             * btn.dataset.diff；越界/未知值静默忽略，不写存档、不发声、不 blur
+             * @param {number|string} value 序号或 data-diff 键名
+             */
+            sync(value) {
+                let target = null;
+                if (persist === 'index') {
+                    const idx = typeof value === 'number' ? value : parseInt(value, 10);
+                    if (Number.isInteger(idx) && idx >= 0 && idx < buttons.length) target = buttons[idx];
+                } else {
+                    target = buttons.find(b => b.dataset.diff === value) || null;
+                }
+                if (target) activate(target);
+            }
+        };
+    }
+
+    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons };
 })();
 window.Arcade = Arcade;

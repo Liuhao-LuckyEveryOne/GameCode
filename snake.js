@@ -50,7 +50,7 @@ let score = 0;
 let gridSize = 25;
 /** 蛇移动间隔（毫秒），由难度基准速度随进食提速递进：无敌/简单 200 / 中等 150 / 困难 100 */
 let gameSpeed = 150;
-/** 当前难度的基准移动间隔（毫秒）：速度递进的起点，selectDifficulty 时记录 */
+/** 当前难度的基准移动间隔（毫秒）：速度递进的起点，bindDifficultyButtons 选中难度时记录 */
 let baseSpeed = 150;
 /** 每吃多少个食物提速一档 */
 const SPEED_STEP = 5;
@@ -281,11 +281,10 @@ function checkRunAchievements() {
 
 /* ===================== CRT 全屏音 ===================== */
 
-// 进入/退出全屏时播放 CRT 开关机音（与 fullscreen.js 的全屏按钮联动）
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
+// 全屏状态真实翻转时播 CRT 开关机音：本地 fullscreenchange 与 iframe 嵌入模式
+// arcade:fs 广播两路径已收口共享库 fullscreen.js（含首条广播静默校准），此处仅注入
+// SFX 调用；嵌入模式此前无 CRT 音，统一后与 tetris 对齐（首条广播静默，翻转才发声）
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 /* ===================== 核心逻辑 ===================== */
 
@@ -906,22 +905,21 @@ function isCollision(head) {
 
 /* ===================== 交互与流程控制 ===================== */
 
-/**
- * 选择难度：切换按钮高亮，并从按钮 data 属性读取移动速度、食物得分与无敌模式标记
- * @param {HTMLButtonElement} btn 被点击的难度按钮（data-speed / data-points / data-invincible）
- */
-function selectDifficulty(btn) {
-    document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    gameSpeed = parseInt(btn.dataset.speed, 10);
-    baseSpeed = gameSpeed; // 记录难度基准速度，作为进食提速递进的起点
-    foodPoints = parseInt(btn.dataset.points, 10);
-    // 仅"无敌"难度（data-invincible="1"）开启无敌模式：撞墙环绕、撞自身穿过；其余难度一律关闭
-    invincibleMode = btn.dataset.invincible === '1';
-    // 持久化所选难度（按钮组中的序号），供下次加载时恢复
-    Arcade.saveRaw(DIFFICULTY_KEY, String([...document.querySelectorAll('.difficulty-btn')].indexOf(btn))); // 存储不可用时静默跳过，持久化失败不影响难度切换
-    SFX.uiClick();
-}
+/* 难度按钮组点击时序收口共享库 bindDifficultyButtons：blur 防空格误触（snake 原缺失，
+ * 随库补齐）→ 清全部高亮/点亮当前 → saveRaw 持久化序号（index 模式）→ SFX 点击音 →
+ * onChange，全序列在库内 click 监听完成；游戏侧仅在 onChange 读按钮 data-* 写自家难度变量 */
+const difficultyCtl = Arcade.bindDifficultyButtons({
+    bar: document.getElementById('difficultySelect'),
+    storageKey: DIFFICULTY_KEY,
+    persist: 'index',
+    onChange: (btn) => {
+        gameSpeed = parseInt(btn.dataset.speed, 10);
+        baseSpeed = gameSpeed; // 记录难度基准速度，作为进食提速递进的起点
+        foodPoints = parseInt(btn.dataset.points, 10);
+        // 仅"无敌"难度（data-invincible="1"）开启无敌模式：撞墙环绕、撞自身穿过；其余难度一律关闭
+        invincibleMode = btn.dataset.invincible === '1';
+    }
+});
 
 /* 暂停引擎收口共享库 pause-common.js：守卫/遮罩/BGM/音效序列在库内统一，
  * 游戏侧只注入差异件（守卫、落点、恢复补起播曲名） */
@@ -1085,7 +1083,9 @@ function validateSnakeSnapshot(snap) {
  * @returns {boolean} 恒返回 true（应用即成功，无二次失败路径）
  */
 function applySnakeSnapshot(snap) {
-    selectDifficulty(document.querySelectorAll('.difficulty-btn')[snap.diff]); // 恢复难度档（基准速度/食物得分/无敌模式 + 按钮高亮；加载期 uiClick 无声无害）
+    // 恢复难度档（基准速度/食物得分/无敌模式 + 按钮高亮）；sync 为程序化路径，不存档不发声，
+    // 快照恢复点无需重复持久化（validate 已确保 diff 为有效序号）
+    difficultyCtl.sync(snap.diff);
     snake = snap.snake.map(s => ({ x: s.x, y: s.y })); // 逐节拷贝，与快照对象隔离
     prevSnake = snake.slice(); // 插值基准与当前位置重合，恢复首帧不做插值滑动
     direction = snap.dir;
@@ -1274,12 +1274,10 @@ function handleFocusLoss() {
 // 失焦/切后台双通道接线收口于 snap-common.js（blur + visibilitychange hidden 共用同一清理函数）
 Snap.bindFocusLoss(handleFocusLoss);
 
-// 暂停遮罩点击恢复：点遮罩空白处续玩，与键盘空格等效；
-// 失焦自动暂停与快照续玩等待确认共用同一遮罩，点击同样适用
-pauseScreen.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('button, a')) return; // 遮罩内可交互元素（返回链接等）走自身默认行为，不误触发恢复
-    if (isRunning && !isDying && isPaused) togglePause();
-});
+// 暂停遮罩点击恢复：点遮罩空白处续玩，与键盘空格等效；失焦自动暂停与快照续玩
+// 等待确认共用同一遮罩，点击同样适用。统一收口 pause-common.js（resume 自带 isPaused
+// 幂等守卫；蛇的暂停态恒满足运行中且非死亡演出，遮罩内无按钮/链接，无需 exclude）
+Pause.bindOverlayResume(pausePipe, { overlay: pauseScreen });
 
 /* ---------- 进度镜像快照：两处保存触发点 ---------- */
 
@@ -1352,20 +1350,17 @@ function renderLoop(now) {
     loopWaiting = true; // 本帧收尾：标记下一帧已预约（后台节流挂起期间保持 true）
 }
 
-// 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2；无敌 0 / 简单 1 / 中等 2 / 困难 3；
-// 加载时 AudioContext 尚未激活，selectDifficulty 中的 uiClick 无声，无害）
+// 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2；无敌 0 / 简单 1 / 中等 2 / 困难 3）；
+// sync 为程序化恢复路径（高亮+onChange，不存档不发声），越界序号由 sync 内静默忽略
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 转 NaN），走默认难度
 let savedDifficultyIndex = NaN;
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10);
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
-    const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-    if (savedDifficultyBtn) {
-        // try/catch 兜底：此调用发生在渲染循环启动之前，一旦抛错（如旧缓存 audio.js 缺
-        // SFX.uiClick）整个初始化链中断——rAF 与看门狗都不会注册，画布永久白屏无自愈机会
-        try {
-            selectDifficulty(savedDifficultyBtn);
-        } catch (e) { /* 难度状态已就位仅缺一声点击音：静默继续初始化 */ }
-    }
+    // try/catch 兜底：此调用发生在渲染循环启动之前，一旦抛错整个初始化链中断
+    // ——rAF 与看门狗都不会注册，画布永久白屏无自愈机会
+    try {
+        difficultyCtl.sync(savedDifficultyIndex);
+    } catch (e) { /* 难度状态已就位：静默继续初始化 */ }
 }
 
 // ---------- 每日挑战（2026-11-04 新增）：按当日日期生成目标长度，达成后当日落盘 ----------

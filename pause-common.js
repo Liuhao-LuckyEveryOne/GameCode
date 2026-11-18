@@ -13,6 +13,8 @@
  * 三个入口的音效策略与既有行为逐一对齐：toggle 手动切换有声（键盘/遮罩点击/
  * 有声失焦共用的主干）；autoPause 静默自动暂停（klotski/bee 失焦 historically
  * 无声，其余五家失焦走有声 toggle）；resume 仅恢复（bee 点击/按键恢复专用）。
+ * 另提供 bindOverlayResume 统一收编"遮罩按下即恢复"两套分叉实现（klotski 遮罩
+ * pointerdown / bee document 级 mousedown 排除 button,a）。
  *
  * 分层：装载期零依赖（先于业务 js 加载，加载序由 tests/check.py 检查项 3 守护）；
  *       调用期仅依赖 audio.js 的 SFX（BGM 与音效）；游戏状态经钩子注入，本库
@@ -96,7 +98,45 @@
         };
     }
 
+    /**
+     * 遮罩按下即恢复的统一绑定：收编两套已分叉的实现——klotski 在遮罩元素上监听
+     * pointerdown（精准命中面板外区域），bee 在 document 级监听 mousedown 并排除
+     * button/a（触屏无 hover，按下即恢复更跟手）。库内 resume 自带 isPaused 幂等，
+     * handler 直接调用即可，无需外层重复判态。
+     * @param {Object} engine Pause.create 返回的引擎（调用其 resume）
+     * @param {{
+     *   overlay: (Element|undefined),
+     *   target: ('overlay'|'document'|undefined),
+     *   exclude: (string|undefined)
+     * }} o 绑定选项：overlay 遮罩元素（target='overlay' 时必传）/ target 监听目标——
+     *   'overlay' 在遮罩元素上监听 pointerdown（klotski 模式，默认），'document' 在
+     *   document 级监听 mousedown（bee 模式）/ exclude 仅 target='document' 时生效，
+     *   e.target.closest(o.exclude) 命中则忽略（默认 'button, a'）
+     * @throws {Error} engine 缺失或缺 resume，或 target='overlay' 未传 overlay
+     */
+    function bindOverlayResume(engine, o) {
+        if (!engine || typeof engine.resume !== 'function') {
+            throw new Error('Pause.bindOverlayResume 参数缺失（engine 及其 resume 必传）');
+        }
+        o = o || {};
+        const target = o.target || 'overlay';
+        if (target === 'overlay') {
+            if (!o.overlay) {
+                throw new Error('Pause.bindOverlayResume 参数缺失（target=overlay 时 overlay 必传）');
+            }
+            // klotski 模式：仅在遮罩上按下才恢复，游戏区域不受影响
+            o.overlay.addEventListener('pointerdown', () => engine.resume());
+        } else {
+            // bee 模式：document 级按下即恢复，按钮/链接点击除外（closest 命中说明目标是控件）
+            const exclude = o.exclude || 'button, a';
+            document.addEventListener('mousedown', (e) => {
+                if (e.target.closest && e.target.closest(exclude)) return;
+                engine.resume();
+            });
+        }
+    }
+
     /* ---------------------------- 导出 ---------------------------- */
 
-    window.Pause = { create: create };
+    window.Pause = { create: create, bindOverlayResume: bindOverlayResume };
 })();

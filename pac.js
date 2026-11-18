@@ -983,23 +983,20 @@ const pausePipe = Pause.create({
  */
 function togglePause() { pausePipe.toggle(); } // 键盘 P/空格、遮罩点击、失焦调用点保持原名直调
 
-/**
- * 选择难度：读取按钮上的惊惧时长、幽灵速度、分数倍率与无敌标记并持久化选择
- * @param {HTMLButtonElement} btn 被点击的难度按钮
- */
-function selectDifficulty(btn) {
-    btn.blur(); // 移除焦点，防止空格误触按钮
-    document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    frightDur = parseFloat(btn.dataset.fright);
-    ghBase = parseFloat(btn.dataset.ghspeed);
-    scoreMult = parseInt(btn.dataset.mult, 10);
-    // 无敌难度按钮携带 data-invincible="1"，据此切换无敌开关（其余难度无该属性，恢复为 false）
-    invincibleMode = btn.dataset.invincible === '1';
-    // 持久化所选难度（按钮组中的序号），供下次加载时恢复；存储不可用时静默跳过，保证后续 uiClick 音效正常
-    Arcade.saveRaw(DIFFICULTY_KEY, String([...document.querySelectorAll('.difficulty-btn')].indexOf(btn))); // 存储不可用（隐私模式/禁用站点数据）：静默忽略
-    SFX.uiClick();
-}
+/* 难度按钮收编共享库：blur→高亮→持久化（序号裸串）→点击音→onChange 统一时序，
+ * onChange 读取按钮上的惊惧时长、幽灵速度、分数倍率与无敌标记写入游戏参数 */
+const diffCtl = Arcade.bindDifficultyButtons({
+    bar: document,
+    storageKey: DIFFICULTY_KEY,
+    persist: 'index',
+    onChange(btn) {
+        frightDur = parseFloat(btn.dataset.fright);
+        ghBase = parseFloat(btn.dataset.ghspeed);
+        scoreMult = parseInt(btn.dataset.mult, 10);
+        // 无敌难度按钮携带 data-invincible="1"，据此切换无敌开关（其余难度无该属性，恢复为 false）
+        invincibleMode = btn.dataset.invincible === '1';
+    }
+});
 
 /**
  * 累加分数并同步内存中的最高分（HUD 显示由每帧渲染统一刷新）；
@@ -1767,21 +1764,10 @@ function checkFruitSpawn() {
 
 /* ===================== CRT 全屏音 ===================== */
 
-// CRT 开关机音：本页独立打开时监听全屏切换；嵌入模式（iframe）中
-// fullscreenchange 不穿越文档边界，改由父页大厅广播 arcade:fs 消息驱动
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
-Arcade.onTrustedMessage(e => {
-    const d = e.data;
-    if (!d) return;
-    if (d.type === Arcade.MSG.FS) {
-        if (d.fs) SFX.crtOn();
-        else SFX.crtOff();
-    }
-});
+// CRT 开关机音收口共享库 fullscreen.js（FS.onCrtAudio）：独立打开的 fullscreenchange
+// 与 iframe 嵌入的 arcade:fs 广播两条路径在库内统一分发——仅真实翻转时发声，首条嵌入
+// 广播（hello 回复的现状同步）静默校准不发声，嵌入页开场不再误响开机音
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 /* ===================== 进度快照触发点 ===================== */
 
@@ -1879,14 +1865,12 @@ canvas.addEventListener('pointermove', e => {
 canvas.addEventListener('pointerup', endSwipe); // 松手结束手势（capture 保证必送达画布）
 canvas.addEventListener('pointercancel', endSwipe); // 系统接管指针（如来电/系统手势）时兜底终止
 
-// 暂停遮罩点击恢复：面板悬浮于画布之上会拦截 pointerdown（不再落到画布滑动手势监听），
-// 点击面板空白处即恢复（空格/失焦自动暂停弹出的遮罩共用同一 DOM，同样适用）；
-// 点在遮罩内按钮/链接上只操作 UI 不恢复——本页遮罩现无按钮/链接，防御性保留（与 bee.js 先例一致），
-// 防止未来加入口后暂停中先误恢复运行、快照存成运行态再退出
-pauseScreen.addEventListener('pointerdown', e => {
-    if (e.target.closest('button, a')) return; // 按钮/链接交给自身逻辑，不作为恢复输入
-    togglePause(); // 恢复并撤下遮罩（BGM 续播、恢复音、提示行清理均走 togglePause 分支）
-});
+// 暂停遮罩按下即恢复收口共享库（Pause.bindOverlayResume，overlay 模式）：面板悬浮于
+// 画布之上会拦截 pointerdown（不再落到画布滑动手势监听），点击面板空白处即恢复
+// （空格/失焦自动暂停弹出的遮罩共用同一 DOM，同样适用；BGM 续播、恢复音、提示行
+// 清理走库内 resume 序列；库内自带 isPaused 幂等，无需外层判态。
+// 本页遮罩内现无按钮/链接控件，无需排除逻辑）
+Pause.bindOverlayResume(pausePipe, { overlay: pauseScreen, target: 'overlay' });
 
 /**
  * 失焦/切后台兜底：清理进行中的滑动手势并自动暂停，避免切窗口后回来暴毙
@@ -1927,13 +1911,12 @@ function loop(now) {
 /* ===================== 初始化 ===================== */
 
 // 难度恢复：页面加载时保持与上一次选择一致（按钮序号：0 无敌 / 1 简单 / 2 中等 / 3 困难，
-// 默认中等即序号 2；加载时 AudioContext 尚未激活，selectDifficulty 中的 uiClick 无声，无害）
+// 默认中等即序号 2）；sync 程序化选择不存档不发声，越界序号静默忽略
 let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
-        const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-        if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+        diffCtl.sync(savedDifficultyIndex);
     } catch (e) {
         // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（续玩恢复与循环启动全部跳过）
         console.warn('[pac] 难度恢复异常（已回退默认难度）:', e);

@@ -970,25 +970,22 @@ function launch(power = 0.35) {
     state = 'play';
 }
 
-/**
- * 选择难度：切换按钮高亮，并从按钮 data 属性读取重力 / 挡板长度 / 计分倍率 / 无敌标记，
- * 立即重建挡板长度与侧栏倍率显示
- * @param {HTMLButtonElement} btn 被点击的难度按钮（data-gravity / data-flip / data-mult / data-invincible）
- */
-function selectDifficulty(btn) {
-    btn.blur(); // 移除焦点，防止空格误触按钮
-    document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    gravity = parseFloat(btn.dataset.gravity);
-    flipperLen = parseFloat(btn.dataset.flip);
-    mult = parseInt(btn.dataset.mult, 10);
-    invincibleMode = btn.dataset.invincible === '1'; // 仅"无敌"按钮带 data-invincible="1"，落底不丢球换新球
-    multElement.textContent = '×' + mult;
-    rebuildFlippers();
-    // 持久化所选难度（按钮组中的序号），供下次加载时恢复；存储不可用时静默跳过，保证后续 uiClick 音效正常
-    Arcade.saveRaw(DIFFICULTY_KEY, String([...document.querySelectorAll('.difficulty-btn')].indexOf(btn))); // 存储不可用（隐私模式/禁用站点数据）：静默忽略
-    SFX.uiClick();
-}
+/* 难度按钮收编共享库：blur→高亮→持久化（序号裸串）→点击音→onChange 统一时序，
+ * onChange 从按钮 data 属性（data-gravity / data-flip / data-mult / data-invincible）
+ * 读取重力 / 挡板长度 / 计分倍率 / 无敌标记，立即重建挡板长度与侧栏倍率显示 */
+const diffCtl = Arcade.bindDifficultyButtons({
+    bar: document,
+    storageKey: DIFFICULTY_KEY,
+    persist: 'index',
+    onChange(btn) {
+        gravity = parseFloat(btn.dataset.gravity);
+        flipperLen = parseFloat(btn.dataset.flip);
+        mult = parseInt(btn.dataset.mult, 10);
+        invincibleMode = btn.dataset.invincible === '1'; // 仅"无敌"按钮带 data-invincible="1"，落底不丢球换新球
+        multElement.textContent = '×' + mult;
+        rebuildFlippers();
+    }
+});
 
 /**
  * 按当前难度重建挡板长度（角度复位到收拢位）
@@ -2067,14 +2064,12 @@ canvas.addEventListener('pointerdown', handleZoneDown);
 canvas.addEventListener('pointerup', handleZoneUp);
 canvas.addEventListener('pointercancel', handleZoneUp);
 
-// 暂停遮罩点击恢复：面板悬浮于画布之上会拦截 pointerdown（不再落到画布分区监听），
-// 点击面板空白处即恢复（空格/失焦自动暂停弹出的遮罩共用同一 DOM，同样适用）；
-// 点在遮罩内按钮/链接上（如返回大厅）只操作 UI 不恢复——与 bee.js 先例一致，
-// 防止暂停中点链接先误恢复运行、快照存成运行态再退出
-pauseScreen.addEventListener('pointerdown', e => {
-    if (e.target.closest('button, a')) return; // 按钮/链接交给自身逻辑，不作为恢复输入
-    togglePause(); // 恢复并撤下遮罩（BGM 续播、恢复音、提示行清理均走 togglePause 分支）
-});
+// 暂停遮罩按下即恢复收口共享库（Pause.bindOverlayResume，overlay 模式）：面板悬浮于
+// 画布之上会拦截 pointerdown（不再落到画布分区监听），点击面板空白处即恢复
+// （空格/失焦自动暂停弹出的遮罩共用同一 DOM，同样适用；BGM 续播、恢复音、提示行
+// 清理走库内 resume 序列；库内自带 isPaused 幂等，无需外层判态。
+// 本页遮罩内现无按钮/链接控件，无需排除逻辑）
+Pause.bindOverlayResume(pausePipe, { overlay: pauseScreen, target: 'overlay' });
 
 /**
  * 失焦/切后台兜底：取消未完成的蓄力并清理挡板/触屏按下态后自动暂停，
@@ -2095,15 +2090,14 @@ Snap.bindFocusLoss(handleFocusLoss);
 /* ===================== 初始化 ===================== */
 
 // 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2；
-// 按钮序号：无敌 0 / 简单 1 / 中等 2 / 困难 3，存档记录的即该序号；
-// 加载时 AudioContext 尚未激活，selectDifficulty 中的 uiClick 无声，无害；
-// 恢复会触发 rebuildFlippers 重建挡板与侧栏倍率刷新，加载时机安全）
+// 按钮序号：无敌 0 / 简单 1 / 中等 2 / 困难 3，存档记录的即该序号）；
+// sync 程序化选择不存档不发声、越界序号静默忽略，onChange 内含
+// rebuildFlippers 重建挡板与侧栏倍率刷新，加载时机安全
 let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
-        const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-        if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+        diffCtl.sync(savedDifficultyIndex);
     } catch (e) {
         // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（快照恢复与循环启动全部跳过）
         console.warn('[pinball] 难度恢复异常（已回退默认难度）:', e);
@@ -2121,30 +2115,10 @@ drawBalls();
 // 失败或无快照则维持默认新局（开始遮罩 + 初始待发射球）不变
 restoreSnapshot();
 
-// ---------- CRT 开关机音效双监听：覆盖独立打开与 iframe 嵌入两条全屏路径 ----------
-let embedFsLast = null; // iframe 嵌入模式下最近一次全屏状态（null = 尚未同步，首条消息静默）
-
-// 独立打开模式：监听文档全屏切换，进全屏播开机音、退出播关机音
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
-
-// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
-Arcade.onTrustedMessage(e => {
-    const d = e.data;
-    if (!d || typeof d !== 'object') return;
-    if (d.type === Arcade.MSG.FS) {
-        const fs = !!d.fs;
-        // 沿检测：仅状态翻转时发声；首条消息（embedFsLast 为 null）仅静默同步状态
-        if (embedFsLast !== null && fs !== embedFsLast) {
-            if (fs) SFX.crtOn();
-            else SFX.crtOff();
-        }
-        embedFsLast = fs;
-    }
-});
+// CRT 开关机音收口共享库 fullscreen.js（FS.onCrtAudio）：独立打开的 fullscreenchange
+// 与 iframe 嵌入的 arcade:fs 广播两条路径在库内统一分发——仅真实翻转时发声，首条嵌入
+// 广播（hello 回复的现状同步）静默校准不发声（替代原 embedFsLast 手工沿检测）
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 // 窗口尺寸变化：按最新 DPR 重建画布物理分辨率并同步 viewDpr（FX.setupCanvas 重复调用安全）
 window.addEventListener('resize', () => {

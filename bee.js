@@ -247,26 +247,6 @@ if (!DIFFICULTIES[difficulty]) difficulty = 'normal';
 /** 当前难度的参数配置（各处计算经它取乘数，避免散落硬编码） */
 let diffCfg = DIFFICULTIES[difficulty];
 
-/**
- * 切换难度：校验合法性后持久化存档、同步按钮选中态并刷新开始画面生命显示
- * @param {string} key 目标难度 key（invincible/easy/normal/hard）
- */
-function setDifficulty(key) {
-    // 非法 key 或与当前相同则忽略，避免无意义重绘
-    if (!DIFFICULTIES[key] || key === difficulty) return;
-    difficulty = key;
-    diffCfg = DIFFICULTIES[key];
-    // 隐私模式等存储不可用时静默跳过，不影响本次对局难度生效
-    Arcade.saveRaw(DIFFICULTY_KEY, key);
-    // 同步开始画面按钮选中态
-    for (const btn of difficultyButtons) {
-        btn.classList.toggle('selected', btn.dataset.diff === key);
-    }
-    // 刷新开始画面静态生命显示
-    livesElement.textContent = `LIVES ${diffCfg.lives}`;
-    SFX.uiClick();
-}
-
 /* ===================== 游戏状态 ===================== */
 
 /** 当前分数 */
@@ -579,16 +559,29 @@ const finalWaveElement = document.getElementById('finalWave');
 const newRecordElement = document.getElementById('newRecord');
 /** 结算面板评级元素（S/A/B/C，HTML 中内联 display:none，显示时由 JS 置 block） */
 const finalRankElement = document.getElementById('finalRank');
-/** 难度选择按钮组（开始画面四档，data-diff 标识难度） */
-const difficultyButtons = document.querySelectorAll('.diff-btn');
+// 难度按钮组绑定收口共享库（Arcade.bindDifficultyButtons）：点击时序统一下沉
+// （blur 防空格误触 → 高亮 → 存档 → 点击音 → 回调），canPick 复刻原「非法 key 或
+// 重复选择直接忽略」前置守卫（整条时序短路，不存档不发声）
+/** 难度选择按钮组控制器（绑定与程序化恢复，由 Arcade.bindDifficultyButtons 产出） */
+const diffCtl = Arcade.bindDifficultyButtons({
+    bar: document,
+    btnSelector: '.diff-btn',
+    storageKey: DIFFICULTY_KEY,
+    persist: 'data-diff',
+    activeClass: 'selected', // 本页按钮高亮类与默认 'active' 不同
+    canPick: (_btn, _idx, key) => !!DIFFICULTIES[key] && key !== difficulty,
+    onChange(_btn, _idx, key) {
+        difficulty = key;
+        diffCfg = DIFFICULTIES[key];
+        // 刷新开始画面静态生命显示
+        livesElement.textContent = `LIVES ${diffCfg.lives}`;
+    }
+});
 
 // 页面加载即恢复上次最高分显示
 highScoreElement.textContent = `HI ${highScore}`;
-// 恢复存档难度的按钮选中态，并绑定点击切换
-for (const btn of difficultyButtons) {
-    btn.classList.toggle('selected', btn.dataset.diff === difficulty);
-    btn.addEventListener('click', () => setDifficulty(btn.dataset.diff));
-}
+// 恢复存档难度的按钮选中态（程序化选择：不存档不发声；非法值已在难度区回退 normal）
+diffCtl.sync(difficulty);
 // 按当前难度刷新开始画面静态生命显示
 livesElement.textContent = `LIVES ${lives}`;
 
@@ -2355,7 +2348,7 @@ function snapIsInt(v, min, max) {
  * 组装当前局进度镜像快照（纯数据：数值/字符串/布尔/数组，不含函数与 DOM）。
  * v 为首字段协议版本号，恢复时 v !== 1 即整体弃用；
  * 粒子/尾焰/震屏/飘字等纯视觉对象不入档，恢复后按状态清空重建。
- * @returns {object} 快照数据对象（字段与 saveSnapshot 时期的字面量一一对应）
+ * @returns {object} 快照数据对象（字段与 validate/apply 校验恢复的字段一一对应）
  */
 function buildBeeSnapshot() {
     return {
@@ -2416,15 +2409,6 @@ const snapPipe = Snap.create({
     validate: validateBeeSnapshot,
     apply: applyBeeSnapshot
 });
-
-/**
- * 保存当前局进度镜像快照到 localStorage（薄壳）：
- * 进行中保存 / 非进行中清除，组装意外与存储异常整体静默容错；
- * 读写管线与触发接线由共享库 snap-common.js 统一实现
- */
-function saveSnapshot() {
-    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
-}
 
 /**
  * 校验快照逐字段类型/范围：协议版本号（v !== 1 即弃用）、画布坐标范围、
@@ -2705,17 +2689,18 @@ const pausePipe = Pause.create({
 // 点在按钮/链接上时不触发射击，避免误开 UI 功能
 document.addEventListener('mousedown', e => {
     if (e.button !== 0 || gameState !== 'playing') return;
-    // 排除按钮与链接（含"返回大厅"）：点击 UI 只操作 UI，不恢复暂停也不开火——
-    // 否则暂停中点返回会先误恢复运行、快照存成运行态再退出
+    // 排除按钮与链接（含"返回大厅"）：点击 UI 只操作 UI，不开火
     if (e.target.closest('button, a')) return;
-    // 暂停中（失焦或手动）：点击画布/空白处恢复并一次清空双标记，本次点击不作为射击输入
-    // （恢复序列收口共享库：双标记清空 + BGM 续播 + UI 恢复音 + 遮罩同步）
-    if (blurPaused || paused) {
-        pausePipe.resume();
-        return;
-    }
+    // 暂停中（失焦或手动）：本次按下仅作恢复用，不写入射击输入——恢复动作由
+    // 下方 bindOverlayResume 完成，两监听此处分流不再嵌套调用
+    if (blurPaused || paused) return;
     mouseFire = true;
 });
+// 暂停中按下即恢复收口共享库 Pause.bindOverlayResume（bee 模式：document 级
+// mousedown 排除 button, a）。注册在上方射击监听之后——恢复按下先被射击监听
+// 判定仍处暂停态并跳过（不写入射击输入），再由库内 resume 完成双标记清空 +
+// BGM 续播 + UI 恢复音 + 遮罩同步
+Pause.bindOverlayResume(pausePipe, { target: 'document', exclude: 'button, a' });
 // 左键抬起（监听 document）：无论光标在哪松开都能正确停止射击，无"卡键"风险
 document.addEventListener('mouseup', e => {
     if (e.button === 0) mouseFire = false;
@@ -2792,6 +2777,10 @@ document.addEventListener('keydown', e => {
         for (const k in keys) delete keys[k];
         return;
     }
+    // 成就墙打开期间：主循环已冻结游戏更新（墙面覆盖进行中画面），按键不再写入
+    // keys[]——否则冻结期按下的方向键/空格会在关墙后残留按下态，引发自动移动/
+    // 自动开火（对齐 tetris/snake「成就墙冻结期输入闭锁」惯例；V/Esc 已在上方放行）
+    if (Ach.isOpen()) return;
     keys[e.code] = true;
     // Shift 触发冲刺闪避（左右 Shift 均可；!e.repeat 防长按连发反复冲刺，与 P 键守卫一致）
     if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) performDash();
@@ -2801,20 +2790,10 @@ document.addEventListener('keyup', e => {
     keys[e.code] = false;
 });
 
-// CRT 开关机音：本页独立打开时监听全屏切换；嵌入模式（iframe）中
-// fullscreenchange 不穿越文档边界，改由父页大厅广播 arcade:fs 消息驱动
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
-Arcade.onTrustedMessage(e => {
-    const d = e.data;
-    if (d && d.type === Arcade.MSG.FS) {
-        if (d.fs) SFX.crtOn();
-        else SFX.crtOff();
-    }
-});
+// CRT 开关机音收口共享库 fullscreen.js（FS.onCrtAudio）：独立打开的 fullscreenchange
+// 与 iframe 嵌入的 arcade:fs 广播两条路径在库内统一分发——仅真实翻转时发声，首条嵌入
+// 广播（hello 回复的现状同步）静默校准不发声，嵌入页开场不再误响开机音
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 // 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
 // 与触发点 b（页面卸载兜底：关闭/刷新/父页移除 iframe 均触发）两处接线收口于 snap-common.js

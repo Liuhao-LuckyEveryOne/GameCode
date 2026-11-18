@@ -35,6 +35,12 @@
                      必须在对应业务 js 中以顶层 function 声明存在（经典脚本顶层
                      声明自动挂 window，contentWindow 直调依赖该语义）；业务 js
                      重命名/删除这些函数时静态期即红，不等冒烟运行期 TypeError
+  15. 全屏选择器契约 —— fullscreen.js 顶部 FIT_SELECTORS / TITLE_SELECTORS 两数组为
+                     全屏缩放容器与全屏标题的候选选择器（运行期逐个 querySelector
+                     取首个命中）；本项静态解析两数组字面量，对大厅 + 七游戏页
+                     逐一断言至少一条候选可命中（.cls 核对 class 词表 / #id 核对
+                     id 属性精确相等 / h1.cls 限定标签名核对 class 词表），页面
+                     markup 重构删容器或改类名时静态期即红，不等全屏功能静默失配
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
@@ -1158,8 +1164,103 @@ def check_smoke_whitebox_problems():
     return problems
 
 
+# ---------- 检查项 15：fullscreen.js 全屏选择器契约 ----------
+# fullscreen.js 顶部 FIT_SELECTORS / TITLE_SELECTORS 两数组声明「全屏缩放容器」
+# 与「全屏标题」的候选选择器，运行期逐个 querySelector 取首个命中——页面 markup
+# 重构删容器/改类名后运行期会静默失配（全屏缩放与标题展示退化且无任何报错）。
+# 本项把契约校验前移到静态期：解析两数组字面量，对大厅 + 七游戏页逐一断言
+# 至少一条候选可命中，选择器数组与页面 markup 任一侧漂移即红。
+FS_PATH = ROOT / "fullscreen.js"
+
+# 数组字面量声明锚：const NAME = [ ... ]（一维字符串数组，取首个匹配即可）
+FS_FIT_DECL_RE = re.compile(r"\bconst\s+FIT_SELECTORS\s*=\s*\[([^\]]*)\]")
+FS_TITLE_DECL_RE = re.compile(r"\bconst\s+TITLE_SELECTORS\s*=\s*\[([^\]]*)\]")
+
+# 数组元素字符串字面量提取：须保留字符串内容故直接在原文匹配
+# （去噪骨架会剥掉字面量内容，与检查项 13 同技法）
+FS_STR_LIT_RE = re.compile(r"""['"]([^'"]+)['"]""")
+
+# 选择器命中判定的 markup 锚：class/id 属性值。负向断言排除 data-class/
+# grid-id 等属性名尾串误命中（属性名本身词边界起匹配）
+FS_CLASS_ATTR_RE = re.compile(r"""(?<![\w-])class\s*=\s*["']([^"']*)["']""")
+FS_ID_ATTR_RE = re.compile(r"""(?<![\w-])id\s*=\s*["']([^"']*)["']""")
+
+
+def _fs_selector_hits(html_text, selector):
+    """静态判定单条全屏选择器能否命中页面源码（覆盖 fullscreen.js 契约面三形态）。
+
+    形态与 fullscreen.js 实际用法对齐：
+      .cls    —— 任一元素 class 词表含该类名即命中
+      #id     —— 任一元素 id 属性值与选择器名完全相等即命中
+      tag.cls —— 限定标签名的开标签内核对 class 词表（如 h1.title）
+
+    参数:
+        html_text: 页面 HTML 全文
+        selector: FIT/TITLE 数组中的单条选择器
+    返回:
+        True = 可命中；复合选择器/伪类等超出静态判定范围的形态保守放行
+        返回 True 不误报（检查器不比运行期更严）
+    """
+    if selector.startswith("."):
+        cls = selector[1:]
+        return any(cls in attrs.split() for attrs in FS_CLASS_ATTR_RE.findall(html_text))
+    if selector.startswith("#"):
+        ident = selector[1:]
+        return any(ident == attrs for attrs in FS_ID_ATTR_RE.findall(html_text))
+    m = re.match(r"^(\w+)\.([\w-]+)$", selector)
+    if m:
+        tag, cls = m.groups()
+        # 逐开标签核对：标签名限定 + 其 class 属性词表包含目标类名
+        for tag_text in re.findall(r"<" + tag + r"\b[^>]*>", html_text, re.IGNORECASE):
+            cm = FS_CLASS_ATTR_RE.search(tag_text)
+            if cm and cls in cm.group(1).split():
+                return True
+        return False
+    return True
+
+
+def check_fs_selectors_problems():
+    """检查项 15：fullscreen.js 全屏选择器契约——FIT/TITLE 两组候选选择器
+    在大厅 + 七游戏页 markup 中至少各有一条可静态命中。
+
+    从 fullscreen.js 源码解析 FIT_SELECTORS / TITLE_SELECTORS 数组字面量，
+    对 index.html 与 GAMES 七页逐一断言：fit 组至少一条命中（存在可缩放容器）、
+    title 组至少一条命中（存在全屏标题）。页面删容器/改类名或选择器数组被
+    改坏时即报，防止运行期静默失配。
+
+    返回:
+        问题清单（空列表 = 通过）
+    """
+    problems = []
+    if not FS_PATH.is_file():
+        return ["fullscreen.js 缺失（全屏选择器契约检查无目标）"]
+    src = FS_PATH.read_text(encoding="utf-8")
+    groups = {}
+    for name, decl_re in (("FIT_SELECTORS", FS_FIT_DECL_RE), ("TITLE_SELECTORS", FS_TITLE_DECL_RE)):
+        m = decl_re.search(src)
+        if not m:
+            problems.append(f"fullscreen.js 未找到 {name} 数组声明（形态漂移，需同步本检查器）")
+            groups[name] = []
+            continue
+        selectors = FS_STR_LIT_RE.findall(m.group(1))
+        if not selectors:
+            problems.append(f"fullscreen.js {name} 数组为空（全屏契约失去全部候选）")
+        groups[name] = selectors
+    pages = ["index.html"] + [html for html, _js in GAMES]
+    for page in pages:
+        path = ROOT / page
+        if not path.is_file():
+            continue  # 页面缺失由检查项 1/6 报告，本项不重复
+        html_text = path.read_text(encoding="utf-8")
+        for name, selectors in groups.items():
+            if selectors and not any(_fs_selector_hits(html_text, s) for s in selectors):
+                problems.append(f"{page} 无任何 {name} 候选命中（候选: {selectors}）"
+                                "——全屏缩放/标题契约破裂")
+    return problems
+
+
 def main():
-    """主流程：依次运行十四项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十五项检查，汇总结果并按退出码约定返回。"""
     targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
@@ -1176,6 +1277,7 @@ def main():
         ("入口版本一致", check_entry_version_problems),
         ("大厅成就/最高分同步", check_lobby_defs_problems),
         ("冒烟白盒契约", check_smoke_whitebox_problems),
+        ("全屏选择器契约", check_fs_selectors_problems),
     ]
     all_ok = True
     for label, fn in checks:

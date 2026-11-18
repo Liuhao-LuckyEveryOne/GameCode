@@ -14,6 +14,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>俄罗斯方块 - 像素街机厅</title>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <!-- 成就墙·金杯触发器共享样式 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261118-1">
     <style>
         /* ---------- 主题变量：底色 / 面板 / 四色霓虹 / 文字 ---------- */
         :root {
@@ -24,6 +26,20 @@
             --neon-blue: #35e0ff;
             --neon-yellow: #ffd23e;
             --text: #e8feff;
+        /* ---- 成就墙皮肤主题映射（Wave2 收编）：本页仅留取值行，规则本体统一在 ach-trigger.css 收编层，取值与原页内皮肤逐字一致 ---- */
+        --ach-accent: 53, 224, 255; /* 主题色 RGB 三元组：面板描边/辉光、关闭键、脚注、副标题 */
+        --ach-sec: 53, 224, 255; /* 次主题色 RGB 三元组：计数文本 */
+        --ach-wall-bg: rgba(4, 12, 14, 0.72); /* 遮罩底色 */
+        --ach-panel-grad: linear-gradient(160deg, rgba(14, 42, 42, 0.80) 0%, rgba(10, 29, 29, 0.80) 55%, rgba(12, 30, 34, 0.80) 100%); /* 面板渐变底 */
+        --ach-panel-glow: rgba(53, 224, 255, 0.22); /* 面板外辉光段 */
+        --ach-desc-c: #7f959c; /* 卡片描述文字 */
+        --ach-meta-c: #647d82; /* 进度区元信息文字 */
+        --ach-locked-c: #6d8792; /* 未解锁卡片名称 */
+        --ach-unlock-desc-c: #9fc3c9; /* 已解锁卡片描述 */
+        --ach-bar-grad: linear-gradient(90deg, #35e0ff, #ffd23e); /* 总进度条渐变 */
+        --ach-prog-grad: linear-gradient(90deg, #35e0ff, #39ff6a); /* 卡片进度条渐变 */
+        --ach-unlock-prog-grad: linear-gradient(90deg, #35e0ff, #ffd23e); /* 已解锁卡片进度条渐变 */
+        --ach-toast-grad: linear-gradient(120deg, rgba(16, 40, 42, 0.95), rgba(9, 21, 23, 0.95)); /* toast 渐变底 */
         }
         /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
         html { background: var(--bg); }
@@ -238,346 +254,6 @@
             background: #0f1a1a;
             border-radius: 4px;
         }
-        /* ---------- 成就墙（2026-11-04 精致化改版，对齐 snake 机台模板）：DOM 覆盖层 · 四档稀有度卡片 · 历史最佳进度 ---------- */
-        #achWall {
-            position: fixed;
-            inset: 0;
-            z-index: 20; /* 高于右上角固定按钮(10)：遮罩期间全屏聚焦成就墙 */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            background: rgba(4, 12, 14, 0.72); /* 青黑遮罩底：随俄罗斯方块机台主题色调 */
-            -webkit-backdrop-filter: blur(6px); /* Safari 旧版需 -webkit- 前缀，成对书写两侧通吃 */
-            backdrop-filter: blur(6px);
-            animation: wallFade 0.25s ease-out;
-        }
-        #achWall[hidden] { display: none; }
-        /* 遮罩淡入 */
-        @keyframes wallFade {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        /* 面板：深青渐变底 + 霓虹描边，弹性落定入场 */
-        .ach-panel {
-            width: min(720px, 94vw);
-            max-height: 86vh;
-            display: flex;
-            flex-direction: column;
-            /* 玻璃质感面板：半透明底 + 磨砂模糊（呼应大厅卡片玻璃拟态），白缘顶光 + 霓虹描边辉光 */
-            background: linear-gradient(160deg, rgba(14, 42, 42, 0.80) 0%, rgba(10, 29, 29, 0.80) 55%, rgba(12, 30, 34, 0.80) 100%);
-            border: 1px solid rgba(53, 224, 255, 0.45);
-            border-radius: 14px;
-            -webkit-backdrop-filter: blur(14px);
-            backdrop-filter: blur(14px);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 0 42px rgba(53, 224, 255, 0.22), inset 0 0 60px rgba(53, 224, 255, 0.05);
-            animation: wallPanelIn 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
-        }
-        @keyframes wallPanelIn {
-            from { opacity: 0; transform: translateY(18px) scale(0.94); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        /* 头部：标题 + 完成度 + 关闭按钮 */
-        .ach-head {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            padding: 16px 18px 12px;
-            border-bottom: 1px solid rgba(53, 224, 255, 0.25);
-        }
-        .ach-title-wrap { flex: 1; text-align: left; }
-        .ach-title {
-            margin: 0;
-            font-family: 'Press Start 2P', monospace;
-            font-size: 15px;
-            letter-spacing: 3px;
-            color: var(--neon-yellow);
-            text-shadow: 0 0 14px rgba(255, 210, 62, 0.55);
-        }
-        .ach-sub {
-            margin: 5px 0 0;
-            font-family: 'Press Start 2P', monospace;
-            font-size: 8px;
-            letter-spacing: 5px;
-            color: rgba(53, 224, 255, 0.6);
-        }
-        .ach-progress { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-        .ach-count {
-            font-family: 'Press Start 2P', monospace;
-            font-size: 11px;
-            color: var(--neon-blue);
-            text-shadow: 0 0 8px rgba(53, 224, 255, 0.6);
-        }
-        .ach-bar {
-            width: 150px;
-            height: 6px;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.08);
-            overflow: hidden;
-        }
-        .ach-bar-fill {
-            height: 100%;
-            border-radius: 3px;
-            background: linear-gradient(90deg, #35e0ff, #ffd23e);
-            box-shadow: 0 0 8px rgba(53, 224, 255, 0.6);
-            transition: width 0.45s ease-out;
-        }
-        .ach-close {
-            width: 34px;
-            height: 34px;
-            margin: 0;
-            padding: 0;
-            font-size: 14px;
-            letter-spacing: 0;
-            color: var(--neon-blue);
-            background: rgba(53, 224, 255, 0.08);
-            border: 1px solid rgba(53, 224, 255, 0.4);
-            border-radius: 8px;
-            box-shadow: none;
-        }
-        .ach-close:hover {
-            background: rgba(53, 224, 255, 0.16);
-            box-shadow: 0 0 10px rgba(53, 224, 255, 0.4);
-        }
-        /* 卡片网格：2 列布局，滚动区（成就增多时面板不撑爆视口） */
-        .ach-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 12px;
-            padding: 14px 18px;
-            overflow-y: auto;
-        }
-        /* 卡片：瀑布入场（--i 序号延迟）+ hover 抬升 */
-        .ach-card {
-            position: relative;
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            padding: 12px;
-            border-radius: 10px;
-            /* 玻璃卡片：白质渐变底 + 白缘描边 + 顶缘高光（与大厅卡片玻璃拟态同源；已解锁卡另有 achSheen 周期流光） */
-            background: linear-gradient(165deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-            text-align: left;
-            overflow: hidden;
-            animation: achCardIn 0.45s ease-out backwards;
-            animation-delay: calc(var(--i) * 60ms); /* 瀑布入场：按卡片序号依次滑入 */
-            transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
-        }
-        @keyframes achCardIn {
-            from { opacity: 0; transform: translateY(14px) scale(0.96); }
-            to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .ach-card:hover { transform: translateY(-3px); }
-        /* 稀有度徽章：卡片右上角小标签 */
-        .ach-rarity-chip {
-            position: absolute;
-            top: 8px;
-            right: 10px;
-            padding: 2px 8px;
-            font-size: 10px;
-            letter-spacing: 2px;
-            border-radius: 999px;
-            border: 1px solid;
-        }
-        /* 图标徽座：磨砂圆底，稀有度由卡片描边与徽章承载 */
-        .ach-icon {
-            position: relative;
-            flex: none;
-            width: 52px;
-            height: 52px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            font-size: 26px;
-            background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 65%);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-        }
-        /* 锁定角标：未解锁卡片图标右下角小锁 */
-        .ach-lock {
-            position: absolute;
-            right: -3px;
-            bottom: -3px;
-            font-size: 12px;
-            filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
-        }
-        .ach-info { flex: 1; min-width: 0; }
-        .ach-name {
-            font-size: 14px;
-            font-weight: bold;
-            letter-spacing: 1px;
-            margin-right: 52px; /* 让出右上角徽章位置，避免长名与其重叠 */
-        }
-        .ach-desc {
-            margin: 3px 0 7px;
-            font-size: 11px;
-            color: #7f959c;
-            line-height: 1.4;
-        }
-        /* 进度条：历史最佳 / 目标值，青→绿渐变填充 */
-        .ach-prog {
-            height: 5px;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.07);
-            overflow: hidden;
-        }
-        .ach-prog-fill {
-            height: 100%;
-            border-radius: 3px;
-            background: linear-gradient(90deg, #35e0ff, #39ff6a);
-            transition: width 0.4s ease-out;
-        }
-        .ach-prog-meta {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 4px;
-            font-size: 10px;
-            color: #647d82;
-        }
-        /* ----- 已解锁卡片：稀有度点亮 + 周期流光扫过 ----- */
-        .ach-card.unlocked .ach-name {
-            color: var(--neon-yellow);
-            text-shadow: 0 0 8px rgba(255, 210, 62, 0.35);
-        }
-        .ach-card.unlocked .ach-desc { color: #9fc3c9; }
-        .ach-card.unlocked .ach-prog-fill { background: linear-gradient(90deg, #35e0ff, #ffd23e); }
-        /* 流光扫过：斜向高光带每 3.2s 掠过一次（仅已解锁卡），序号错峰形成此起彼伏 */
-        .ach-card.unlocked::after {
-            content: '';
-            position: absolute;
-            top: -60%;
-            left: -80%;
-            width: 45%;
-            height: 220%;
-            background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.16), transparent);
-            transform: rotate(8deg);
-            animation: achSheen 3.2s ease-in-out infinite;
-            animation-delay: calc(var(--i) * 0.35s + 0.8s);
-            pointer-events: none;
-        }
-        @keyframes achSheen {
-            0%, 55% { left: -80%; }
-            85%, 100% { left: 160%; }
-        }
-        /* 稀有度主题：普通绿灰 / 稀有青 / 史诗紫 / 传说金（四档配色与 snake 机台保持全站统一） */
-        .ach-card.unlocked.rarity-common {
-            border-color: rgba(159, 212, 159, 0.5);
-            box-shadow: 0 0 12px rgba(159, 212, 159, 0.14);
-        }
-        .ach-card.unlocked.rarity-common:hover { box-shadow: 0 0 20px rgba(159, 212, 159, 0.3); }
-        .ach-card.unlocked.rarity-rare {
-            border-color: rgba(53, 224, 255, 0.55);
-            box-shadow: 0 0 14px rgba(53, 224, 255, 0.18);
-        }
-        .ach-card.unlocked.rarity-rare:hover { box-shadow: 0 0 24px rgba(53, 224, 255, 0.35); }
-        .ach-card.unlocked.rarity-epic {
-            border-color: rgba(190, 92, 255, 0.6);
-            box-shadow: 0 0 16px rgba(190, 92, 255, 0.22);
-        }
-        .ach-card.unlocked.rarity-epic:hover { box-shadow: 0 0 26px rgba(190, 92, 255, 0.4); }
-        .ach-card.unlocked.rarity-legendary {
-            border-color: rgba(255, 210, 62, 0.65);
-            box-shadow: 0 0 18px rgba(255, 210, 62, 0.25);
-            animation: achCardIn 0.45s ease-out backwards, legendPulse 2.6s ease-in-out infinite;
-            animation-delay: calc(var(--i) * 60ms), calc(var(--i) * 60ms + 0.6s); /* 传说卡额外呼吸金辉，与瀑布入场错峰 */
-        }
-        .ach-card.unlocked.rarity-legendary:hover { box-shadow: 0 0 30px rgba(255, 210, 62, 0.45); }
-        @keyframes legendPulse {
-            0%, 100% { box-shadow: 0 0 18px rgba(255, 210, 62, 0.25); }
-            50% { box-shadow: 0 0 30px rgba(255, 210, 62, 0.5); }
-        }
-        /* 稀有度徽章配色（与卡片描边 / 光晕同族色） */
-        .ach-rarity-chip.rarity-common { color: #9fd49f; border-color: rgba(159, 212, 159, 0.5); background: rgba(159, 212, 159, 0.08); }
-        .ach-rarity-chip.rarity-rare { color: #7ce4ff; border-color: rgba(53, 224, 255, 0.5); background: rgba(53, 224, 255, 0.08); }
-        .ach-rarity-chip.rarity-epic { color: #d9a0ff; border-color: rgba(190, 92, 255, 0.5); background: rgba(190, 92, 255, 0.1); }
-        .ach-rarity-chip.rarity-legendary { color: #ffd23e; border-color: rgba(255, 210, 62, 0.55); background: rgba(255, 210, 62, 0.1); }
-        /* ----- 未解锁卡片：灰暗锁定态 ----- */
-        .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
-        .ach-card.locked .ach-name { color: #6d8792; }
-        .ach-card.locked:hover { border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05); }
-        /* 底部操作提示条 */
-        .ach-foot {
-            padding: 10px 18px 14px;
-            border-top: 1px solid rgba(53, 224, 255, 0.18);
-            font-size: 11px;
-            color: #647d82;
-            text-align: center;
-        }
-        .ach-foot b { color: var(--neon-blue); font-weight: normal; }
-        /* ---------- 成就解锁 toast：右上角堆叠 · 稀有度色条 · 滑入-停留-退场 ---------- */
-        #achToastStack {
-            position: fixed;
-            top: 106px; /* 位于右上角"声音/全屏"两枚按钮之下 */
-            right: 16px;
-            z-index: 30;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            pointer-events: none;
-        }
-        .ach-toast {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 9px 14px 9px 10px;
-            border-radius: 10px;
-            background: linear-gradient(120deg, rgba(16, 40, 42, 0.95), rgba(9, 21, 23, 0.95));
-            border: 1px solid rgba(255, 255, 255, 0.14);
-            border-left: 3px solid var(--neon-blue);
-            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
-            animation: toastCycle 3.2s ease forwards;
-        }
-        @keyframes toastCycle {
-            0% { opacity: 0; transform: translateX(56px) scale(0.92); }
-            10%, 80% { opacity: 1; transform: translateX(0) scale(1); }
-            100% { opacity: 0; transform: translateX(40px) scale(0.95); }
-        }
-        .toast-icon {
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            border-radius: 50%;
-            background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 70%);
-            animation: toastIconPop 0.5s cubic-bezier(0.34, 1.6, 0.64, 1);
-        }
-        @keyframes toastIconPop {
-            from { transform: scale(0.3) rotate(-30deg); }
-            to { transform: scale(1) rotate(0deg); }
-        }
-        .toast-body { display: flex; flex-direction: column; gap: 2px; text-align: left; }
-        .toast-cap { font-size: 10px; letter-spacing: 3px; color: #7f959c; }
-        .toast-name {
-            font-size: 13px;
-            font-weight: bold;
-            color: var(--neon-yellow);
-            text-shadow: 0 0 8px rgba(255, 210, 62, 0.4);
-        }
-        /* toast 稀有度左色条（史诗/传说图标座追加金色光晕） */
-        .ach-toast.rarity-common { border-left-color: #9fd49f; }
-        .ach-toast.rarity-rare { border-left-color: #35e0ff; }
-        .ach-toast.rarity-epic { border-left-color: #be5cff; }
-        .ach-toast.rarity-legendary { border-left-color: #ffd23e; }
-        .ach-toast.rarity-epic .toast-icon,
-        .ach-toast.rarity-legendary .toast-icon { box-shadow: 0 0 14px rgba(255, 210, 62, 0.35); }
-        /* 成就墙窄屏：单列卡片 + 头部换行 */
-        @media (max-width: 640px) {
-            .ach-grid { grid-template-columns: 1fr; }
-            .ach-head { flex-wrap: wrap; }
-        }
-        /* 成就墙减弱动效：停用瀑布入场 / 流光 / 传说呼吸 / toast 滑入
-           （置于本区块末尾：同特异性规则按书写顺序覆盖上文动画声明） */
-        @media (prefers-reduced-motion: reduce) {
-            #achWall, .ach-panel, .ach-card, .ach-card.unlocked::after,
-            .ach-toast, .toast-icon,
-            .ach-card.unlocked.rarity-legendary {
-                animation: none;
-            }
-        }
         .stat-row {
             display: flex;
             justify-content: space-between;
@@ -789,8 +465,6 @@
             #startScreen, #gameOverScreen, #pauseScreen { animation: none; }
         }
     </style>
-    <!-- 成就墙·金杯触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-8">
 </head>
 <body>
     <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
@@ -798,59 +472,6 @@
     <!-- 固定按钮区：成就墙入口（左上）+ 音效开关 / 全屏切换（右上） -->
     <!-- 成就墙·金杯触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
     <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-blue)" title="成就墙（快捷键 V）">
-        <svg class="aw-cup" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            <defs>
-                <linearGradient id="awcGold" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#fff3b0"/>
-                    <stop offset="0.42" stop-color="#ffd23e"/>
-                    <stop offset="0.72" stop-color="#e3a52a"/>
-                    <stop offset="1" stop-color="#b97e14"/>
-                </linearGradient>
-                <linearGradient id="awcLip" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#fff9d6"/>
-                    <stop offset="1" stop-color="#d9a325"/>
-                </linearGradient>
-                <linearGradient id="awcRibbon" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#ff8a7a"/>
-                    <stop offset="0.55" stop-color="#e03e34"/>
-                    <stop offset="1" stop-color="#9c2018"/>
-                </linearGradient>
-                <linearGradient id="awcBase" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#ffe79a"/>
-                    <stop offset="0.55" stop-color="#d99a26"/>
-                    <stop offset="1" stop-color="#a86e0e"/>
-                </linearGradient>
-            </defs>
-            <!-- 杯耳：左右对称弯钩 -->
-            <path d="M15 12C7 12 7 24 17 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
-            <path d="M49 12C57 12 57 24 47 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
-            <!-- 杯口沿 + 杯身（纵向金色渐变） -->
-            <rect x="12.5" y="6" width="39" height="4.5" rx="2" fill="url(#awcLip)"/>
-            <path d="M14 8h36v7c0 13-7.5 19-18 19-10.5 0-18-6-18-19z" fill="url(#awcGold)"/>
-            <!-- 杯颈 + 双层底座 -->
-            <path d="M28 33h8l2.5 8h-13z" fill="url(#awcBase)"/>
-            <rect x="24" y="41" width="16" height="4.5" rx="1" fill="url(#awcBase)"/>
-            <rect x="19.5" y="45.5" width="25" height="6" rx="1.5" fill="url(#awcBase)"/>
-            <!-- 颈间蝴蝶结：双环自结心向左右环抱 + 结心锥鼓 + 两条短垂带（燕尾开衩），
-                 后绘前置系于杯颈，飘带不再自杯底垂落 -->
-            <path d="M31 35.4C27.8 31 21 29.4 17.8 31.8C14.6 34.2 17 38.6 21.6 39C25.6 39.4 29.2 37.9 31 36.6Z" fill="url(#awcRibbon)"/>
-            <path d="M33 35.4C36.2 31 43 29.4 46.2 31.8C49.4 34.2 47 38.6 42.4 39C38.4 39.4 34.8 37.9 33 36.6Z" fill="url(#awcRibbon)"/>
-            <!-- 环内暗折痕：暗示绸带对折层次 -->
-            <path d="M29.4 36.8C26 35.6 21.6 34.4 18.6 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
-            <path d="M34.6 36.8C38 35.6 42.4 34.4 45.4 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
-            <!-- 双垂带：自结心下方左右分开，末端燕尾开衩 -->
-            <path d="M30.5 38.2C29.1 40.3 28.2 41.9 27.6 43.6L29.6 42.9 30.2 44.4C30.9 42.1 31.4 40.3 31.9 39.1Z" fill="url(#awcRibbon)"/>
-            <path d="M33.5 38.2C34.9 40.3 35.8 41.9 36.4 43.6L34.4 42.9 33.8 44.4C33.1 42.1 32.6 40.3 32.1 39.1Z" fill="url(#awcRibbon)"/>
-            <!-- 结心：小鼓形收束 + 暗红折痕 -->
-            <ellipse cx="32" cy="36.3" rx="2.7" ry="2.9" fill="url(#awcRibbon)"/>
-            <path d="M32 34.1v4.4" stroke="#7d1710" stroke-opacity="0.6" stroke-width="0.9" stroke-linecap="round"/>
-            <!-- 飘带高光：双环上缘细亮线 -->
-            <path d="M19.8 33.6C21.8 31.6 24 30.6 26.2 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
-            <path d="M44.2 33.6C42.2 31.6 40 30.6 37.8 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
-            <!-- 杯身高光弧 + 右上星芒点缀 -->
-            <path d="M19 12c0 8 2.5 12.5 7 15" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.6" stroke-linecap="round"/>
-            <path d="M46.5 13.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff8d9" opacity="0.9"/>
-        </svg>
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
@@ -877,10 +498,10 @@
                 <p class="diff-label">选择难度</p>
                 <div id="difficultySelect">
                     <!-- 无敌档：下落间隔与倍率取简单档最宽松值，堆到顶时清空整个棋盘继续而非结束游戏 -->
-                    <button class="difficulty-btn" data-drop="700" data-mult="1" data-invincible="1" onclick="selectDifficulty(this)">无敌</button>
-                    <button class="difficulty-btn" data-drop="700" data-mult="1" onclick="selectDifficulty(this)">简单</button>
-                    <button class="difficulty-btn active" data-drop="600" data-mult="2" onclick="selectDifficulty(this)">中等</button>
-                    <button class="difficulty-btn" data-drop="450" data-mult="3" onclick="selectDifficulty(this)">困难</button>
+                    <button class="difficulty-btn" data-drop="700" data-mult="1" data-invincible="1">无敌</button>
+                    <button class="difficulty-btn" data-drop="700" data-mult="1">简单</button>
+                    <button class="difficulty-btn active" data-drop="600" data-mult="2">中等</button>
+                    <button class="difficulty-btn" data-drop="450" data-mult="3">困难</button>
                 </div>
                 <button onclick="startGame()">开始游戏</button>
             </div>
@@ -897,7 +518,7 @@
                 <p id="newRecord" style="display: none;">新纪录！</p>
                 <button onclick="startGame()">重新开始</button>
             </div>
-            <!-- 成就墙已升级为全屏 DOM 覆盖层：见 body 末尾 #achWall（V/Esc 开合，解锁 toast 走 #achToastStack） -->
+            <!-- 成就墙已升级为全屏 DOM 覆盖层：页面仅留 body 末尾 #achWall 锚元素，整墙 DOM 由共享库 ach-common.js 运行时构建（V/Esc 开合，解锁 toast 走 #achToastStack） -->
         </div>
         <!-- 侧边信息栏：HOLD 暂存预览 / NEXT 后续三块预览 / STATS 实时统计 / KEYS 键位说明 -->
         <div class="side-panel">
@@ -949,36 +570,18 @@
         </div>
     </div>
     <!-- ===================== 成就墙：DOM 全屏覆盖层（V/Esc 开合，打开时游戏逻辑冻结） ===================== -->
-    <div id="achWall" hidden>
-        <div class="ach-panel">
-            <div class="ach-head">
-                <div class="ach-title-wrap">
-                    <div class="ach-title">成就墙</div>
-                    <div class="ach-sub">ACHIEVEMENT WALL</div>
-                </div>
-                <div class="ach-progress">
-                    <div class="ach-count"><span id="achCount">0</span> / <span id="achTotal">0</span></div>
-                    <div class="ach-bar"><div class="ach-bar-fill" id="achBarFill"></div></div>
-                </div>
-                <button class="ach-close" aria-label="关闭成就墙">✕</button>
-            </div>
-            <div class="ach-grid" id="achGrid"></div>
-            <div class="ach-foot">继续挑战解锁全部成就 · 史诗 / 传说级成就达成时附赠金色烟花庆典</div>
-        </div>
-    </div>
-    <!-- 成就解锁 toast 堆叠区：不拦截点击（pointer-events 由 CSS 控制），aria-live 播报新解锁 -->
-    <div id="achToastStack" aria-live="polite"></div>
+    <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，成就墙开合/解锁/存档迁移由此驱动) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → gamepad.js / ach-trigger.js → tetris.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261117-2"></script>
+    <script src="arcade-common.js?v=20261118-1"></script>
     <script src="audio.js?v=20261118-1"></script>
     <script src="fx.js?v=20261118-1"></script>
-    <script src="fullscreen.js?v=20261117-2"></script>
-    <script src="ach-common.js?v=20261118-2"></script>
+    <script src="fullscreen.js?v=20261118-1"></script>
+    <script src="ach-common.js?v=20261118-3"></script>
     <script src="snap-common.js?v=20261118-1"></script>
-    <script src="pause-common.js?v=20261117-1"></script>
+    <script src="pause-common.js?v=20261118-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261118-1"></script>
-    <script src="ach-trigger.js?v=20261105-4"></script>
-    <script src="tetris.js?v=20261118-4"></script>
+    <script src="ach-trigger.js?v=20261118-1"></script>
+    <script src="tetris.js?v=20261118-5"></script>
 </body>
 </html>

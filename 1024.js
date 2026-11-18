@@ -262,8 +262,6 @@ const comboEl = document.getElementById('combo');
 const undoBtn = document.getElementById('undoBtn');
 /** 画布下方操作提示行内的"已恢复上次进度"标记（仅进度快照恢复成功时显示，本局重开后隐藏） */
 const restoreNote = document.getElementById('restoreNote');
-/** 难度选择按钮组（开始面板内，选中项带 active 高亮） */
-const diffBtns = document.querySelectorAll('.difficulty-btn');
 /** 1024 目标进度条填充元素（宽度随棋盘最大方块 log2 比例推进） */
 const goalFillEl = document.getElementById('goalFill');
 /** 1024 目标进度条文本元素（显示百分比，达成后显示 MAX 标记） */
@@ -1489,33 +1487,33 @@ function togglePause() {
     pausePipe.toggle();
 }
 
-/** 切换难度：更新棋盘尺寸与按钮高亮，并以新尺寸重铺预览棋盘
- *  @param {string} key 难度键名：easy / normal / hard */
-function selectDifficulty(key) {
-    // 未知键名或重复选择直接忽略
-    if (!DIFFICULTIES[key] || key === currentDifficulty) return;
-    SFX.uiClick(); // 切换难度点击音（页面加载恢复难度时 AudioContext 未激活，无声无害）
-    currentDifficulty = key;
-    Arcade.saveRaw(DIFFICULTY_KEY, key); // 存储受限时静默跳过，持久化难度选择，下次加载恢复
-    SIZE = DIFFICULTIES[key].size;
-    // 重算单元格边长，保证棋盘总尺寸仍为 BOARD_W×BOARD_H（CSS 锁定 500×500）
-    CELL = (BOARD_W - PAD * 2 - GAP * (SIZE - 1)) / SIZE;
-    slotLayerDirty = true; // 槽位几何（SIZE/CELL）已变：下一帧重建空槽静态层
-    // 同步按钮高亮态（data-diff 与键名比对）
-    for (const btn of diffBtns) {
-        btn.classList.toggle('active', btn.dataset.diff === key);
+/* 难度按钮组点击时序收口共享库 bindDifficultyButtons（data-diff 模式：存档写键名）：
+ * blur 防空格误触 → 高亮 → saveRaw → SFX 点击音 → onChange 全序列在库内 click 监听完成；
+ * 经 canPick 复刻原"未知键名或重复选择直接忽略"守卫（拒绝时整体不 blur/不发声/不存档/
+ * 不回调），onChange 内只保留游戏侧的尺寸重算与旧档清理 */
+const difficultyCtl = Arcade.bindDifficultyButtons({
+    bar: document.querySelector('.difficulty-select'),
+    storageKey: DIFFICULTY_KEY,
+    persist: 'data-diff',
+    canPick: (btn, idx, key) => !!DIFFICULTIES[key] && key !== currentDifficulty,
+    onChange: (btn, idx, key) => {
+        currentDifficulty = key;
+        SIZE = DIFFICULTIES[key].size;
+        // 重算单元格边长，保证棋盘总尺寸仍为 BOARD_W×BOARD_H（CSS 锁定 500×500）
+        CELL = (BOARD_W - PAD * 2 - GAP * (SIZE - 1)) / SIZE;
+        slotLayerDirty = true; // 槽位几何（SIZE/CELL）已变：下一帧重建空槽静态层
+        resetBoard(); // 以新尺寸重铺预览棋盘，开始面板背后即时可见
+        // 切换难度：若存档属于被放弃的旧难度则清除；初始化恢复难度时存档与新难度一致，不受影响
+        // （存储不可用时读取返回 null，跳过旧档清理，不中断难度切换）
+        let stale = null;
+        stale = Arcade.loadRaw(SAVE_KEY); // 存储不可用时静默跳过
+        if (stale) {
+            try {
+                if (JSON.parse(stale).diff !== key) clearProgress();
+            } catch (e) { /* 存档损坏交由 restoreSnapshot 校验丢弃，不在此清除 */ }
+        }
     }
-    resetBoard(); // 以新尺寸重铺预览棋盘，开始面板背后即时可见
-    // 切换难度：若存档属于被放弃的旧难度则清除；初始化恢复难度时存档与新难度一致，不受影响
-    // （存储不可用时读取返回 null，跳过旧档清理，不中断难度切换）
-    let stale = null;
-    stale = Arcade.loadRaw(SAVE_KEY); // 存储不可用时静默跳过
-    if (stale) {
-        try {
-            if (JSON.parse(stale).diff !== key) clearProgress();
-        } catch (e) { /* 存档损坏交由 restoreSnapshot 校验丢弃，不在此清除 */ }
-    }
-}
+});
 
 /** 推进自定义连滑：按住方向键期间，先等 REPEAT_DELAY 再以 REPEAT_RATE 节奏补发滑动。
  *  替代系统按键重复（初始延迟约 0.5s 且节奏随机），长按连滑更跟手；
@@ -1667,11 +1665,10 @@ for (const btn of document.querySelectorAll('.layout button')) {
     btn.addEventListener('mouseenter', () => SFX.uiHover());
 }
 
-// 全屏切换 CRT 音效：进入全屏播开机音，退出播关机音（对齐街机厅其他游戏的 CRT 仪式感）
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
+// 全屏切换 CRT 音效：全屏状态真实翻转时进全屏播开机音、退出播关机音，本地
+// fullscreenchange 与 iframe 嵌入模式 arcade:fs 广播两路径已收口共享库 fullscreen.js
+// （含首条广播静默校准）；嵌入模式此前无 CRT 音，统一后与 tetris/snake 对齐
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 /* ---------- 主循环 ---------- */
 
@@ -1722,12 +1719,13 @@ try {
         }
     }
 } catch (e) { /* 存储不可用时最高分按 0 处理 */ }
-// 难度恢复：与上一次选择一致（对齐其他游戏难度记忆；必须先于 restoreSnapshot，否则存档 diff 校验失败）
+// 难度恢复：与上一次选择一致（对齐其他游戏难度记忆；必须先于 restoreSnapshot，否则存档 diff 校验失败）；
+// sync 为程序化恢复路径（高亮+onChange，不存档不发声），外层守卫保持"未知键名/默认难度跳过"原状
 let savedDifficulty = null;
 savedDifficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储不可用时保持 null，走默认难度
 if (DIFFICULTIES[savedDifficulty] && savedDifficulty !== DEFAULT_DIFFICULTY) {
     try {
-        selectDifficulty(savedDifficulty);
+        difficultyCtl.sync(savedDifficulty);
     } catch (e) {
         // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（铺棋盘/续玩/循环启动全部跳过）
         console.warn('[1024] 难度恢复异常（已回退默认难度）:', e);

@@ -12,6 +12,9 @@
  *       位于业务 js 之前加载（加载序由 tests/check.py 检查项 3 守护）。
  *       皮肤（墙/toast 的 CSS）与成就定义表仍归各游戏所有——本库只认类名契约
  *       （.ach-panel/.ach-head/.ach-grid/.ach-card/.ach-toast 等，见 docs/技术文档.md）。
+ * 挂载契约（v3.1 双模式）：页面可只留 <div id="achWall" hidden></div> 锚元素，整墙 DOM
+ *       由本库构建（id/类名与旧页面 markup 逐字一致，保 CSS 契约与无头测试查询兼容）；
+ *       旧式页面（wall 内已有完整 DOM）照常按 id 提取引用回填 mount，双模式向后兼容。
  *
  * 挂载到 window：与 fx.js / arcade-common.js 导出风格一致；
  * Ach.init(opts) 完成后实例方法上提合并到 window.Ach（toggle/isOpen/trackRunStat 等），
@@ -85,6 +88,98 @@
         return { unlocked: unlocked, best: Object.assign({}, opts.bestDefaults) };
     }
 
+    /* ---------------------------- 挂载 DOM 双模式保障 ---------------------------- */
+
+    /**
+     * 挂载 DOM 双模式保障（Wave1 向后兼容，Wave2 起页面只留锚元素）：
+     * ① 旧式页面——mount.wall 内已有完整成就墙 DOM：仅在 wall 内按现网 markup 的 id
+     *    提取 grid/count/total/barFill 引用，toast 栈按现网实际 DOM 位置（body 直下、
+     *    紧随 achWall 的兄弟节点）在文档级按 id 查取，全部回填 mount；
+     * ② 新式锚元素——页面只留 <div id="achWall" hidden></div>（wall 无子元素）：库内以
+     *    与旧页面 markup 逐字相同的 id/类名/层级 createElement 构建整墙（.ach-panel、
+     *    头部、关闭按钮、#achCount/#achTotal、进度条、#achGrid），toast 栈同样按现网
+     *    实际 DOM 位置（wall 的下一个兄弟节点）创建。
+     * id/类名与旧页面 markup 逐字一致：保 CSS 契约与无头测试查询兼容（两模式均成立）
+     * @param {{wall: HTMLElement, grid?: HTMLElement, count?: HTMLElement, total?: HTMLElement,
+     *           barFill?: HTMLElement, toasts?: HTMLElement}} mount 挂载对象（节点引用回填其上，
+     *           游戏侧若持有引用照旧可用）
+     */
+    function ensureMountDom(mount) {
+        if (mount.wall.childElementCount > 0) {
+            // 旧式页面：整墙 DOM 已在页面 markup 中，仅提取引用（未命中时回退调用方传入值）
+            mount.grid = mount.wall.querySelector('#achGrid') || mount.grid || null;
+            mount.count = mount.wall.querySelector('#achCount') || mount.count || null;
+            mount.total = mount.wall.querySelector('#achTotal') || mount.total || null;
+            mount.barFill = mount.wall.querySelector('#achBarFill') || mount.barFill || null;
+            // toast 栈不在 wall 内（body 直下兄弟节点），文档级按 id 查
+            mount.toasts = document.getElementById('achToastStack') || mount.toasts || null;
+            return;
+        }
+        // 新式锚元素：库内构建整墙（id/类名与旧页面 markup 逐字一致，保 CSS 契约与无头测试查询兼容）
+        const panel = document.createElement('div');
+        panel.className = 'ach-panel';
+        const head = document.createElement('div');
+        head.className = 'ach-head';
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'ach-title-wrap';
+        const title = document.createElement('div');
+        title.className = 'ach-title';
+        title.textContent = '成就墙';
+        const sub = document.createElement('div');
+        sub.className = 'ach-sub';
+        sub.textContent = 'ACHIEVEMENT WALL';
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(sub);
+        const progress = document.createElement('div');
+        progress.className = 'ach-progress';
+        const countLine = document.createElement('div');
+        countLine.className = 'ach-count';
+        const count = document.createElement('span');
+        count.id = 'achCount';
+        count.textContent = '0';
+        const total = document.createElement('span');
+        total.id = 'achTotal';
+        total.textContent = '0';
+        countLine.appendChild(count);
+        countLine.appendChild(document.createTextNode(' / ')); // 与旧 markup 的"0 / 0"间隔逐字一致
+        countLine.appendChild(total);
+        const bar = document.createElement('div');
+        bar.className = 'ach-bar';
+        const barFill = document.createElement('div');
+        barFill.className = 'ach-bar-fill';
+        barFill.id = 'achBarFill';
+        bar.appendChild(barFill);
+        progress.appendChild(countLine);
+        progress.appendChild(bar);
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'ach-close';
+        closeBtn.setAttribute('aria-label', '关闭成就墙');
+        closeBtn.textContent = '✕';
+        head.appendChild(titleWrap);
+        head.appendChild(progress);
+        head.appendChild(closeBtn);
+        const grid = document.createElement('div');
+        grid.className = 'ach-grid';
+        grid.id = 'achGrid';
+        const foot = document.createElement('div');
+        foot.className = 'ach-foot';
+        foot.textContent = '继续挑战解锁全部成就 · 史诗 / 传说级成就达成时附赠金色烟花庆典';
+        panel.appendChild(head);
+        panel.appendChild(grid);
+        panel.appendChild(foot);
+        mount.wall.appendChild(panel);
+        // toast 栈按现网 markup 的实际 DOM 位置创建：body 直下、紧随 achWall 的兄弟节点（不在 wall 内）
+        const toasts = document.createElement('div');
+        toasts.id = 'achToastStack';
+        toasts.setAttribute('aria-live', 'polite');
+        mount.wall.insertAdjacentElement('afterend', toasts);
+        mount.grid = grid;
+        mount.count = count;
+        mount.total = total;
+        mount.barFill = barFill;
+        mount.toasts = toasts;
+    }
+
     /* ---------------------------- 初始化入口 ---------------------------- */
 
     /**
@@ -96,27 +191,31 @@
      *               rarity: 'common'|'rare'|'epic'|'legendary', stat: string, target: number}>,
      *   storageKey: string,
      *   bestDefaults: Object<string, number>,
-     *   mount: {wall: HTMLElement, grid: HTMLElement, count: HTMLElement,
-     *           total: HTMLElement, barFill: HTMLElement, toasts: HTMLElement},
+     *   mount: {wall: HTMLElement, grid?: HTMLElement, count?: HTMLElement,
+     *           total?: HTMLElement, barFill?: HTMLElement, toasts?: HTMLElement},
      *   sfx?: {unlock?: Function, ui?: Function},
      *   canOpen?: Function,
      *   onToggle?: Function,
      *   migrate?: Function
      * }} opts 初始化选项：defs 定义表 / storageKey 存档键 / bestDefaults 统计默认值 /
-     *   mount 六个挂载节点（各游戏 html 现有 DOM） / sfx 音效钩子（默认 newRecord 与 uiClick） /
-     *   canOpen V 键开墙前置守卫（如「仅游戏进行中可开」） / onToggle 开合回调（挂起/恢复 BGM 等
-     *   游戏副作用，参数 open 布尔） / migrate 自有迁移钩子（见 loadStore）
+     *   mount 仅 wall 必传——旧式页面（wall 内已有 DOM）按 id 提取六节点引用回填，
+     *   新式锚元素（wall 为空）由库内构建整墙 DOM 并回填（见 ensureMountDom） /
+     *   sfx 音效钩子（默认 newRecord 与 uiClick） / canOpen V 键开墙前置守卫
+     *   （如「仅游戏进行中可开」） / onToggle 开合回调（挂起/恢复 BGM 等游戏副作用，
+     *   参数 open 布尔） / migrate 自有迁移钩子（见 loadStore）
      * @returns {{toggle: Function, open: Function, close: Function, isOpen: Function,
      *            trackRunStat: Function, unlock: Function, getStore: Function, renderWall: Function}}
      *   实例 API（同时已合并到 window.Ach）
      */
     function init(opts) {
         if (!opts || !Array.isArray(opts.defs) || !opts.storageKey || !opts.bestDefaults ||
-            !opts.mount || !opts.mount.wall || !opts.mount.grid) {
-            throw new Error('Ach.init 参数缺失（defs/storageKey/bestDefaults/mount.wall/mount.grid 必传）');
+            !opts.mount || !opts.mount.wall) {
+            throw new Error('Ach.init 参数缺失（defs/storageKey/bestDefaults/mount.wall 必传，其余节点由库内兜齐）');
         }
         const defs = opts.defs;
         const store = loadStore(opts);
+        // 挂载 DOM 双模式保障：旧式页面提取引用，新式锚元素库内构建（详见 ensureMountDom）
+        ensureMountDom(opts.mount);
 
         const state = { open: false };
 

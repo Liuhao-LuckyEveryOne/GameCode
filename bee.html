@@ -19,6 +19,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>小蜜蜂 - 像素街机厅</title>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <!-- 成就墙·金杯触发器共享样式 -->
+    <link rel="stylesheet" href="ach-trigger.css?v=20261118-1">
     <style>
         /* ---------- 主题变量：底色 / 面板 / 霓虹色 / 文字 ---------- */
         :root {
@@ -29,6 +31,16 @@
             --neon-blue: #35e0ff;
             --neon-yellow: #ffd23e;
             --text: #ffe8f3;
+        /* ---- 成就墙皮肤主题映射（Wave2 收编）：本页仅留取值行，规则本体统一在 ach-trigger.css 收编层，取值与原页内皮肤逐字一致 ---- */
+        --ach-accent: 255, 62, 165; /* 主题色 RGB 三元组：面板描边/辉光、关闭键、脚注、副标题 */
+        --ach-wall-bg: rgba(12, 7, 10, 0.78); /* 遮罩底色 */
+        --ach-panel-grad: linear-gradient(160deg, rgba(40, 17, 28, 0.80), rgba(24, 10, 16, 0.80)); /* 面板渐变底 */
+        --ach-panel-glow: 0 0 40px rgba(255, 62, 165, 0.25); /* 面板外辉光段 */
+        --ach-desc-c: rgba(255, 232, 243, 0.55); /* 卡片描述文字 */
+        --ach-meta-c: rgba(255, 232, 243, 0.45); /* 进度区元信息文字 */
+        --ach-bar-grad: linear-gradient(90deg, #ffd23e, #ff9a3e); /* 总进度条渐变 */
+        --ach-prog-grad: linear-gradient(90deg, #35e0ff, #ff3ea5); /* 卡片进度条渐变 */
+        --ach-toast-grad: linear-gradient(120deg, rgba(40, 17, 28, 0.95), rgba(24, 10, 16, 0.95)); /* toast 渐变底 */
         }
         /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
         html { background: var(--bg); }
@@ -416,7 +428,6 @@
             -webkit-backdrop-filter: blur(4px);
             backdrop-filter: blur(4px);
         }
-        #achWall[hidden] { display: none; }
         /* 成就面板：粉金主题渐变底 + 霓虹描边，纵向 flex（头部 / 总进度 / 卡片网格） */
         .ach-panel {
             display: flex;
@@ -536,12 +547,10 @@
             to { transform: translateX(430%) skewX(-16deg); }
         }
         /* 未解锁：图标置灰、名字减淡，暗示"待解锁" */
-        .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
         .ach-card.locked .ach-name { color: rgba(255, 232, 243, 0.5); }
         .ach-icon { position: relative; flex-shrink: 0; font-size: 24px; line-height: 1.2; }
         /* 锁形小徽标：未解锁卡挂在图标右下角（共享库规范结构） */
         .ach-icon .ach-lock { position: absolute; right: -7px; bottom: -4px; font-size: 12px; opacity: 0.55; }
-        .ach-info { flex: 1; min-width: 0; }
         .ach-name {
             /* 留出右上角稀有度徽章的位置（共享库把徽章绝对定位在卡片右上角） */
             margin-right: 52px;
@@ -609,17 +618,6 @@
             animation: achCardIn 0.45s ease-out backwards, achLegendPulse 2.2s ease-in-out infinite;
             animation-delay: calc(var(--i, 0) * 60ms), calc(var(--i, 0) * 60ms + 0.6s);
         }
-        /* 成就 toast 容器：右上角悬浮队列，pointer-events 穿透避免挡操作 */
-        .ach-toast-stack {
-            position: fixed;
-            top: 106px;
-            right: 16px;
-            z-index: 30;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            pointer-events: none;
-        }
         /* 单条 toast：解锁瞬间从右侧滑入，toastCycle 单动画完成入位-停留-退场全生命周期
            （入场 0.3s + 停留 2.3s + 出场 0.6s = 3.2s，与全站统一）；共享库监听
            animationend(toastCycle) 移除节点（另有 6s 兜底防动画事件丢失），同屏最多 4 条 */
@@ -673,7 +671,7 @@
             .ach-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); padding: 12px; }
             .ach-head { padding: 12px 12px 8px; }
             .ach-progress { padding: 8px 12px 0; }
-            .ach-toast-stack { top: 90px; right: 10px; left: 10px; }
+            #achToastStack { top: 90px; right: 10px; left: 10px; } /* 窄屏贴顶收窄：id 选择器压过共享层桌面值（栈元素已无 class，见共享 ach-trigger.css） */
             .ach-toast { max-width: none; }
         }
         /* 减弱动态效果：系统开启时跳过入场/出场/呼吸动画，直接静态展示 */
@@ -686,8 +684,6 @@
         /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
         button, a { touch-action: manipulation; }
     </style>
-    <!-- 成就墙·金杯触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261105-8">
 </head>
 <body>
     <!-- 视口四周环绕光带：主题色霓虹流光沿屏幕边缘循环巡游 -->
@@ -695,59 +691,6 @@
     <!-- 固定按钮区：成就墙入口（左上）+ 音效开关 / 全屏切换（右上） -->
     <!-- 成就墙·金杯触发器（全站统一开墙键 V 的可视化入口）：点击等效按 V 开合本游戏成就墙 -->
     <button class="achWallTrigger awt-fixed" type="button" style="--awt-h: var(--neon-pink)" title="成就墙（快捷键 V）">
-        <svg class="aw-cup" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            <defs>
-                <linearGradient id="awcGold" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#fff3b0"/>
-                    <stop offset="0.42" stop-color="#ffd23e"/>
-                    <stop offset="0.72" stop-color="#e3a52a"/>
-                    <stop offset="1" stop-color="#b97e14"/>
-                </linearGradient>
-                <linearGradient id="awcLip" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#fff9d6"/>
-                    <stop offset="1" stop-color="#d9a325"/>
-                </linearGradient>
-                <linearGradient id="awcRibbon" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#ff8a7a"/>
-                    <stop offset="0.55" stop-color="#e03e34"/>
-                    <stop offset="1" stop-color="#9c2018"/>
-                </linearGradient>
-                <linearGradient id="awcBase" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0" stop-color="#ffe79a"/>
-                    <stop offset="0.55" stop-color="#d99a26"/>
-                    <stop offset="1" stop-color="#a86e0e"/>
-                </linearGradient>
-            </defs>
-            <!-- 杯耳：左右对称弯钩 -->
-            <path d="M15 12C7 12 7 24 17 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
-            <path d="M49 12C57 12 57 24 47 26" fill="none" stroke="url(#awcLip)" stroke-width="3.2" stroke-linecap="round"/>
-            <!-- 杯口沿 + 杯身（纵向金色渐变） -->
-            <rect x="12.5" y="6" width="39" height="4.5" rx="2" fill="url(#awcLip)"/>
-            <path d="M14 8h36v7c0 13-7.5 19-18 19-10.5 0-18-6-18-19z" fill="url(#awcGold)"/>
-            <!-- 杯颈 + 双层底座 -->
-            <path d="M28 33h8l2.5 8h-13z" fill="url(#awcBase)"/>
-            <rect x="24" y="41" width="16" height="4.5" rx="1" fill="url(#awcBase)"/>
-            <rect x="19.5" y="45.5" width="25" height="6" rx="1.5" fill="url(#awcBase)"/>
-            <!-- 颈间蝴蝶结：双环自结心向左右环抱 + 结心锥鼓 + 两条短垂带（燕尾开衩），
-                 后绘前置系于杯颈，飘带不再自杯底垂落 -->
-            <path d="M31 35.4C27.8 31 21 29.4 17.8 31.8C14.6 34.2 17 38.6 21.6 39C25.6 39.4 29.2 37.9 31 36.6Z" fill="url(#awcRibbon)"/>
-            <path d="M33 35.4C36.2 31 43 29.4 46.2 31.8C49.4 34.2 47 38.6 42.4 39C38.4 39.4 34.8 37.9 33 36.6Z" fill="url(#awcRibbon)"/>
-            <!-- 环内暗折痕：暗示绸带对折层次 -->
-            <path d="M29.4 36.8C26 35.6 21.6 34.4 18.6 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
-            <path d="M34.6 36.8C38 35.6 42.4 34.4 45.4 32.6" fill="none" stroke="#7d1710" stroke-opacity="0.4" stroke-width="1" stroke-linecap="round"/>
-            <!-- 双垂带：自结心下方左右分开，末端燕尾开衩 -->
-            <path d="M30.5 38.2C29.1 40.3 28.2 41.9 27.6 43.6L29.6 42.9 30.2 44.4C30.9 42.1 31.4 40.3 31.9 39.1Z" fill="url(#awcRibbon)"/>
-            <path d="M33.5 38.2C34.9 40.3 35.8 41.9 36.4 43.6L34.4 42.9 33.8 44.4C33.1 42.1 32.6 40.3 32.1 39.1Z" fill="url(#awcRibbon)"/>
-            <!-- 结心：小鼓形收束 + 暗红折痕 -->
-            <ellipse cx="32" cy="36.3" rx="2.7" ry="2.9" fill="url(#awcRibbon)"/>
-            <path d="M32 34.1v4.4" stroke="#7d1710" stroke-opacity="0.6" stroke-width="0.9" stroke-linecap="round"/>
-            <!-- 飘带高光：双环上缘细亮线 -->
-            <path d="M19.8 33.6C21.8 31.6 24 30.6 26.2 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
-            <path d="M44.2 33.6C42.2 31.6 40 30.6 37.8 30.6" fill="none" stroke="#ffd9cf" stroke-opacity="0.5" stroke-width="1.1" stroke-linecap="round"/>
-            <!-- 杯身高光弧 + 右上星芒点缀 -->
-            <path d="M19 12c0 8 2.5 12.5 7 15" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.6" stroke-linecap="round"/>
-            <path d="M46.5 13.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff8d9" opacity="0.9"/>
-        </svg>
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
@@ -819,35 +762,18 @@
     </div>
     <!-- 成就墙：全屏遮罩 + 面板（头部计数 / 总进度条 / 卡片网格），V 键开关、Esc 或点遮罩关闭；
          卡片网格由共享库 ach-common.js 按规范标记动态填充（bee 页 CSS 提供粉金皮肤） -->
-    <div id="achWall" hidden>
-        <div class="ach-panel">
-            <div class="ach-head">
-                <div class="ach-title">成就墙</div>
-                <div class="ach-head-right">
-                    <!-- 计数/分母拆成两个元素：共享库分别写入（计数走数字滚动补间，分母取定义表长度） -->
-                    <span class="ach-count"><span id="achCount">0</span>/<span id="achTotal">10</span></span>
-                    <button id="achClose" class="ach-close" type="button" aria-label="关闭成就墙">✕</button>
-                </div>
-            </div>
-            <div class="ach-progress">
-                <div class="ach-bar"><div id="achBarFill" class="ach-bar-fill"></div></div>
-            </div>
-            <div id="achGrid" class="ach-grid"></div>
-        </div>
-    </div>
-    <!-- 成就解锁 toast 容器：右上角悬浮队列，解锁瞬间滑入展示后自动移除 -->
-    <div id="achToastStack" class="ach-toast-stack"></div>
+    <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，依赖 SFX/FX) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → bee.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261117-2"></script>
+    <script src="arcade-common.js?v=20261118-1"></script>
     <script src="audio.js?v=20261118-1"></script>
     <script src="fx.js?v=20261118-1"></script>
-    <script src="fullscreen.js?v=20261117-2"></script>
-    <script src="ach-common.js?v=20261118-2"></script>
+    <script src="fullscreen.js?v=20261118-1"></script>
+    <script src="ach-common.js?v=20261118-3"></script>
     <script src="snap-common.js?v=20261118-1"></script>
-    <script src="pause-common.js?v=20261117-1"></script>
+    <script src="pause-common.js?v=20261118-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261118-1"></script>
-    <script src="ach-trigger.js?v=20261105-4"></script>
-    <script src="bee.js?v=20261118-2"></script>
+    <script src="ach-trigger.js?v=20261118-1"></script>
+    <script src="bee.js?v=20261118-3"></script>
 </body>
 </html>

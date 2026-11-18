@@ -14,6 +14,8 @@
  * + 游戏区提亮聚焦（轻内容时 brightness 1.45→1 先行回落，含 iframe/Canvas 自动跳过）
  * + 平滑缩放（进入 0.5s / 退出 0.45s easeOutQuint），
  * 多重动效同步推进；标题以淡入衔接定位切换；过渡期间抑制 resize 重算防止动画被打断
+ * 另收口 CRT 开关机音通知（FS.onCrtAudio）：本地 fullscreenchange 与嵌入 arcade:fs
+ * 广播两条全屏状态路径统一在 sync() 内通知游戏注入的 on/off 回调（首条嵌入广播仅静默校准）
  *
  * 嵌入模式（?embed=1）：页面作为大厅的 iframe 子页运行时，
  * 全屏状态统一由大厅（顶层文档）持有，子页通过 postMessage 与父页通信：
@@ -56,6 +58,11 @@ const FS = (() => {
 
     /** 最近一次同步的全屏态：供窗口尺寸变化时按当前状态重算缩放（嵌入模式下无法实时读取文档全屏态） */
     let lastFs = false;
+
+    /** CRT 开关机音回调（游戏经 FS.onCrtAudio 注入，本库不直接依赖 SFX）：on=进入全屏 / off=退出全屏 */
+    let crtHooks = null;
+    /** 嵌入广播是否已完成首条静默校准：首条 arcade:fs（hello 回复的现状同步）只校准基线不发声，防开场误响 */
+    let crtSynced = false;
 
     /** 全屏过渡动画进行中标志：期间抑制 resize 重算，防止视口变化事件把进行中的过渡打断成瞬移落位 */
     let fsBusy = false;
@@ -416,12 +423,35 @@ const FS = (() => {
     }
 
     /**
+     * CRT 开关机音通知统一入口：本地 fullscreenchange 切换点与嵌入 arcade:fs 广播
+     * 处理点汇聚于此，与游戏层历史残留的各自监听解耦（Wave2 迁移后单一发声源）
+     * @param {boolean} on 目标全屏状态
+     * @param {boolean} viaEmbed 是否嵌入广播路径（首条为 hello 回复的现状同步，仅静默校准基线不发声）
+     */
+    function crtNotify(on, viaEmbed) {
+        // 首条嵌入广播：hello 回复的现状同步（可能与当前基线相同也可能不同），一律只校准不发声
+        if (viaEmbed && !crtSynced) {
+            crtSynced = true;
+            return;
+        }
+        if (!crtHooks) return;
+        // 按方向分发：进入全屏走 on、退出走 off（由游戏注入 SFX 调用）
+        const fn = on ? crtHooks.on : crtHooks.off;
+        if (fn) fn();
+    }
+
+    /**
      * 同步按钮文本与游戏区域缩放（真正的全屏切换会附带过渡动画，resize 重算则即时生效）
      * @param {boolean} [fs] 外部传入的全屏态（嵌入模式由父页广播）；省略时自行读取文档全屏态
      */
     function sync(fs) {
         const on = typeof fs === 'boolean' ? fs : isFullscreen();
         const switched = on !== lastFs; // 判定本次是否为真正的全屏切换（非 resize 重算），切换瞬间才播过渡
+        // CRT 音通知：本地真实翻转必通知；嵌入路径首条广播必送校准（即使与基线相同，
+        // 也要消费掉"现状同步"这个首条，避免后续真实翻转被误静音），其后仅真实翻转通知
+        if (switched || (typeof fs === 'boolean' && !crtSynced)) {
+            crtNotify(on, typeof fs === 'boolean'); // 显式入参仅嵌入广播处理点传入，以此区分两条路径
+        }
         lastFs = on; // 记录当前全屏态，供窗口尺寸变化时按状态重算
         const btn = document.getElementById('fullscreenToggle');
         if (btn) btn.textContent = on ? '全屏 · 关' : '全屏 · 开'; // 动作提示语义：全屏中提示可关闭，未全屏提示可开启
@@ -537,9 +567,20 @@ const FS = (() => {
     // "← 游戏厅"返回链接已移除（位置让给成就墙入口），返回大厅由父页覆盖层 ✕ / 浏览器后退承担
     if (EMBED) initEmbed();
 
+    /**
+     * 注册 CRT 开关机音回调：全屏状态真实翻转时触发（本地 fullscreenchange 与嵌入模式
+     * arcade:fs 广播两条路径统一走此处）；首条嵌入广播（hello 回复的现状同步）仅静默校准不发声
+     * @param {{on?: Function, off?: Function}} hooks on=进入全屏 / off=退出全屏（由游戏注入 SFX 调用，本库不直接依赖 SFX）
+     */
+    function onCrtAudio(hooks) {
+        crtHooks = hooks || null;
+    }
+
     return {
         /** 切换全屏入口（供按钮 onclick 调用） */
-        toggle
+        toggle,
+        /** 注册 CRT 开关机音回调（游戏层注入 SFX 调用，替代游戏各自监听的历史残留） */
+        onCrtAudio
     };
 })();
 // 挂载到 window：与 fx.js / arcade-common.js 导出风格一致，供页面 inline 处理器与跨脚本引用

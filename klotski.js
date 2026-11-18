@@ -1100,7 +1100,7 @@ function validateKlotskiSnapshot(snap) {
 /**
  * 将已通过校验的快照应用到运行状态：切到快照的布局与难度，重新装载布局后把棋子
  * 摆到快照局面并同步步数（布局 / 难度切换含按钮高亮与选择持久化，与侧栏
- * selectLayout / selectDifficulty 行为一致），返回 true 由调用方直接进入可玩状态。
+ * 点击切换行为一致），返回 true 由调用方直接进入可玩状态。
  * @param {object} snap 已通过 validateKlotskiSnapshot 校验的快照对象
  * @returns {boolean} 恒返回 true（应用成功；意外抛错由管线兜底弃档）
  */
@@ -1116,7 +1116,8 @@ function applyKlotskiSnapshot(snap) {
         Arcade.saveRaw(LAYOUT_KEY, String(li));
         document.querySelectorAll('.layout-btn').forEach((b, i) => b.classList.toggle('active', i === li));
     }
-    // 切到快照难度（含按钮高亮、难度选择持久化与辅助开关刷新，与 selectDifficulty 行为一致）
+    // 切到快照难度（含按钮高亮、难度选择持久化与辅助开关刷新；难度点击时序
+    // 已收编共享库 bindDifficultyButtons，快照路径按 id 手动同步不走点击时序）
     if (di !== diffIndex) {
         diffIndex = di;
         Arcade.saveRaw(DIFF_KEY, String(di)); // 难度持久化：续玩恢复上次难度（隐私模式写失败静默，不影响本局恢复）
@@ -1168,24 +1169,22 @@ function selectLayout(btn) {
     loadLayout(parseInt(btn.dataset.index, 10));
 }
 
-/**
- * 侧栏难度按钮点击：高亮切换、持久化选择并刷新难度相关界面；
- * 棋面保留不重开（难度只影响提示/撤销辅助），最少步纪录按新难度刷新显示
- * @param {HTMLButtonElement} btn 被点击的难度按钮（data-index 为难度序号）
- */
-function selectDifficulty(btn) {
-    const idx = parseInt(btn.dataset.index, 10);
-    if (idx === diffIndex) return; // 重复点击当前难度：无操作
-    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    diffIndex = idx;
-    Arcade.saveRaw(DIFF_KEY, String(idx)); // 隐私模式写失败静默，不影响本局难度切换
-    applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮
-    bestMoves = readBest(LAYOUTS[layoutIndex].id, currentDiffId()); // 纪录随难度切换显示
-    bestRank = readRank(LAYOUTS[layoutIndex].id, currentDiffId()); // 最佳评级随难度切换显示
-    updateHud();
-    SFX.uiClick();
-}
+/* 侧栏难度按钮收编共享库：blur→高亮→持久化（序号裸串）→点击音→onChange 统一时序，
+ * 棋面保留不重开（难度只影响提示/撤销辅助），最少步纪录按新难度刷新显示 */
+const diffCtl = Arcade.bindDifficultyButtons({
+    bar: document,
+    btnSelector: '.diff-btn', // 本页难度按钮类名与库默认 .difficulty-btn 不同
+    storageKey: DIFF_KEY,
+    persist: 'index', // 存 DOM 序号裸串，兼容历史存档格式
+    canPick(_btn, idx) { return idx !== diffIndex; }, // 复刻原实现"重复点击不响应"守卫：同档重选不发声不落盘
+    onChange(_btn, idx) {
+        diffIndex = idx;
+        applyDifficultyUi(); // 大师难度：同步置灰侧栏撤销按钮
+        bestMoves = readBest(LAYOUTS[layoutIndex].id, currentDiffId()); // 纪录随难度切换显示
+        bestRank = readRank(LAYOUTS[layoutIndex].id, currentDiffId()); // 最佳评级随难度切换显示
+        updateHud();
+    }
+});
 
 /**
  * 开始游戏（开始遮罩按钮）：隐藏遮罩并进入 playing，开始计时
@@ -2896,9 +2895,11 @@ canvas.addEventListener('pointerdown', e => {
     Arcade.capturePointer(canvas, e.pointerId); // 拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
 });
 
-// 暂停面板本体点击恢复：面板悬浮于画布之上会拦截 pointerdown（不再落到上方 canvas 监听），
-// 单独转发 togglePause，保持「画布点击即恢复」体验与 DOM 化之前一致
-pauseScreen.addEventListener('pointerdown', () => togglePause());
+// 暂停面板按下即恢复收口共享库（Pause.bindOverlayResume，overlay 模式）：面板悬浮于
+// 画布之上会拦截 pointerdown（不再落到上方 canvas 监听），库内在面板元素上监听
+// pointerdown 调 resume（自带 isPaused 幂等，无需外层判态），保持「画布点击即恢复」
+// 体验与 DOM 化之前一致
+Pause.bindOverlayResume(pausePipe, { overlay: pauseScreen, target: 'overlay' });
 
 /**
  * 指针移动：首次超过阈值时确定主滑动方向并探测可滑格数；
@@ -3098,22 +3099,10 @@ Snap.bindFocusLoss(handleFocusLoss);
 
 /* ===================== CRT 全屏开关音效 ===================== */
 
-// 独立打开：监听全屏切换，进入全屏响 CRT 开机音、退出响关机音（模拟机台通电质感）
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
-
-// iframe 嵌入（?embed=1）：fullscreenchange 不穿越文档边界，全屏态由父页大厅持有
-// 并广播 arcade:fs 消息，此处同样接入 CRT 开关机音，保证两种打开方式行为一致
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）：仅同源 + file:// 豁免
-Arcade.onTrustedMessage(e => {
-    const d = e.data;
-    if (d && d.type === Arcade.MSG.FS) {
-        if (d.fs) SFX.crtOn();
-        else SFX.crtOff();
-    }
-});
+// CRT 开关机音收口共享库 fullscreen.js（FS.onCrtAudio）：独立打开的 fullscreenchange
+// 与 iframe 嵌入（?embed=1）的 arcade:fs 广播两条路径在库内统一分发——仅真实翻转时
+// 发声，首条嵌入广播（hello 回复的现状同步）静默校准不发声，嵌入页开场不再误响开机音
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 // 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
 // 与触发点 b（页面卸载兜底：关闭标签页 / 刷新 / 父页移除 iframe 均触发）两处接线
@@ -3164,13 +3153,13 @@ document.querySelectorAll('.layout-btn')[dailyIndex()].classList.add('daily');
 document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
 document.querySelectorAll('.layout-btn')[layoutIndex].classList.add('active');
 updateDailyLine(); // 开始遮罩每日一题信息行：今日题目名 + 完成状态
-// 难度恢复：按上次持久化的选择点亮按钮（默认进阶，序号 1）并应用辅助开关
+// 难度恢复：按上次持久化的选择程序化点亮按钮（默认进阶，序号 1）；
+// sync 不存档不发声，onChange 内含辅助开关与纪录刷新
 const savedDiffIndex = parseInt(Arcade.loadRaw(DIFF_KEY), 10); // 隐私模式读失败得 NaN，走默认难度
 if (!Number.isNaN(savedDiffIndex) && savedDiffIndex >= 0 && savedDiffIndex < DIFF_IDS.length) {
     diffIndex = savedDiffIndex;
 }
-document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
-document.querySelectorAll('.diff-btn')[diffIndex].classList.add('active');
+diffCtl.sync(diffIndex);
 applyDifficultyUi();
 loadLayout(layoutIndex);
 // 进度镜像快照恢复：核心状态创建后、默认开新局之前执行。

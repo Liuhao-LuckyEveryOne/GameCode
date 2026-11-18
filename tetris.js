@@ -1141,24 +1141,20 @@ function togglePause() {
     pausePipe.toggle();
 }
 
-/**
- * 选择难度：更新初始下落速度、分数倍率与无敌模式开关，并切换按钮高亮
- * @param {HTMLButtonElement} btn 被点击的难度按钮（data-drop / data-mult / data-invincible）
- */
-function selectDifficulty(btn) {
-    // 移除按钮焦点，防止空格误触按钮
-    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-    dropBase = parseInt(btn.dataset.drop);
-    scoreMult = parseInt(btn.dataset.mult);
-    // 无敌模式开关：按钮带 data-invincible="1" 即无敌档，其余档位无此属性视为关闭
-    invincibleMode = btn.dataset.invincible === '1';
-    // 切换高亮样式
-    document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    // 持久化所选难度（按钮组中的序号），供下次加载时恢复
-    Arcade.saveRaw(DIFFICULTY_KEY, String([...document.querySelectorAll('.difficulty-btn')].indexOf(btn))); // 存储不可用时静默跳过，持久化失败不影响难度切换
-    SFX.uiClick();
-}
+/* 难度按钮组点击时序收口共享库 bindDifficultyButtons：blur 防空格误触 → 清全部高亮/
+ * 点亮当前 → saveRaw 持久化序号（index 模式，兼容历史存档格式）→ SFX 点击音 → onChange，
+ * 全序列在库内 click 监听完成；游戏侧仅在 onChange 读按钮 data-* 写自家难度变量 */
+const difficultyCtl = Arcade.bindDifficultyButtons({
+    bar: document.getElementById('difficultySelect'),
+    storageKey: DIFFICULTY_KEY,
+    persist: 'index',
+    onChange: (btn) => {
+        dropBase = parseInt(btn.dataset.drop);
+        scoreMult = parseInt(btn.dataset.mult);
+        // 无敌模式开关：按钮带 data-invincible="1" 即无敌档，其余档位无此属性视为关闭
+        invincibleMode = btn.dataset.invincible === '1';
+    }
+});
 
 /**
  * 按等级推导下落间隔：以难度初始间隔 dropBase 为基准，每升 1 级缩短 60ms，下限 80ms
@@ -1390,14 +1386,11 @@ function handleFocusLoss() {
 // 失焦/切后台双通道接线收口于 snap-common.js（blur + visibilitychange hidden 共用同一清理函数）
 Snap.bindFocusLoss(handleFocusLoss);
 
-// 暂停遮罩点击恢复（参照华容道 / 蜜蜂机台）：遮罩悬浮于画布之上会拦截点击，
-// 点击遮罩空白处即恢复（与 P 键同走 togglePause；失焦自动暂停弹出的遮罩同样适用，
-// 因为二者共用同一遮罩与暂停状态）；点在遮罩内按钮/链接上时不触发恢复，
-// 避免误触 UI（如返回大厅）导致先恢复运行再跳转、快照存成运行态
-pauseScreen.addEventListener('pointerdown', e => {
-    if (e.target.closest('button, a')) return; // 按钮/链接只响应自身点击语义，不充当恢复热区
-    togglePause(); // 内部自守卫：未开局 / 成就墙打开时不会误恢复
-});
+// 暂停遮罩点击恢复：点遮罩空白处即恢复（与 P 键等效；失焦自动暂停弹出的遮罩同样适用，
+// 因为二者共用同一遮罩与暂停状态），统一收口 pause-common.js（库内 resume 自带 isPaused
+// 幂等）；遮罩内无按钮/链接可交互元素，无需 exclude 排除，遮罩悬浮于画布之上会拦截点击，
+// 恰好让"点画布区域不误恢复"与点遮罩恢复各得其所
+Pause.bindOverlayResume(pausePipe, { overlay: pauseScreen });
 
 // ---------- 触屏按钮控制 ----------
 // 与键盘 keydown 同源的动作函数：单发（旋转/硬降/Hold）pointerdown 直接触发，
@@ -1701,31 +1694,11 @@ function restoreSnapshot() {
 //（未开始/已结束由管线内部清除）
 Snap.bindAutoSave(snapPipe);
 
-// ---------- CRT 开关机音效双监听 ----------
-let embedFsLast = null; // iframe 嵌入模式下最近一次全屏状态（null=尚未同步，首条消息静默）
-
-// 独立打开模式：监听文档全屏切换，进全屏播开机音、退出播关机音
-document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) SFX.crtOn();
-    else SFX.crtOff();
-});
-
-// iframe 嵌入模式：父页面通过 postMessage 广播全屏状态
-// 来源守卫收口至 arcade-common.js（Arcade.onTrustedMessage）；跨源伪造的 arcade:fs
-// 指令在守卫处丢弃，防止干扰全屏音效
-Arcade.onTrustedMessage(e => {
-    const d = e.data;
-    if (!d || typeof d !== 'object') return;
-    if (d.type === Arcade.MSG.FS) {
-        const fs = !!d.fs;
-        // 边沿检测：仅状态翻转时发声；首条消息（embedFsLast 为 null）仅静默同步状态
-        if (embedFsLast !== null && fs !== embedFsLast) {
-            if (fs) SFX.crtOn();
-            else SFX.crtOff();
-        }
-        embedFsLast = fs;
-    }
-});
+// ---------- CRT 开关机音效 ----------
+// 全屏状态真实翻转时播 CRT 开关机音：本地 fullscreenchange 与 iframe 嵌入模式
+// arcade:fs 广播（含来源守卫与首条广播静默校准）两路径已收口共享库 fullscreen.js，
+// 此处仅注入 SFX 调用；嵌入模式此前由本文件自维护 embedFsLast 边沿检测，现随库统一
+FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 
 // 窗口尺寸变化：三块画布按新 DPR 重建物理分辨率（CSS 逻辑尺寸固定不变）
 window.addEventListener('resize', () => {
@@ -1737,15 +1710,14 @@ window.addEventListener('resize', () => {
 
 // ---------- 初始化 ----------
 
-// 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2：无敌0/简单1/中等2/困难3；
-// 加载时 AudioContext 尚未激活，selectDifficulty 中的 uiClick 无声，无害）
+// 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2：无敌0/简单1/中等2/困难3）；
+// sync 为程序化恢复路径（高亮+onChange，不存档不发声），越界序号由 sync 内静默忽略
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 转 NaN），走默认难度
 let savedDifficultyIndex = NaN;
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10);
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
-        const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-        if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+        difficultyCtl.sync(savedDifficultyIndex);
     } catch (e) {
         // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（快照恢复与循环启动全部跳过）
         console.warn('[tetris] 难度恢复异常（已回退默认难度）:', e);

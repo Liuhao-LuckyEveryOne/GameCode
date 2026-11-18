@@ -129,3 +129,346 @@
     .achWallTrigger::after,
     .aw-cup { transition: none !important; }
 }
+
+
+/* ---------- 成就墙皮肤参数化收编（Wave2）v1.6 (20261118)
+ * snake/tetris/pac/pinball/1024 五页皮肤结构经逐条 diff 验证逐字一致、仅主题
+ * 颜色互异，全部收编至本层（bee/klotski 例外，见分区头注释）；颜色抽为
+ * --ach-* 变量，各页 <style> 以 :root 映射行提供本页取值（缺省回退 snake 绿）：
+ *   --ach-accent          主题色 RGB 三元组（边框/辉光/按钮/关闭键，rgba(var()) 组合）
+ *   --ach-sec             次主题色 RGB 三元组（计数文本 + 进度条辉光）
+ *   --ach-wall-bg         遮罩底色整值（含 alpha）
+ *   --ach-panel-grad      面板渐变整值
+ *   --ach-panel-glow      面板外辉光整段 shadow 值（pac 为青色异色故独立成变量）
+ *   --ach-bar-grad        头部进度条渐变整值
+ *   --ach-unlock-prog-grad 已解锁卡片进度渐变整值（与 bar-grad 仅 snake 等四页同值）
+ *   --ach-prog-grad       卡片基础进度渐变整值
+ *   --ach-toast-grad      toast 渐变整值
+ *   --ach-desc-c / --ach-meta-c / --ach-locked-c / --ach-unlock-desc-c
+ *                          四级灰阶文本色
+ * 标题/解锁名/勋章金字统一 var(--neon-gold, var(--neon-yellow)) 复用页面既有
+ * 变量（gold 与 yellow 各页均定义为 #ffd23e，取其一即可）。
+ * 加载顺序契约：页面 <link ach-trigger.css> 位于页面 <style> 之前——
+ * 五页删副本后本层接管；bee/klotski 保留副本，以同特异度后载优势压过本层，
+ * @keyframes 同名时后载者整体胜出，其 toastCycle/achCardIn 副本因此保真。
+ * ------------------------------------------------------------------ */
+
+#achWall {
+    position: fixed;
+    inset: 0;
+    z-index: 20; /* 高于右上角固定按钮(10)：遮罩期间全屏聚焦成就墙 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--ach-wall-bg);
+    -webkit-backdrop-filter: blur(6px); /* Safari 旧版需 -webkit- 前缀，成对书写两侧通吃 */
+    backdrop-filter: blur(6px);
+    animation: wallFade 0.25s ease-out;
+}
+#achWall[hidden] { display: none; }
+@keyframes wallFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+.ach-panel {
+    width: min(720px, 94vw);
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+    /* 玻璃质感面板：半透明底 + 磨砂模糊（呼应大厅卡片玻璃拟态），白缘顶光 + 霓虹描边辉光 */
+    background: var(--ach-panel-grad);
+    border: 1px solid rgba(var(--ach-accent), 0.45);
+    border-radius: 14px;
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 0 42px var(--ach-panel-glow), inset 0 0 60px rgba(var(--ach-accent), 0.05);
+    animation: wallPanelIn 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes wallPanelIn {
+    from { opacity: 0; transform: translateY(18px) scale(0.94); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ach-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid rgba(var(--ach-accent), 0.25);
+}
+.ach-title-wrap { flex: 1; text-align: left; }
+.ach-title {
+    margin: 0;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 15px;
+    letter-spacing: 3px;
+    color: var(--neon-gold, var(--neon-yellow));
+    text-shadow: 0 0 14px rgba(255, 210, 62, 0.55);
+}
+.ach-sub {
+    margin: 5px 0 0;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 8px;
+    letter-spacing: 5px;
+    color: rgba(var(--ach-accent), 0.6);
+}
+.ach-progress { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.ach-count {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    color: rgb(var(--ach-sec));
+    text-shadow: 0 0 8px rgba(var(--ach-sec), 0.6);
+}
+.ach-bar {
+    width: 150px;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+.ach-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--ach-bar-grad);
+    box-shadow: 0 0 8px rgba(var(--ach-sec), 0.6);
+    transition: width 0.45s ease-out;
+}
+.ach-close {
+    width: 34px;
+    height: 34px;
+    margin: 0;
+    padding: 0;
+    font-size: 14px;
+    letter-spacing: 0;
+    color: rgb(var(--ach-accent));
+    background: rgba(var(--ach-accent), 0.08);
+    border: 1px solid rgba(var(--ach-accent), 0.4);
+    border-radius: 8px;
+    box-shadow: none;
+}
+.ach-close:hover {
+    background: rgba(var(--ach-accent), 0.16);
+    box-shadow: 0 0 10px rgba(var(--ach-accent), 0.4);
+}
+.ach-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    padding: 14px 18px;
+    overflow-y: auto;
+}
+.ach-card {
+    position: relative;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border-radius: 10px;
+    /* 玻璃卡片：白质渐变底 + 白缘描边 + 顶缘高光（与大厅卡片玻璃拟态同源；已解锁卡另有 achSheen 周期流光） */
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    text-align: left;
+    overflow: hidden;
+    animation: achCardIn 0.45s ease-out backwards;
+    animation-delay: calc(var(--i) * 60ms); /* 瀑布入场：按卡片序号依次滑入 */
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+@keyframes achCardIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ach-card:hover { transform: translateY(-3px); }
+.ach-rarity-chip {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    padding: 2px 8px;
+    font-size: 10px;
+    letter-spacing: 2px;
+    border-radius: 999px;
+    border: 1px solid;
+}
+.ach-icon {
+    position: relative;
+    flex: none;
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 26px;
+    background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 65%);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.ach-lock {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    font-size: 12px;
+    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+}
+.ach-info { flex: 1; min-width: 0; }
+.ach-name {
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-right: 52px; /* 让出右上角徽章位置，避免长名与其重叠 */
+}
+.ach-desc {
+    margin: 3px 0 7px;
+    font-size: 11px;
+    color: var(--ach-desc-c);
+    line-height: 1.4;
+}
+.ach-prog {
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+}
+.ach-prog-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: var(--ach-prog-grad);
+    transition: width 0.4s ease-out;
+}
+.ach-prog-meta {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--ach-meta-c);
+}
+.ach-card.unlocked .ach-name {
+    color: var(--neon-gold, var(--neon-yellow));
+    text-shadow: 0 0 8px rgba(255, 210, 62, 0.35);
+}
+.ach-card.unlocked .ach-desc { color: var(--ach-unlock-desc-c); }
+.ach-card.unlocked .ach-prog-fill { background: var(--ach-unlock-prog-grad); }
+.ach-card.unlocked::after {
+    content: '';
+    position: absolute;
+    top: -60%;
+    left: -80%;
+    width: 45%;
+    height: 220%;
+    background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+    transform: rotate(8deg);
+    animation: achSheen 3.2s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 0.35s + 0.8s);
+    pointer-events: none;
+}
+@keyframes achSheen {
+    0%, 55% { left: -80%; }
+    85%, 100% { left: 160%; }
+}
+.ach-card.unlocked.rarity-common {
+    border-color: rgba(159, 212, 159, 0.5);
+    box-shadow: 0 0 12px rgba(159, 212, 159, 0.14);
+}
+.ach-card.unlocked.rarity-common:hover { box-shadow: 0 0 20px rgba(159, 212, 159, 0.3); }
+.ach-card.unlocked.rarity-rare {
+    border-color: rgba(53, 224, 255, 0.55);
+    box-shadow: 0 0 14px rgba(53, 224, 255, 0.18);
+}
+.ach-card.unlocked.rarity-rare:hover { box-shadow: 0 0 24px rgba(53, 224, 255, 0.35); }
+.ach-card.unlocked.rarity-epic {
+    border-color: rgba(190, 92, 255, 0.6);
+    box-shadow: 0 0 16px rgba(190, 92, 255, 0.22);
+}
+.ach-card.unlocked.rarity-epic:hover { box-shadow: 0 0 26px rgba(190, 92, 255, 0.4); }
+.ach-card.unlocked.rarity-legendary {
+    border-color: rgba(255, 210, 62, 0.65);
+    box-shadow: 0 0 18px rgba(255, 210, 62, 0.25);
+    animation: achCardIn 0.45s ease-out backwards, legendPulse 2.6s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 60ms), calc(var(--i) * 60ms + 0.6s); /* 传说卡额外呼吸金辉，与瀑布入场错峰 */
+}
+.ach-card.unlocked.rarity-legendary:hover { box-shadow: 0 0 30px rgba(255, 210, 62, 0.45); }
+@keyframes legendPulse {
+    0%, 100% { box-shadow: 0 0 18px rgba(255, 210, 62, 0.25); }
+    50% { box-shadow: 0 0 30px rgba(255, 210, 62, 0.5); }
+}
+.ach-rarity-chip.rarity-common { color: #9fd49f; border-color: rgba(159, 212, 159, 0.5); background: rgba(159, 212, 159, 0.08); }
+.ach-rarity-chip.rarity-rare { color: #7ce4ff; border-color: rgba(53, 224, 255, 0.5); background: rgba(53, 224, 255, 0.08); }
+.ach-rarity-chip.rarity-epic { color: #d9a0ff; border-color: rgba(190, 92, 255, 0.5); background: rgba(190, 92, 255, 0.1); }
+.ach-rarity-chip.rarity-legendary { color: #ffd23e; border-color: rgba(255, 210, 62, 0.55); background: rgba(255, 210, 62, 0.1); }
+.ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
+.ach-card.locked .ach-name { color: var(--ach-locked-c); }
+.ach-card.locked:hover { border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05); }
+.ach-foot {
+    padding: 10px 18px 14px;
+    border-top: 1px solid rgba(var(--ach-accent), 0.18);
+    font-size: 11px;
+    color: var(--ach-meta-c);
+    text-align: center;
+}
+.ach-foot b { color: rgb(var(--ach-accent)); font-weight: normal; }
+#achToastStack {
+    position: fixed;
+    top: 106px; /* 位于右上角"声音/全屏"两枚按钮之下 */
+    right: 16px;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+}
+.ach-toast {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 14px 9px 10px;
+    border-radius: 10px;
+    background: var(--ach-toast-grad);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-left: 3px solid rgb(var(--ach-accent));
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    animation: toastCycle 3.2s ease forwards;
+}
+@keyframes toastCycle {
+    0% { opacity: 0; transform: translateX(56px) scale(0.92); }
+    10%, 80% { opacity: 1; transform: translateX(0) scale(1); }
+    100% { opacity: 0; transform: translateX(40px) scale(0.95); }
+}
+.toast-icon {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 70%);
+    animation: toastIconPop 0.5s cubic-bezier(0.34, 1.6, 0.64, 1);
+}
+@keyframes toastIconPop {
+    from { transform: scale(0.3) rotate(-30deg); }
+    to { transform: scale(1) rotate(0deg); }
+}
+.toast-body { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.toast-cap { font-size: 10px; letter-spacing: 3px; color: var(--ach-desc-c); }
+.toast-name {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--neon-gold, var(--neon-yellow));
+    text-shadow: 0 0 8px rgba(255, 210, 62, 0.4);
+}
+.ach-toast.rarity-common { border-left-color: #9fd49f; }
+.ach-toast.rarity-rare { border-left-color: #35e0ff; }
+.ach-toast.rarity-epic { border-left-color: #be5cff; }
+.ach-toast.rarity-legendary { border-left-color: #ffd23e; }
+.ach-toast.rarity-epic .toast-icon,
+.ach-toast.rarity-legendary .toast-icon { box-shadow: 0 0 14px rgba(255, 210, 62, 0.35); }
+@media (max-width: 640px) {
+    .ach-grid { grid-template-columns: 1fr; }
+    .ach-head { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #achWall, .ach-panel, .ach-card, .ach-card.unlocked::after,
+    .ach-toast, .toast-icon,
+    .ach-card.unlocked.rarity-legendary {
+        animation: none;
+    }
+}
