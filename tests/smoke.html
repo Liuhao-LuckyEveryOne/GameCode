@@ -4,8 +4,10 @@
 
      背景：tests/check.py 为纯静态文本检查，无法验证事件时序、状态机流转等
      运行时行为（2026-11-04 投币豁免监听时序缺陷即漏网于此）。本页在真实浏览器
-     里以同源 iframe 加载真实页面、派发合成 DOM 事件、断言真实副作用，补足
-     行为级验证——零依赖（无 node / playwright），与项目工具链一致。
+     里以同源 iframe 加载真实页面补足运行时验证——黑盒面派发合成 DOM 事件、
+     断言真实副作用；白盒面（S9~S15）直调页内挂 window 的纯函数、断言核心
+     逻辑的数学与几何正确性（页内函数存在性由 check.py 检查项 14 静态守护）
+     ——零依赖（无 node / playwright），与项目工具链一致。
 
      覆盖场景（21 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
@@ -46,7 +48,8 @@
        S21 手柄合成链路  —— bootGamePage 装载 snake 页 + 桩替换 navigator.getGamepads：GP.connected 上浮/拔除复位、
                               合成 keydown/keyup 送达 document 且冒泡 window、key/code 与原生键盘同构（Space key=' '）、
                               按住边沿去重、拔除补发 keyup 防卡键，页面侧 preventDefault 消费即端到端落点证据
-     注：S9~S16 与 S19 均以 ?embed=1 加载真实游戏页，先断言公共库握手两条报到——
+     注：S9~S16 与 S19 均以 ?embed=1 加载真实游戏页（S9~S15 为白盒面直调页内纯函数、
+         S16/S19 黑盒），先断言公共库握手两条报到——
          改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归；
          S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径；
          S20 直引 ach-common.js 以受控 defs 合成实例，渲染契约断言零 iframe 开销；
@@ -61,7 +64,7 @@
      document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
      + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
      本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
-     一键全量验证：python tools/verify_all.py（重建分享包 → 十三项静态检查 →
+     一键全量验证：python tools/verify_all.py（重建分享包 → 十四项静态检查 →
        无头冒烟 → 无头行为回归；自动起随机端口临时服 / 探测本机 Chrome 或 Edge）。
 
      数据安全：启动时快照 localStorage 全部键值，结束时（含 pagehide 兜底）
@@ -100,7 +103,7 @@
 <div id="stage"></div>
 <script src="../arcade-common.js?v=20261117-2"></script>
 <script src="../fx.js?v=20261118-1"></script>
-<script src="../ach-common.js?v=20261118-1"></script>
+<script src="../ach-common.js?v=20261118-2"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------

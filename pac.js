@@ -751,98 +751,99 @@ function saveSnapshot() {
 /**
  * 校验快照数据合法性（管线弃档判定钩子）：v===1 且逐字段类型/范围合法
  * （坐标在迷宫范围内、生命/分数非负有限、幽灵数量与枚举合法、豆子压位串与
- * 迷宫规格逐格互验）。校验辅助采用断言抛错风格，任一不合法立即抛错，
- * 由管线统一捕获并清除快照（本函数不清存储）。
+ * 迷宫规格逐格互验）。布尔校验风格：任一不合法立即返回 false 弃档，
+ * 绝不因脏数据抛错（与共享快照管线的兜底弃档契约一致）。
  * 注意：校验期间会以原迷宫重建基准网格并把快照中已吃掉的豆格清空（写入 grid），
- * 后续校验失败或应用失败时由调用方的新开局流程重建网格，无残留影响。
+ * 校验失败时由调用方的新开局流程重建网格，无残留影响。
  * @param {*} s 待校验的快照对象（JSON 解析结果）
- * @returns {boolean} 全部字段合法返回 true（断言失败即抛出异常）
+ * @returns {boolean} 全部字段合法返回 true，任一非法返回 false
  */
 function validatePacSnapshot(s) {
-    // 首字段版本校验：v !== 1 即弃用（抛错由管线捕获清档）
-    if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) {
-        throw new Error('snapshot version mismatch');
-    }
-    /* ---- 局部校验辅助：任一不合法立即抛错，由管线统一清除快照并按新开局处理 ---- */
-    /** 断言辅助：条件不成立即抛错中断恢复流程 @param {boolean} cond 断言条件 */
-    const need = cond => { if (!cond) throw new Error('invalid snapshot field'); };
-    /** 有限数值校验（排除 NaN/Infinity/字符串），并限定闭区间范围 @returns {number} 原值 */
-    const num = (v, min, max) => { need(Number.isFinite(v) && v >= min && v <= max); return v; };
-    /** 布尔类型校验 @returns {boolean} 原值 */
-    const bool = v => { need(typeof v === 'boolean'); return v; };
-    /** 方向枚举校验（必须为 up/down/left/right 之一） */
-    const dirOk = d => { need(typeof d === 'string' && Object.prototype.hasOwnProperty.call(DIRS, d)); };
+    // 首字段版本校验：v !== 1 即弃档
+    if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) return false;
+    /* ---- 局部校验辅助：谓词风格，不合法由调用点直接 return false ---- */
+    /** 有限数值谓词（排除 NaN/Infinity/字符串），闭区间范围 @returns {boolean} 是否合法 */
+    const numOk = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
+    /** 布尔类型谓词 @returns {boolean} 是否为布尔 */
+    const boolOk = v => typeof v === 'boolean';
+    /** 整数范围谓词 @returns {boolean} 是否为区间内整数 */
+    const intOk = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+    /** 方向枚举谓词（必须为 up/down/left/right 之一）@returns {boolean} 是否合法 */
+    const dirOk = d => typeof d === 'string' && Object.prototype.hasOwnProperty.call(DIRS, d);
 
     /* ---- 标量字段校验 ---- */
-    num(s.score, 0, Number.MAX_SAFE_INTEGER);   // 分数非负且有限
-    num(s.level, 1, Number.MAX_SAFE_INTEGER);   // 关卡 ≥ 1
-    num(s.lives, 0, 99);                        // 生命非负且有限
-    num(s.dotCount, 1, Number.MAX_SAFE_INTEGER); // 剩余豆数 > 0（0 为清版瞬间，快照失效）
-    need(typeof s.dots === 'string' && s.dots.length === ROWS * COLS); // 压位串与迷宫规格匹配
-    num(s.recordBase, 0, Number.MAX_SAFE_INTEGER);
-    bool(s.oneUpGiven);
-    bool(s.recordBroken);
-    num(s.frightTimer, 0, 600);
-    num(s.frightDur, 0.5, 600);
-    num(s.ghBase, 1, 1000);
-    num(s.scoreMult, 1, 100);
-    bool(s.invincibleMode);
-    need(Number.isInteger(s.ghostCombo) && s.ghostCombo >= 0 && s.ghostCombo <= 3);
-    need(Number.isInteger(s.phaseIndex) && s.phaseIndex >= 0 && s.phaseIndex < PHASES.length);
-    num(s.phaseTimer, 0, 100000);
-    num(s.pacDotsEaten, 0, Number.MAX_SAFE_INTEGER);
-    need(Number.isInteger(s.fruitSpawned) && s.fruitSpawned >= 0 && s.fruitSpawned <= FRUIT_DOT_GOALS.length);
+    if (!numOk(s.score, 0, Number.MAX_SAFE_INTEGER)) return false;    // 分数非负且有限
+    if (!numOk(s.level, 1, Number.MAX_SAFE_INTEGER)) return false;    // 关卡 ≥ 1
+    if (!numOk(s.lives, 0, 99)) return false;                         // 生命非负且有限
+    if (!numOk(s.dotCount, 1, Number.MAX_SAFE_INTEGER)) return false; // 剩余豆数 > 0（0 为清版瞬间，快照失效）
+    if (!(typeof s.dots === 'string' && s.dots.length === ROWS * COLS)) return false; // 压位串与迷宫规格匹配
+    if (!numOk(s.recordBase, 0, Number.MAX_SAFE_INTEGER)) return false;
+    if (!boolOk(s.oneUpGiven)) return false;
+    if (!boolOk(s.recordBroken)) return false;
+    if (!numOk(s.frightTimer, 0, 600)) return false;
+    if (!numOk(s.frightDur, 0.5, 600)) return false;
+    if (!numOk(s.ghBase, 1, 1000)) return false;
+    if (!numOk(s.scoreMult, 1, 100)) return false;
+    if (!boolOk(s.invincibleMode)) return false;
+    if (!intOk(s.ghostCombo, 0, 3)) return false;
+    if (!intOk(s.phaseIndex, 0, PHASES.length - 1)) return false;
+    if (!numOk(s.phaseTimer, 0, 100000)) return false;
+    if (!numOk(s.pacDotsEaten, 0, Number.MAX_SAFE_INTEGER)) return false;
+    if (!intOk(s.fruitSpawned, 0, FRUIT_DOT_GOALS.length)) return false;
     if (s.fruit !== null) { // 水果：null 或 { timer ∈ (0, FRUIT_LIFETIME] }
-        need(typeof s.fruit === 'object' && s.fruit !== null && !Array.isArray(s.fruit));
-        num(s.fruit.timer, 0.001, FRUIT_LIFETIME);
+        if (!(typeof s.fruit === 'object' && s.fruit !== null && !Array.isArray(s.fruit))) return false;
+        if (!numOk(s.fruit.timer, 0.001, FRUIT_LIFETIME)) return false;
     }
 
     /* ---- 实体校验：像素坐标在迷宫范围（左右隧道侧留 2 格瞬移余量）、格号严格界内、枚举合法 ---- */
     const rangeX = COLS * CELL + CELL * 2;
-    /** 单实体公共校验：像素坐标 / 所在格 / 方向 @param {object} e 实体快照 */
+    /** 单实体公共校验：像素坐标 / 所在格 / 方向 @param {object} e 实体快照 @returns {boolean} 是否合法 */
     const checkEntity = e => {
-        num(e.x, -rangeX, rangeX);
-        num(e.y, 0, ROWS * CELL);
-        need(Number.isInteger(e.cx) && e.cx >= 0 && e.cx < COLS); // 所在格严格在迷宫内
-        need(Number.isInteger(e.cy) && e.cy >= 0 && e.cy < ROWS);
-        dirOk(e.dir);
+        if (!numOk(e.x, -rangeX, rangeX)) return false;
+        if (!numOk(e.y, 0, ROWS * CELL)) return false;
+        if (!intOk(e.cx, 0, COLS - 1)) return false; // 所在格严格在迷宫内
+        if (!intOk(e.cy, 0, ROWS - 1)) return false;
+        return dirOk(e.dir);
     };
-    need(s.pac && typeof s.pac === 'object' && !Array.isArray(s.pac));
-    checkEntity(s.pac);
-    bool(s.pac.stopped);
-    need(Array.isArray(s.pac.queue) && s.pac.queue.length <= DIR_QUEUE_MAX);
-    s.pac.queue.forEach(dirOk); // 预输入队列每项均须为合法方向
-    need(Array.isArray(s.ghosts) && s.ghosts.length === GHOST_DEFS.length); // 幽灵数量固定 4
+    if (!(s.pac && typeof s.pac === 'object' && !Array.isArray(s.pac))) return false;
+    if (!checkEntity(s.pac)) return false;
+    if (!boolOk(s.pac.stopped)) return false;
+    if (!(Array.isArray(s.pac.queue) && s.pac.queue.length <= DIR_QUEUE_MAX)) return false;
+    for (const d of s.pac.queue) {
+        if (!dirOk(d)) return false; // 预输入队列每项均须为合法方向
+    }
+    if (!(Array.isArray(s.ghosts) && s.ghosts.length === GHOST_DEFS.length)) return false; // 幽灵数量固定 4
     const MODES = ['house', 'exit', 'roam', 'eyes'];
-    s.ghosts.forEach((g, i) => {
-        need(g && typeof g === 'object' && !Array.isArray(g));
-        need(g.name === GHOST_DEFS[i].name); // 序号与幽灵定义表一一对应
-        checkEntity(g);
-        need(MODES.includes(g.mode)); // 模式枚举合法
-        bool(g.frightened);
-        num(g.releaseTimer, 0, 100000);
-    });
+    for (let i = 0; i < s.ghosts.length; i++) {
+        const g = s.ghosts[i];
+        if (!(g && typeof g === 'object' && !Array.isArray(g))) return false;
+        if (g.name !== GHOST_DEFS[i].name) return false; // 序号与幽灵定义表一一对应
+        if (!checkEntity(g)) return false;
+        if (!MODES.includes(g.mode)) return false; // 模式枚举合法
+        if (!boolOk(g.frightened)) return false;
+        if (!numOk(g.releaseTimer, 0, 100000)) return false;
+    }
 
     /* ---- 豆子集合与迷宫逐格互验：快照豆位必须落在原迷宫豆位上（墙/门格不允许出现豆） ---- */
-    buildGrid(); // 以原迷宫重建基准网格（与初始化等价，快照失败时由新开局流程重建，无残留影响）
+    buildGrid(); // 以原迷宫重建基准网格（与初始化等价，校验失败时由新开局流程重建，无残留影响）
     let dotsLeft = 0;
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             const ch = s.dots[r * COLS + c];
             const orig = grid[r][c];
             if (ch === '1') {
-                need(orig === T_DOT);  // 声称存在普通豆的格子，原迷宫必须是普通豆位
+                if (orig !== T_DOT) return false;  // 声称存在普通豆的格子，原迷宫必须是普通豆位
                 dotsLeft++;
             } else if (ch === '2') {
-                need(orig === T_POWER); // 能量豆同理
+                if (orig !== T_POWER) return false; // 能量豆同理
                 dotsLeft++;
             } else {
-                need(ch === '0'); // 其余字符一律非法
+                if (ch !== '0') return false; // 其余字符一律非法
                 if (orig === T_DOT || orig === T_POWER) grid[r][c] = T_EMPTY; // 已吃掉的豆格清空
             }
         }
     }
-    need(dotsLeft === s.dotCount); // 压位串统计与 dotCount 双保险互验
+    if (dotsLeft !== s.dotCount) return false; // 压位串统计与 dotCount 双保险互验
     return true;
 }
 
@@ -1909,13 +1910,18 @@ let lastTime = performance.now();
  * @param {number} now 当前时间戳（毫秒）
  */
 function loop(now) {
-    const dt = Math.min((now - lastTime) / 1000, 0.05); // 单帧步长上限 50ms：卡顿/断点后防止单帧位移过大（< 半格，保证格心判定稳定）
-    lastTime = now;
-    // 暂停或成就墙打开时冻结逻辑 tick（水果倒计时 / 幽灵等全部停走），仅保留渲染
-    if (!isPaused && !Ach.isOpen()) update(dt);
-    // 成就墙与解锁 toast 为 body 直挂的 DOM 覆盖层，浏览器自行推进其 CSS 动画，无需本循环参与
-    draw(now);
-    requestAnimationFrame(loop);
+    requestAnimationFrame(loop); // 前置排程：先预约下一帧，再执行本帧逻辑（单帧异常不再中断渲染循环）
+    try {
+        const dt = Math.min((now - lastTime) / 1000, 0.05); // 单帧步长上限 50ms：卡顿/断点后防止单帧位移过大（< 半格，保证格心判定稳定）
+        lastTime = now;
+        // 暂停或成就墙打开时冻结逻辑 tick（水果倒计时 / 幽灵等全部停走），仅保留渲染
+        if (!isPaused && !Ach.isOpen()) update(dt);
+        // 成就墙与解锁 toast 为 body 直挂的 DOM 覆盖层，浏览器自行推进其 CSS 动画，无需本循环参与
+        draw(now);
+    } catch (err) {
+        // 帧级守护：单帧异常仅记录并跳过本帧，渲染循环照常运转（防一次意外抛错冻结画面）
+        console.error('[pac] 渲染帧异常（已跳过本帧，循环继续）:', err);
+    }
 }
 
 /* ===================== 初始化 ===================== */
@@ -1925,8 +1931,13 @@ function loop(now) {
 let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
-    const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-    if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+    try {
+        const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
+        if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+    } catch (e) {
+        // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（续玩恢复与循环启动全部跳过）
+        console.warn('[pac] 难度恢复异常（已回退默认难度）:', e);
+    }
 }
 
 buildGrid();

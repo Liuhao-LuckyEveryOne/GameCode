@@ -1273,44 +1273,49 @@ function gameOver() {
  */
 function loop(t) {
     requestAnimationFrame(loop); // 前置排程：先预约下一帧，再执行本帧逻辑（单帧异常不再中断渲染循环）
-    const dt = Math.min((t - lastTime) / 1000, 0.05); // 秒，封顶防切页跳变
-    const frozen = FX.frozen(); // hitstop 卡帧中：跳过一切推进仅渲染，画面完全定格（打击感核心）
-    if (running && !paused && !frozen) {
-        if (clearing) {
-            // 消行演出中：倒计时结束后实际删行结算（此间方块不下落）
-            clearing.timer -= dt;
-            if (clearing.timer <= 0) finishClear();
-        } else {
-            const deltaMs = Math.min(t - lastTime, 50); // 毫秒，与特效 dt 同按 50ms 封顶：卡顿/切页回帧不会连移 DAS、连发软降或瞬间击穿锁延迟
-            dropCounter += deltaMs;
-            if (dropCounter > dropInterval) {
-                drop();
-                dropCounter = 0;
-            }
-            // 锁定延迟：触底后累计计时，满 LOCK_DELAY 才锁定；离地即清零
-            if (collide(piece.x, piece.y + 1, piece.matrix)) {
-                lockTimer += deltaMs;
-                if (lockTimer >= LOCK_DELAY) lockPiece();
+    try {
+        const dt = Math.min((t - lastTime) / 1000, 0.05); // 秒，封顶防切页跳变
+        const frozen = FX.frozen(); // hitstop 卡帧中：跳过一切推进仅渲染，画面完全定格（打击感核心）
+        if (running && !paused && !frozen) {
+            if (clearing) {
+                // 消行演出中：倒计时结束后实际删行结算（此间方块不下落）
+                clearing.timer -= dt;
+                if (clearing.timer <= 0) finishClear();
             } else {
-                lockTimer = 0;
+                const deltaMs = Math.min(t - lastTime, 50); // 毫秒，与特效 dt 同按 50ms 封顶：卡顿/切页回帧不会连移 DAS、连发软降或瞬间击穿锁延迟
+                dropCounter += deltaMs;
+                if (dropCounter > dropInterval) {
+                    drop();
+                    dropCounter = 0;
+                }
+                // 锁定延迟：触底后累计计时，满 LOCK_DELAY 才锁定；离地即清零
+                if (collide(piece.x, piece.y + 1, piece.matrix)) {
+                    lockTimer += deltaMs;
+                    if (lockTimer >= LOCK_DELAY) lockPiece();
+                } else {
+                    lockTimer = 0;
+                }
+                updateDAS(deltaMs);       // 推进 DAS/ARR 自动重复
+                updateSoftDrop(deltaMs);  // 推进软降连发（与左右 DAS 同守卫块，piece 必然存在）
+                checkDangerAlarm(t); // 危险分级警报检查（含冷却）
             }
-            updateDAS(deltaMs);       // 推进 DAS/ARR 自动重复
-            updateSoftDrop(deltaMs);  // 推进软降连发（与左右 DAS 同守卫块，piece 必然存在）
-            checkDangerAlarm(t); // 危险分级警报检查（含冷却）
         }
-    }
-    // 特效推进：暂停或 hitstop 卡帧时冻结，其余时刻（含结算面板期间）继续播完余韵
-    if (!paused && !frozen) updateEffects(dt);
-    // 堆顶死亡演出倒计时：灰暗渐隐播完后才弹出结算面板（结算音效因此错后）
-    if (deathFadeTime > 0) {
-        deathFadeTime -= dt;
-        if (deathFadeTime <= 0) {
-            deathFadeTime = 0;
-            gameOver();
+        // 特效推进：暂停或 hitstop 卡帧时冻结，其余时刻（含结算面板期间）继续播完余韵
+        if (!paused && !frozen) updateEffects(dt);
+        // 堆顶死亡演出倒计时：灰暗渐隐播完后才弹出结算面板（结算音效因此错后）
+        if (deathFadeTime > 0) {
+            deathFadeTime -= dt;
+            if (deathFadeTime <= 0) {
+                deathFadeTime = 0;
+                gameOver();
+            }
         }
+        lastTime = t; // 每帧都更新，避免暂停恢复后 delta 暴涨（下一帧已由函数开头前置排程预约）
+        draw();
+    } catch (err) {
+        // 帧级守护：单帧异常仅记录并跳过本帧，渲染循环照常运转（防一次意外抛错冻结画面）
+        console.error('[tetris] 渲染帧异常（已跳过本帧，循环继续）:', err);
     }
-    lastTime = t; // 每帧都更新，避免暂停恢复后 delta 暴涨（下一帧已由函数开头前置排程预约）
-    draw();
 }
 
 /**
@@ -1738,8 +1743,13 @@ window.addEventListener('resize', () => {
 let savedDifficultyIndex = NaN;
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10);
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
-    const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-    if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+    try {
+        const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
+        if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+    } catch (e) {
+        // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（快照恢复与循环启动全部跳过）
+        console.warn('[tetris] 难度恢复异常（已回退默认难度）:', e);
+    }
 }
 
 // 进度快照恢复：核心状态已创建、默认新局之前尝试恢复上次进度

@@ -1468,10 +1468,9 @@ setInterval(() => {
 // FX.playtime：rAF 累计页面可见游玩时长，嵌入模式周期经 arcade:playtime 消息上报大厅累计落盘
 // （键 arcade_playtime_snake），独立运行时由 fx.js 直写同一键；FX.KeyLight：点亮 KEYS 面板
 // 中带 data-code 的键帽（window 级捕获委托，零侵入，reduced-motion 下无过渡）
-// 二者均为装饰性公共库能力：分别 try/catch 兜底，浏览器持有旧缓存 fx.js（缺能力或
-// API 形状不符）时静默跳过，绝不因尾部装饰调用抛错中断初始化收尾
-try { FX.playtime.init('snake'); } catch (e) { /* 时长统计不可用：静默跳过 */ }
-try { FX.KeyLight.init(); } catch (e) { /* 键帽高亮不可用：静默跳过 */ }
+// 二者均为自防御能力（fx.js 内部幂等兜底），直接裸调即可，无需额外 try/catch
+FX.playtime.init('snake');
+FX.KeyLight.init();
 
 /* ===================== 行为冒烟测试钩子（URL 带 ?behavior=1 才激活，tests/behavior.html 汇总） ===================== */
 // 用例直调本文件内部函数：先布置全局再断言，finally 恢复原值避免用例间污染；

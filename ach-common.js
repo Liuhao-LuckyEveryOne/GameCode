@@ -15,7 +15,7 @@
  *
  * 挂载到 window：与 fx.js / arcade-common.js 导出风格一致；
  * Ach.init(opts) 完成后实例方法上提合并到 window.Ach（toggle/isOpen/trackRunStat 等），
- * 各游戏与页面 inline 处理器（如关闭按钮 onclick="Ach.toggle()"）直接调用。
+ * 供外部脚本与无头测试直接调用（页面内按钮接线由本库统一 addEventListener，无需内联 onclick）。
  * ==========================================================================*/
 
 (function () {
@@ -90,7 +90,7 @@
     /**
      * 为当前游戏初始化成就系统（每页一实例；本函数无重复调用守卫——重复调用会重复装载存档
      * 并重复注册监听，调用方须保证每页仅初始化一次）
-     * 完成后实例方法合并到 window.Ach，页面 inline 处理器可直接 Ach.toggle()。
+     * 完成后实例方法合并到 window.Ach，供外部脚本与无头测试直接调用。
      * @param {{
      *   defs: Array<{id: string, name: string, icon: string, desc: string, cat: string,
      *               rarity: 'common'|'rare'|'epic'|'legendary', stat: string, target: number}>,
@@ -282,7 +282,7 @@
             }
         });
 
-        /* ---- 实例 API（合并到 window.Ach，供游戏与 inline 处理器调用） ---- */
+        /* ---- 实例 API（合并到 window.Ach，供外部脚本与无头测试调用） ---- */
         const api = {
             toggle: toggle,
             open: () => toggle(true),

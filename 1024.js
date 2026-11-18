@@ -1679,21 +1679,27 @@ document.addEventListener('fullscreenchange', () => {
 let lastDt = 0;
 
 /** 主循环：推进特效并整帧重绘（持续运行，遮罩下棋盘作为背景展示）；
- *  下一帧排程前置于帧逻辑（先排程后执行：单帧异常只跳过该帧，渲染链永不中断）。
+ *  下一帧排程前置于帧逻辑（先排程后执行：配合帧级 try/catch 守护，单帧异常只跳过该帧，
+ *  渲染链永不中断）。
  *  大合并卡帧期间（FX.frozen()）完全跳过推进与重绘，画布保留末帧实现真定格，
  *  恢复后 tile 滑动 / 弹出动画自原状态无缝接续；成就墙打开时逻辑冻结但渲染循环照常推进棋盘动画
  *  @param {number} now performance.now() 时间戳（ms） */
 function loop(now) {
     requestAnimationFrame(loop); // 前置排程：先预约下一帧，再执行本帧逻辑（单帧异常不再中断渲染循环）
-    lastDt = Math.min(0.05, (now - lastTime) / 1000); // 帧间隔封顶 50ms：切后台回来不产生巨帧跳变
-    lastTime = now;
-    if (!FX.frozen()) {
-        time += lastDt;
-        updateEffects(lastDt);
-        updateRepeat(lastDt); // 自定义连滑：按住方向键期间按固定节奏补发滑动
-        // 本局用时统计：仅可操作的对局态计时（暂停 / 成就墙打开时冻结）
-        if (playing && !isPaused && !Ach.isOpen()) statTime += lastDt;
-        draw();
+    try {
+        lastDt = Math.min(0.05, (now - lastTime) / 1000); // 帧间隔封顶 50ms：切后台回来不产生巨帧跳变
+        lastTime = now;
+        if (!FX.frozen()) {
+            time += lastDt;
+            updateEffects(lastDt);
+            updateRepeat(lastDt); // 自定义连滑：按住方向键期间按固定节奏补发滑动
+            // 本局用时统计：仅可操作的对局态计时（暂停 / 成就墙打开时冻结）
+            if (playing && !isPaused && !Ach.isOpen()) statTime += lastDt;
+            draw();
+        }
+    } catch (err) {
+        // 帧级守护：单帧异常仅记录并跳过本帧，渲染循环照常运转（防一次意外抛错冻结画面）
+        console.error('[1024] 渲染帧异常（已跳过本帧，循环继续）:', err);
     }
     // 成就墙与解锁 toast 均为 DOM 覆盖层，浏览器自行推进其 CSS 动画，无需 canvas 参与
 }
@@ -1719,7 +1725,14 @@ try {
 // 难度恢复：与上一次选择一致（对齐其他游戏难度记忆；必须先于 restoreSnapshot，否则存档 diff 校验失败）
 let savedDifficulty = null;
 savedDifficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储不可用时保持 null，走默认难度
-if (DIFFICULTIES[savedDifficulty] && savedDifficulty !== DEFAULT_DIFFICULTY) selectDifficulty(savedDifficulty);
+if (DIFFICULTIES[savedDifficulty] && savedDifficulty !== DEFAULT_DIFFICULTY) {
+    try {
+        selectDifficulty(savedDifficulty);
+    } catch (e) {
+        // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（铺棋盘/续玩/循环启动全部跳过）
+        console.warn('[1024] 难度恢复异常（已回退默认难度）:', e);
+    }
+}
 resetBoard(); // 铺初始棋盘（两块起步方块在开始面板背后可见）
 restoreSnapshot(); // 自动续玩：存在合法快照时恢复上局局面/分数/撤销栈并直接进入对局，否则保持新局流程
 requestAnimationFrame(loop);

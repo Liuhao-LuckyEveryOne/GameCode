@@ -10,7 +10,7 @@
 
 四步流水（任一步失败立即中止，非零码退出）：
   1. 分享包重建   —— tools/sync_packages.py（快照包与源文件逐条目一致）
-  2. 静态一致性   —— tests/check.py（十三项检查全绿）
+  2. 静态一致性   —— tests/check.py（十四项检查全绿）
   3. 无头冒烟     —— tests/smoke.html（document.title 输出「冒烟通过 p/t」）
   4. 无头行为回归 —— tests/behavior.html（document.title 输出「行为通过 p/t」）
 
@@ -402,8 +402,8 @@ def main():
     if run_py_step("第 1 步 / 共 4 步：分享包重建", "tools/sync_packages.py") != 0:
         print("\n[FAIL] 分享包重建失败，中止后续步骤")
         return 1
-    # 第 2 步：静态十三项检查
-    if run_py_step("第 2 步 / 共 4 步：静态一致性检查（十三项）", "tests/check.py") != 0:
+    # 第 2 步：静态十四项检查
+    if run_py_step("第 2 步 / 共 4 步：静态一致性检查（十四项）", "tests/check.py") != 0:
         print("\n[FAIL] 静态检查存在失败项，中止后续步骤")
         return 1
     # 无头浏览器前置探测（第 3/4 步共用）

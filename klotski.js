@@ -3134,11 +3134,15 @@ let lastRender = performance.now();
  */
 function renderLoop(now) {
     requestAnimationFrame(renderLoop); // 前置排程：单帧异常不再中断渲染循环
-    const dt = Math.min((now - lastRender) / 1000, 0.05);
-    lastRender = now;
-    updateEffects(dt);
-    stepDemo(dt); // 演示模式推进：按固定节奏执行最佳解的下一步
-    draw(now);
+    try {
+        const dt = Math.min((now - lastRender) / 1000, 0.05);
+        lastRender = now;
+        updateEffects(dt);
+        stepDemo(dt); // 演示模式推进：按固定节奏执行最佳解的下一步
+        draw(now);
+    } catch (err) {
+        console.error('[klotski] 渲染帧异常（已跳过本帧，循环继续）：', err);
+    }
 }
 
 // 步数跳动反馈依赖 transform，而 span 默认 inline 不受 transform 影响，转为行内块
@@ -3176,15 +3180,20 @@ loadLayout(layoutIndex);
 // 恢复失败（无快照 / 快照非法已清除）→ 保持原有默认新开局流程（开始遮罩等待玩家）
 Arcade.removeRaw('klotskiProgress'); // 存储不可用时静默跳过
 if (restoreSnapshot()) {
-    startGame(); // 复用开局入口：隐藏开始遮罩 + 进入 playing + 起 BGM + 开演字幕
-    floaters.push({ // 棋盘中央飘字：告知玩家当前局面为上次进度续玩
-        text: '已恢复上次进度',
-        x: PAD + BOARD_W / 2,
-        y: PAD + BOARD_H * 0.32,
-        t: 0,
-        dur: 1.6,
-        color: '#ffd23e'
-    });
+    try {
+        startGame(); // 复用开局入口：隐藏开始遮罩 + 进入 playing + 起 BGM + 开演字幕
+        floaters.push({ // 棋盘中央飘字：告知玩家当前局面为上次进度续玩
+            text: '已恢复上次进度',
+            x: PAD + BOARD_W / 2,
+            y: PAD + BOARD_H * 0.32,
+            t: 0,
+            dur: 1.6,
+            color: '#ffd23e'
+        });
+    } catch (e) {
+        // 恢复分支兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链导致页面白屏
+        console.error('[klotski] 快照恢复分支异常（已跳过恢复演出）:', e);
+    }
 }
 
 // 启动渲染循环

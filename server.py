@@ -5,6 +5,7 @@
 启动方式：python server.py（需在本目录下执行）
 """
 
+import errno
 import socket
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -47,7 +48,7 @@ class DualStackServer(ThreadingHTTPServer):
 def run_startup_check():
     """启动期自动运行 tests/check.py 静态一致性检查器（一次性，毫秒级，不进请求路径）。
 
-    消除「检查器需手动触发」的遗漏：日常 python server.py 起服即检十项站点约定。
+    消除「检查器需手动触发」的遗漏：日常 python server.py 起服即检十四项站点约定。
     检查失败仅打印醒目警告、不阻断起服——服务器仍需起来供修复调试；
     tests 目录不在位时（import 失败）静默降级，不影响服务器本身。
 
@@ -67,13 +68,17 @@ def run_startup_check():
 
 
 if __name__ == "__main__":
-    # 起服前先跑一遍静态一致性检查（十项，检查项明细见 tests/check.py 头部说明）
+    # 起服前先跑一遍静态一致性检查（十四项，检查项明细见 tests/check.py 头部说明）
     run_startup_check()
     # ThreadingHTTPServer 系：多线程并发响应页面/脚本/图片等并行请求；
     # 双栈绑定空主机名（'' = :: 全接口）优先，无 IPv6 栈的环境回退纯 IPv4 全接口
     try:
         server = DualStackServer(("", PORT), NoCacheHandler)
-    except OSError:
+    except OSError as e:
+        # 端口被占用（如重复起服）时双栈与 IPv4 回退都绑不上，直接给友好提示退出而非裸抛堆栈
+        if e.errno == errno.EADDRINUSE:
+            print(f"启动失败：端口 {PORT} 已被占用——可能有另一个街机厅服务器正在运行，请先关闭它或更换 PORT")
+            raise SystemExit(1) from e
         server = ThreadingHTTPServer(("0.0.0.0", PORT), NoCacheHandler)
     print(f"街机厅开发服务器运行中：http://localhost:{PORT}/index.html （禁缓存模式）")
     try:

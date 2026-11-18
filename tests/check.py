@@ -30,6 +30,11 @@
                      js 实际定义一致（成就 id 双向比对 / 存档键 arcade_ach_* 一致 /
                      最高分键集合比对，klotski 模板拼键按 DIFF_IDS×LAYOUTS 静态展开；
                      防游戏侧增删成就或改键后大厅殿堂/角标漏同步）
+  14. 冒烟白盒契约 —— tests/smoke.html 白盒面（S9~S15 七个 *Core 场景）函数体内的
+                     win.X( 直调与 typeof win.X 守卫（window 内建 dispatchEvent 豁免）
+                     必须在对应业务 js 中以顶层 function 声明存在（经典脚本顶层
+                     声明自动挂 window，contentWindow 直调依赖该语义）；业务 js
+                     重命名/删除这些函数时静态期即红，不等冒烟运行期 TypeError
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
@@ -1053,8 +1058,108 @@ def check_lobby_defs_problems():
     return problems
 
 
+# ---------- 检查项 14：smoke.html 白盒面契约 ----------
+# S9~S15 七个 *Core 场景经 iframe.contentWindow 直调页内顶层函数断言核心逻辑
+# （经典脚本顶层 function 声明自动挂 window）。业务 js 重命名/删除这些函数时
+# 白盒断言要等冒烟运行期 TypeError 才变红——本项把「页内函数存在性」前移到静态期。
+# 抽取范围限定七个场景函数体（S16~S21 的 win.* 属黑盒断言与装置用法，不收编）；
+# rAF stub 赋值（win.requestAnimationFrame = ...）名称后无括号，调用正则天然不收。
+SMOKE_PATH = ROOT / "tests" / "smoke.html"
+
+# 白盒场景函数 → 对应业务 js 映射（场景函数重命名后须同步此表）
+SMOKE_CORE_SCENES = [
+    ("s9_tetrisCore", "tetris.js"),
+    ("s10_pacCore", "pac.js"),
+    ("s11_1024Core", "1024.js"),
+    ("s12_pinballCore", "pinball.js"),
+    ("s13_klotskiCore", "klotski.js"),
+    ("s14_beeCore", "bee.js"),
+    ("s15_snakeCore", "snake.js"),
+]
+
+# 契约引用收集：win.X( 直调 + typeof win.X 守卫（守卫同样依赖函数存在，一并收编）
+SMOKE_WIN_CALL_RE = re.compile(r"\bwin\.(\w+)\s*\(")
+SMOKE_WIN_TYPEOF_RE = re.compile(r"\btypeof\s+win\.(\w+)")
+
+# window 内建方法豁免表：白盒场景以 win. 前缀直调的内建 API（非页内契约）
+WIN_BUILTIN_EXEMPT = {"dispatchEvent"}
+
+# 业务 js 顶层 function 声明（列 0 起始；嵌套/缩进声明不挂 window，不收编）
+TOP_FUNC_DECL_RE = re.compile(r"(?m)^function\s+(\w+)\s*\(")
+
+
+def _slice_brace_body(text, decl_end):
+    """从声明 match.end() 起花括号深度配对切片函数体（检查项 14 专用）。
+
+    与 _slice_array_body 同技法、作用对象为 {...}；输入须为去噪骨架
+    （字符串/注释已剥离，内含花括号不干扰深度配对）。
+
+    参数:
+        text: 剥注释后的文本
+        decl_end: 声明 match.end()（函数名后参数列表开括号之后的位置）
+    返回:
+        函数体文本（不含两端花括号）；找不到开括号或未闭合时 None
+    """
+    open_idx = text.find("{", decl_end)
+    if open_idx < 0:
+        return None
+    depth, i = 0, open_idx
+    while i < len(text):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1:i]
+        i += 1
+    return None
+
+
+def check_smoke_whitebox_problems():
+    """检查项 14：smoke.html 白盒面契约——S9~S15 直调/typeof 引用的页内函数
+    须在对应业务 js 中以顶层 function 声明存在。
+
+    抽取 smoke.html 内联 <script> 块的去噪骨架，逐白盒场景切函数体收集契约引用
+    （win.X( 直调 + typeof win.X 守卫，window 内建豁免表扣除），逐名到对应业务 js
+    骨架核对顶层函数声明；缺失即报——防业务 js 重命名/删除这些函数后白盒断言
+    运行期才暴露。
+
+    返回:
+        问题清单（空列表 = 通过）
+    """
+    problems = []
+    if not SMOKE_PATH.is_file():
+        return ["tests/smoke.html 缺失（白盒契约检查无目标）"]
+    # 仅取内联 <script> 块：外链 src 引用与 <style> 的 CSS 花括号不参与切片；
+    # 按解析语义 </script> 不可能出现在内联脚本字符串里，首个闭标签即真实边界
+    chunks = [m.group(1) for m in
+              re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>",
+                          SMOKE_PATH.read_text(encoding="utf-8"), re.S | re.I)]
+    smoke_skel = strip_js_code("\n".join(chunks))
+    js_skels = {}
+    for scene, js_name in SMOKE_CORE_SCENES:
+        decl = re.search(r"\bfunction\s+" + re.escape(scene) + r"\s*\(", smoke_skel)
+        if not decl:
+            problems.append(f"smoke.html 未找到白盒场景 {scene}（场景重命名后须同步 SMOKE_CORE_SCENES 映射表）")
+            continue
+        body = _slice_brace_body(smoke_skel, decl.end())
+        if body is None:
+            problems.append(f"smoke.html {scene} 函数体未闭合（骨架切片失败）")
+            continue
+        used = set(SMOKE_WIN_CALL_RE.findall(body)) | set(SMOKE_WIN_TYPEOF_RE.findall(body))
+        used -= WIN_BUILTIN_EXEMPT
+        if js_name not in js_skels:
+            path = ROOT / js_name
+            js_skels[js_name] = strip_js_code(path.read_text(encoding="utf-8")) if path.is_file() else ""
+        declared = set(TOP_FUNC_DECL_RE.findall(js_skels[js_name]))
+        for name in sorted(used - declared):
+            problems.append(
+                f"smoke.html {scene} 引用 win.{name}，但 {js_name} 未声明顶层函数 {name}（白盒契约破裂）")
+    return problems
+
+
 def main():
-    """主流程：依次运行十三项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十四项检查，汇总结果并按退出码约定返回。"""
     targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
@@ -1070,6 +1175,7 @@ def main():
         ("成就cat完整", check_ach_cat_problems),
         ("入口版本一致", check_entry_version_problems),
         ("大厅成就/最高分同步", check_lobby_defs_problems),
+        ("冒烟白盒契约", check_smoke_whitebox_problems),
     ]
     all_ok = True
     for label, fn in checks:

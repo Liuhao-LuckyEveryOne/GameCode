@@ -976,6 +976,7 @@ function launch(power = 0.35) {
  * @param {HTMLButtonElement} btn 被点击的难度按钮（data-gravity / data-flip / data-mult / data-invincible）
  */
 function selectDifficulty(btn) {
+    btn.blur(); // 移除焦点，防止空格误触按钮
     document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     gravity = parseFloat(btn.dataset.gravity);
@@ -1128,39 +1129,41 @@ function saveSnapshot() {
 
 /**
  * 校验快照版本号与逐字段类型 / 范围：球坐标与速度必须有限且在台面合理范围、
- * 球数 1~3、分数非负有限等。内联 throw 断言风格：任何非法字段抛出统一异常，
- * 由快照管线（snap-common.js）catch 兜底弃档，绝不向游戏层抛错。
+ * 球数 1~3、分数非负有限等。布尔校验风格：非法一律返回 false 弃档，
+ * 绝不因脏数据抛错（与共享快照管线的兜底弃档契约一致）。
  * @param {object} s 待校验的快照对象（Arcade.loadJSON 产出，可能为任意脏数据）
+ * @returns {boolean} 全部字段合法返回 true，任一非法返回 false
  */
 function validatePinballSnapshot(s) {
     // 版本校验：首字段 v !== 1 视为过期 / 异构快照，直接弃用
-    if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) throw new Error('bad version');
+    if (!s || typeof s !== 'object' || Array.isArray(s) || s.v !== 1) return false;
     // 状态与暂停标记：仅接受 ready / play 两种可恢复状态
-    if ((s.state !== 'ready' && s.state !== 'play') || typeof s.paused !== 'boolean') throw new Error('bad state');
+    if ((s.state !== 'ready' && s.state !== 'play') || typeof s.paused !== 'boolean') return false;
     // 分数：非负有限
-    if (!Number.isFinite(s.score) || s.score < 0) throw new Error('bad score');
+    if (!Number.isFinite(s.score) || s.score < 0) return false;
     // 剩余球数：1 ~ 单局总球数（0 球即已结算，不存在合法快照）
-    if (!Number.isInteger(s.lives) || s.lives < 1 || s.lives > TOTAL_BALLS) throw new Error('bad lives');
+    if (!Number.isInteger(s.lives) || s.lives < 1 || s.lives > TOTAL_BALLS) return false;
     // 难度参数：与四档按钮的 data 取值范围一致
-    if (!Number.isInteger(s.mult) || s.mult < 1 || s.mult > 3) throw new Error('bad mult');
-    if (!Number.isFinite(s.gravity) || s.gravity <= 0 || s.gravity > 5000) throw new Error('bad gravity');
-    if (!Number.isFinite(s.flipperLen) || s.flipperLen <= 0 || s.flipperLen > WORLD_W) throw new Error('bad flipper');
-    if (typeof s.invincible !== 'boolean' || typeof s.jackpotArmed !== 'boolean') throw new Error('bad flags');
+    if (!Number.isInteger(s.mult) || s.mult < 1 || s.mult > 3) return false;
+    if (!Number.isFinite(s.gravity) || s.gravity <= 0 || s.gravity > 5000) return false;
+    if (!Number.isFinite(s.flipperLen) || s.flipperLen <= 0 || s.flipperLen > WORLD_W) return false;
+    if (typeof s.invincible !== 'boolean' || typeof s.jackpotArmed !== 'boolean') return false;
     // 连击状态：累计次数非负整数、倍率 1 ~ 封顶、窗口剩余时长非负有限
-    if (!Number.isInteger(s.comboHits) || s.comboHits < 0) throw new Error('bad comboHits');
-    if (!Number.isInteger(s.comboMult) || s.comboMult < 1 || s.comboMult > COMBO_MAX_MULT) throw new Error('bad comboMult');
-    if (!Number.isFinite(s.comboTimer) || s.comboTimer < 0) throw new Error('bad comboTimer');
+    if (!Number.isInteger(s.comboHits) || s.comboHits < 0) return false;
+    if (!Number.isInteger(s.comboMult) || s.comboMult < 1 || s.comboMult > COMBO_MAX_MULT) return false;
+    if (!Number.isFinite(s.comboTimer) || s.comboTimer < 0) return false;
     // 目标灯：布尔数组且长度与台面目标数一致
     if (!Array.isArray(s.targetLit) || s.targetLit.length !== targets.length ||
-        !s.targetLit.every(x => typeof x === 'boolean')) throw new Error('bad targets');
+        !s.targetLit.every(x => typeof x === 'boolean')) return false;
     // 弹球：1 ~ MAX_BALLS 颗，坐标有限且在台面合理范围、合速度不超上限
-    if (!Array.isArray(s.balls) || s.balls.length < 1 || s.balls.length > MAX_BALLS) throw new Error('bad balls');
+    if (!Array.isArray(s.balls) || s.balls.length < 1 || s.balls.length > MAX_BALLS) return false;
     for (const b of s.balls) {
-        if (!b || typeof b !== 'object') throw new Error('bad ball');
-        if (!Number.isFinite(b.x) || b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2) throw new Error('bad ball x');
-        if (!Number.isFinite(b.y) || b.y < -BALL_R * 2 || b.y > WORLD_H + DRAIN_DEPTH) throw new Error('bad ball y');
-        if (!Number.isFinite(b.vx) || !Number.isFinite(b.vy) || Math.hypot(b.vx, b.vy) > MAX_SPEED) throw new Error('bad ball v');
+        if (!b || typeof b !== 'object') return false;
+        if (!Number.isFinite(b.x) || b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2) return false;
+        if (!Number.isFinite(b.y) || b.y < -BALL_R * 2 || b.y > WORLD_H + DRAIN_DEPTH) return false;
+        if (!Number.isFinite(b.vx) || !Number.isFinite(b.vy) || Math.hypot(b.vx, b.vy) > MAX_SPEED) return false;
     }
+    return true;
 }
 
 /**
@@ -1830,7 +1833,9 @@ function drawBalls() {
 /* ===================== 主循环与输入 ===================== */
 
 /**
- * 游戏主循环（rAF 驱动，固定步长物理）：顿帧冻结期间仅重绘；
+ * 游戏主循环（rAF 驱动，固定步长物理；下一帧排程前置于帧逻辑：先排程后执行，
+ * 配合帧级 try/catch 守护，单帧异常只跳过该帧，渲染链永不中断）：
+ * 顿帧冻结期间仅重绘；
  * 进行中且未暂停时把帧时长拆解为固定 1/120 秒物理步推进（单帧最多 5 步防"追帧螺旋"，
  * 不同刷新率下手感一致并缓解高速穿透），拖尾采样与火花/飘字仍按帧时长更新；
  * 失球演出期间球坠落 + 火花余韵照常；成就墙打开期间同样只重绘（局面冻结，与暂停互不影响）；
@@ -1838,54 +1843,58 @@ function drawBalls() {
  * @param {number} t 当前帧时间戳（毫秒，由 requestAnimationFrame 传入）
  */
 function loop(t) {
-    // 顿帧短路：FX.hitstop 冻结期间跳过全部更新只重绘，保持大奖演出的冲击感
-    if (FX.frozen()) {
-        draw(t);
-        requestAnimationFrame(loop);
-        return;
-    }
-    const dt = Math.min((t - lastTime) / 1000, 0.033);
-    lastTime = t;
-    if (!isPaused && !Ach.isOpen() && (state === 'play' || state === 'ready')) {
-        // 固定步长物理：帧时长累加进累加器（封顶 MAX_STEPS_PER_FRAME 步，卡顿时丢弃多余时间），
-        // 按整数个 FIXED_DT 步推进挡板/计时器/蓄力/物理
-        accumulator = Math.min(accumulator + dt, FIXED_DT * MAX_STEPS_PER_FRAME);
-        while (accumulator >= FIXED_DT) {
-            accumulator -= FIXED_DT;
-            updateFlippers(FIXED_DT);
-            updateTimers(FIXED_DT);
-            if (state === 'ready' && charging) {
-                charge = Math.min(1, charge + FIXED_DT / CHARGE_TIME); // 蓄力进度按物理步推进，1 为满力
-                // 蓄力充电音：每 80ms 播放一次，音调随蓄力进度（0~1）爬升
-                const nowMs = performance.now();
-                if (nowMs - lastChargeSfx >= CHARGE_SFX_INTERVAL) {
-                    lastChargeSfx = nowMs;
-                    SFX.pinCharge(charge);
+    requestAnimationFrame(loop); // 前置排程：先预约下一帧，再执行本帧逻辑（单帧异常不再中断渲染循环）
+    try {
+        // 顿帧短路：FX.hitstop 冻结期间跳过全部更新只重绘，保持大奖演出的冲击感
+        if (FX.frozen()) {
+            draw(t);
+            return;
+        }
+        const dt = Math.min((t - lastTime) / 1000, 0.033);
+        lastTime = t;
+        if (!isPaused && !Ach.isOpen() && (state === 'play' || state === 'ready')) {
+            // 固定步长物理：帧时长累加进累加器（封顶 MAX_STEPS_PER_FRAME 步，卡顿时丢弃多余时间），
+            // 按整数个 FIXED_DT 步推进挡板/计时器/蓄力/物理
+            accumulator = Math.min(accumulator + dt, FIXED_DT * MAX_STEPS_PER_FRAME);
+            while (accumulator >= FIXED_DT) {
+                accumulator -= FIXED_DT;
+                updateFlippers(FIXED_DT);
+                updateTimers(FIXED_DT);
+                if (state === 'ready' && charging) {
+                    charge = Math.min(1, charge + FIXED_DT / CHARGE_TIME); // 蓄力进度按物理步推进，1 为满力
+                    // 蓄力充电音：每 80ms 播放一次，音调随蓄力进度（0~1）爬升
+                    const nowMs = performance.now();
+                    if (nowMs - lastChargeSfx >= CHARGE_SFX_INTERVAL) {
+                        lastChargeSfx = nowMs;
+                        SFX.pinCharge(charge);
+                    }
+                }
+                if (state === 'play') {
+                    updatePhysics(FIXED_DT);
+                    if (state === 'lost') break; // 物理步内触发失球演出时立即退出步进循环
                 }
             }
             if (state === 'play') {
-                updatePhysics(FIXED_DT);
-                if (state === 'lost') break; // 物理步内触发失球演出时立即退出步进循环
+                // 球拖尾采样保持每帧一次（不随物理步加密）：每球独立采样，最多保留 TRAIL_MAX 点
+                for (const b of balls) {
+                    b.trail.push({ x: b.x, y: b.y });
+                    if (b.trail.length > TRAIL_MAX) b.trail.shift();
+                }
             }
+            updateSparks(dt);
+            updateFloatTexts(dt);
+        } else if (state === 'lost' && !Ach.isOpen()) {
+            // 失球演出：球坠落 + 特效计时 + 火花余韵，结束后自动回待发射或结算（成就墙打开期间冻结不推进）
+            updateLoseFx(dt);
+            updateTimers(dt);
+            updateSparks(dt);
+            updateFloatTexts(dt);
         }
-        if (state === 'play') {
-            // 球拖尾采样保持每帧一次（不随物理步加密）：每球独立采样，最多保留 TRAIL_MAX 点
-            for (const b of balls) {
-                b.trail.push({ x: b.x, y: b.y });
-                if (b.trail.length > TRAIL_MAX) b.trail.shift();
-            }
-        }
-        updateSparks(dt);
-        updateFloatTexts(dt);
-    } else if (state === 'lost' && !Ach.isOpen()) {
-        // 失球演出：球坠落 + 特效计时 + 火花余韵，结束后自动回待发射或结算（成就墙打开期间冻结不推进）
-        updateLoseFx(dt);
-        updateTimers(dt);
-        updateSparks(dt);
-        updateFloatTexts(dt);
+        draw(t);
+    } catch (err) {
+        // 帧级守护：单帧异常仅记录并跳过本帧，渲染循环照常运转（防一次意外抛错冻结画面）
+        console.error('[pinball] 渲染帧异常（已跳过本帧，循环继续）:', err);
     }
-    draw(t);
-    requestAnimationFrame(loop);
 }
 
 /**
@@ -2092,8 +2101,13 @@ Snap.bindFocusLoss(handleFocusLoss);
 let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
 savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
-    const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
-    if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+    try {
+        const savedDifficultyBtn = document.querySelectorAll('.difficulty-btn')[savedDifficultyIndex];
+        if (savedDifficultyBtn) selectDifficulty(savedDifficultyBtn);
+    } catch (e) {
+        // 难度恢复兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链（快照恢复与循环启动全部跳过）
+        console.warn('[pinball] 难度恢复异常（已回退默认难度）:', e);
+    }
 }
 
 // 恢复最高分与倍率显示，绘制初始球数，注册窗口/全屏监听，启动主循环
