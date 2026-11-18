@@ -31,7 +31,7 @@
     <title>华容道 - 像素街机厅</title>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <!-- 成就墙·金杯触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261118-1">
+    <link rel="stylesheet" href="ach-trigger.css?v=20261118-2">
     <style>
         /* ---------- 主题变量：底色 / 面板 / 红·金霓虹 / 文字 ---------- */
         :root {
@@ -51,6 +51,11 @@
         --ach-bar-grad: linear-gradient(90deg, #ffd23e, #ff9a3e); /* 总进度条渐变 */
         --ach-prog-grad: linear-gradient(90deg, #35e0ff, #39ff6a); /* 卡片进度条渐变 */
         --ach-toast-grad: linear-gradient(120deg, rgba(38, 17, 17, 0.95), rgba(23, 11, 11, 0.95)); /* toast 渐变底 */
+        /* ---- 稀有度四档徽章配色（RGB 三元组，与卡片描边/toast 左缘同源）：取值与收编前页内徽章块逐字一致 ---- */
+        --ach-chip-common: 185, 168, 168; /* 普通档：主题红降饱和灰调（原页内值） */
+        --ach-chip-rare: 53, 224, 255; /* 稀有档：页内霓虹青（原页内值） */
+        --ach-chip-epic: 255, 98, 216; /* 史诗档：页内定制霓虹粉（原页内值） */
+        --ach-chip-legend: 255, 210, 62; /* 传说档：页内金色 */
         }
         /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
         html { background: var(--bg); }
@@ -662,21 +667,6 @@
             font-weight: bold;
             color: var(--text);
         }
-        /* 稀有度徽章：卡片右上角小标签（canonical 标记，四档配色与卡片边框同源） */
-        .ach-rarity-chip {
-            position: absolute;
-            top: 8px;
-            right: 10px;
-            padding: 2px 7px;
-            font-size: 9px;
-            letter-spacing: 1px;
-            border-radius: 999px;
-            border: 1px solid;
-        }
-        .ach-rarity-chip.rarity-common { color: #b9a8a8; border-color: rgba(185, 168, 168, 0.5); background: rgba(185, 168, 168, 0.08); }
-        .ach-rarity-chip.rarity-rare { color: #35e0ff; border-color: rgba(53, 224, 255, 0.5); background: rgba(53, 224, 255, 0.08); }
-        .ach-rarity-chip.rarity-epic { color: #ff62d8; border-color: rgba(255, 98, 216, 0.5); background: rgba(255, 98, 216, 0.1); }
-        .ach-rarity-chip.rarity-legendary { color: var(--neon-gold); border-color: rgba(255, 210, 62, 0.55); background: rgba(255, 210, 62, 0.1); }
         /* 卡片描述：canonical 用 <p> 承载，显式重置浏览器默认外边距 */
         .ach-desc {
             margin: 4px 0 0;
@@ -897,7 +887,7 @@
     <script src="audio.js?v=20261118-1"></script>
     <script src="fx.js?v=20261118-1"></script>
     <script src="fullscreen.js?v=20261118-1"></script>
-    <script src="ach-common.js?v=20261118-3"></script>
+    <script src="ach-common.js?v=20261118-4"></script>
     <script src="snap-common.js?v=20261118-1"></script>
     <script src="pause-common.js?v=20261118-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->

@@ -15,7 +15,7 @@
     <title>贪吃蛇 - 像素街机厅</title>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <!-- 成就墙·金杯触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261118-1">
+    <link rel="stylesheet" href="ach-trigger.css?v=20261118-2">
     <style>
         /* ---------- 主题变量：底色 / 面板 / 四色霓虹 / 文字 ---------- */
         :root {
@@ -40,6 +40,11 @@
         --ach-prog-grad: linear-gradient(90deg, #35e0ff, #39ff6a); /* 卡片进度条渐变 */
         --ach-unlock-prog-grad: linear-gradient(90deg, #39ff6a, #ffd23e); /* 已解锁卡片进度条渐变 */
         --ach-toast-grad: linear-gradient(120deg, rgba(18, 42, 18, 0.95), rgba(10, 22, 14, 0.95)); /* toast 渐变底 */
+        /* ---- 稀有度四档徽章配色（RGB 三元组，与卡片描边/toast 左缘同源）：普通=主题绿灰调、稀有/史诗=页内霓虹、传说=页内金 ---- */
+        --ach-chip-common: 159, 212, 159; /* 普通档：主题绿降饱和灰调 */
+        --ach-chip-rare: 53, 224, 255; /* 稀有档：页内霓虹青 */
+        --ach-chip-epic: 255, 62, 165; /* 史诗档：页内霓虹粉 */
+        --ach-chip-legend: 255, 210, 62; /* 传说档：页内金色 */
         }
         /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
         html { background: var(--bg); }
@@ -466,12 +471,12 @@
     <script src="audio.js?v=20261118-1"></script>
     <script src="fx.js?v=20261118-1"></script>
     <script src="fullscreen.js?v=20261118-1"></script>
-    <script src="ach-common.js?v=20261118-3"></script>
+    <script src="ach-common.js?v=20261118-4"></script>
     <script src="snap-common.js?v=20261118-1"></script>
     <script src="pause-common.js?v=20261118-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261118-1"></script>
     <script src="ach-trigger.js?v=20261118-1"></script>
-    <script src="snake.js?v=20261118-2"></script>
+    <script src="snake.js?v=20261118-3"></script>
 </body>
 </html>

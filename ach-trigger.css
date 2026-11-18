@@ -131,7 +131,7 @@
 }
 
 
-/* ---------- 成就墙皮肤参数化收编（Wave2）v1.6 (20261118)
+/* ---------- 成就墙皮肤参数化收编（Wave2）v1.7 (20261118)
  * snake/tetris/pac/pinball/1024 五页皮肤结构经逐条 diff 验证逐字一致、仅主题
  * 颜色互异，全部收编至本层（bee/klotski 例外，见分区头注释）；颜色抽为
  * --ach-* 变量，各页 <style> 以 :root 映射行提供本页取值（缺省回退 snake 绿）：
@@ -146,6 +146,10 @@
  *   --ach-toast-grad      toast 渐变整值
  *   --ach-desc-c / --ach-meta-c / --ach-locked-c / --ach-unlock-desc-c
  *                          四级灰阶文本色
+ *   --ach-chip-common / --ach-chip-rare / --ach-chip-epic / --ach-chip-legend
+ *                          稀有度四档主题色 RGB 三元组（徽章、卡片描边辉光、toast
+ *                          左缘同源共用；缺省回退共享绿青紫金，大厅未赋值即维持
+ *                          共享配色）
  * 标题/解锁名/勋章金字统一 var(--neon-gold, var(--neon-yellow)) 复用页面既有
  * 变量（gold 与 yellow 各页均定义为 #ffd23e，取其一即可）。
  * 加载顺序契约：页面 <link ach-trigger.css> 位于页面 <style> 之前——
@@ -364,36 +368,38 @@
     0%, 55% { left: -80%; }
     85%, 100% { left: 160%; }
 }
+/* 稀有度四档卡片描边/辉光：与徽章、toast 左缘共用 --ach-chip-* RGB 三元组（缺省回退共享绿青紫金） */
 .ach-card.unlocked.rarity-common {
-    border-color: rgba(159, 212, 159, 0.5);
-    box-shadow: 0 0 12px rgba(159, 212, 159, 0.14);
+    border-color: rgba(var(--ach-chip-common, 159, 212, 159), 0.5);
+    box-shadow: 0 0 12px rgba(var(--ach-chip-common, 159, 212, 159), 0.14);
 }
-.ach-card.unlocked.rarity-common:hover { box-shadow: 0 0 20px rgba(159, 212, 159, 0.3); }
+.ach-card.unlocked.rarity-common:hover { box-shadow: 0 0 20px rgba(var(--ach-chip-common, 159, 212, 159), 0.3); }
 .ach-card.unlocked.rarity-rare {
-    border-color: rgba(53, 224, 255, 0.55);
-    box-shadow: 0 0 14px rgba(53, 224, 255, 0.18);
+    border-color: rgba(var(--ach-chip-rare, 53, 224, 255), 0.55);
+    box-shadow: 0 0 14px rgba(var(--ach-chip-rare, 53, 224, 255), 0.18);
 }
-.ach-card.unlocked.rarity-rare:hover { box-shadow: 0 0 24px rgba(53, 224, 255, 0.35); }
+.ach-card.unlocked.rarity-rare:hover { box-shadow: 0 0 24px rgba(var(--ach-chip-rare, 53, 224, 255), 0.35); }
 .ach-card.unlocked.rarity-epic {
-    border-color: rgba(190, 92, 255, 0.6);
-    box-shadow: 0 0 16px rgba(190, 92, 255, 0.22);
+    border-color: rgba(var(--ach-chip-epic, 190, 92, 255), 0.6);
+    box-shadow: 0 0 16px rgba(var(--ach-chip-epic, 190, 92, 255), 0.22);
 }
-.ach-card.unlocked.rarity-epic:hover { box-shadow: 0 0 26px rgba(190, 92, 255, 0.4); }
+.ach-card.unlocked.rarity-epic:hover { box-shadow: 0 0 26px rgba(var(--ach-chip-epic, 190, 92, 255), 0.4); }
 .ach-card.unlocked.rarity-legendary {
-    border-color: rgba(255, 210, 62, 0.65);
-    box-shadow: 0 0 18px rgba(255, 210, 62, 0.25);
+    border-color: rgba(var(--ach-chip-legend, 255, 210, 62), 0.65);
+    box-shadow: 0 0 18px rgba(var(--ach-chip-legend, 255, 210, 62), 0.25);
     animation: achCardIn 0.45s ease-out backwards, legendPulse 2.6s ease-in-out infinite;
     animation-delay: calc(var(--i) * 60ms), calc(var(--i) * 60ms + 0.6s); /* 传说卡额外呼吸金辉，与瀑布入场错峰 */
 }
-.ach-card.unlocked.rarity-legendary:hover { box-shadow: 0 0 30px rgba(255, 210, 62, 0.45); }
+.ach-card.unlocked.rarity-legendary:hover { box-shadow: 0 0 30px rgba(var(--ach-chip-legend, 255, 210, 62), 0.45); }
 @keyframes legendPulse {
-    0%, 100% { box-shadow: 0 0 18px rgba(255, 210, 62, 0.25); }
-    50% { box-shadow: 0 0 30px rgba(255, 210, 62, 0.5); }
+    0%, 100% { box-shadow: 0 0 18px rgba(var(--ach-chip-legend, 255, 210, 62), 0.25); }
+    50% { box-shadow: 0 0 30px rgba(var(--ach-chip-legend, 255, 210, 62), 0.5); }
 }
-.ach-rarity-chip.rarity-common { color: #9fd49f; border-color: rgba(159, 212, 159, 0.5); background: rgba(159, 212, 159, 0.08); }
-.ach-rarity-chip.rarity-rare { color: #7ce4ff; border-color: rgba(53, 224, 255, 0.5); background: rgba(53, 224, 255, 0.08); }
-.ach-rarity-chip.rarity-epic { color: #d9a0ff; border-color: rgba(190, 92, 255, 0.5); background: rgba(190, 92, 255, 0.1); }
-.ach-rarity-chip.rarity-legendary { color: #ffd23e; border-color: rgba(255, 210, 62, 0.55); background: rgba(255, 210, 62, 0.1); }
+/* 稀有度徽章四档配色：文字=基准 RGB、描边/底色为同 RGB 降透明度（与卡片描边同源） */
+.ach-rarity-chip.rarity-common { color: rgb(var(--ach-chip-common, 159, 212, 159)); border-color: rgba(var(--ach-chip-common, 159, 212, 159), 0.5); background: rgba(var(--ach-chip-common, 159, 212, 159), 0.08); }
+.ach-rarity-chip.rarity-rare { color: rgb(var(--ach-chip-rare, 53, 224, 255)); border-color: rgba(var(--ach-chip-rare, 53, 224, 255), 0.5); background: rgba(var(--ach-chip-rare, 53, 224, 255), 0.08); }
+.ach-rarity-chip.rarity-epic { color: rgb(var(--ach-chip-epic, 190, 92, 255)); border-color: rgba(var(--ach-chip-epic, 190, 92, 255), 0.5); background: rgba(var(--ach-chip-epic, 190, 92, 255), 0.1); }
+.ach-rarity-chip.rarity-legendary { color: rgb(var(--ach-chip-legend, 255, 210, 62)); border-color: rgba(var(--ach-chip-legend, 255, 210, 62), 0.55); background: rgba(var(--ach-chip-legend, 255, 210, 62), 0.1); }
 .ach-card.locked .ach-icon { filter: grayscale(1); opacity: 0.45; }
 .ach-card.locked .ach-name { color: var(--ach-locked-c); }
 .ach-card.locked:hover { border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05); }
@@ -455,10 +461,10 @@
     color: var(--neon-gold, var(--neon-yellow));
     text-shadow: 0 0 8px rgba(255, 210, 62, 0.4);
 }
-.ach-toast.rarity-common { border-left-color: #9fd49f; }
-.ach-toast.rarity-rare { border-left-color: #35e0ff; }
-.ach-toast.rarity-epic { border-left-color: #be5cff; }
-.ach-toast.rarity-legendary { border-left-color: #ffd23e; }
+.ach-toast.rarity-common { border-left-color: rgb(var(--ach-chip-common, 159, 212, 159)); }
+.ach-toast.rarity-rare { border-left-color: rgb(var(--ach-chip-rare, 53, 224, 255)); }
+.ach-toast.rarity-epic { border-left-color: rgb(var(--ach-chip-epic, 190, 92, 255)); }
+.ach-toast.rarity-legendary { border-left-color: rgb(var(--ach-chip-legend, 255, 210, 62)); }
 .ach-toast.rarity-epic .toast-icon,
 .ach-toast.rarity-legendary .toast-icon { box-shadow: 0 0 14px rgba(255, 210, 62, 0.35); }
 @media (max-width: 640px) {

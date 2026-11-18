@@ -20,7 +20,7 @@
     <title>小蜜蜂 - 像素街机厅</title>
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <!-- 成就墙·金杯触发器共享样式 -->
-    <link rel="stylesheet" href="ach-trigger.css?v=20261118-1">
+    <link rel="stylesheet" href="ach-trigger.css?v=20261118-2">
     <style>
         /* ---------- 主题变量：底色 / 面板 / 霓虹色 / 文字 ---------- */
         :root {
@@ -41,6 +41,11 @@
         --ach-bar-grad: linear-gradient(90deg, #ffd23e, #ff9a3e); /* 总进度条渐变 */
         --ach-prog-grad: linear-gradient(90deg, #35e0ff, #ff3ea5); /* 卡片进度条渐变 */
         --ach-toast-grad: linear-gradient(120deg, rgba(40, 17, 28, 0.95), rgba(24, 10, 16, 0.95)); /* toast 渐变底 */
+        /* ---- 稀有度四档徽章配色（RGB 三元组，与卡片描边/toast 左缘同源）：取值与收编前页内徽章块逐字一致 ---- */
+        --ach-chip-common: 185, 168, 176; /* 普通档：主题粉降饱和灰调（原页内值） */
+        --ach-chip-rare: 53, 224, 255; /* 稀有档：页内霓虹青（原页内值） */
+        --ach-chip-epic: 255, 98, 216; /* 史诗档：主题粉亮化（原页内值） */
+        --ach-chip-legend: 255, 210, 62; /* 传说档：页内金色 */
         }
         /* html 画布底色随主题：全屏切换瞬间 overflow 切换 + 合成层重建触发重新光栅化，会间歇性闪现画布默认白底（视口底部白条根因），画布底色变暗后不可见 */
         html { background: var(--bg); }
@@ -558,22 +563,6 @@
             font-weight: bold;
             color: var(--text);
         }
-        /* 稀有度小徽章：四档配色（普通灰 / 稀有青 / 史诗粉 / 传说金）；
-           共享库规范类名 .ach-rarity-chip.rarity-*，锚定 .ach-card（其已 position:relative） */
-        .ach-rarity-chip {
-            position: absolute;
-            top: 10px;
-            right: 12px;
-            padding: 1px 6px;
-            font-size: 9px;
-            letter-spacing: 1px;
-            border-radius: 999px;
-            border: 1px solid currentColor;
-        }
-        .ach-rarity-chip.rarity-common { color: #b9a8b0; }
-        .ach-rarity-chip.rarity-rare { color: #35e0ff; }
-        .ach-rarity-chip.rarity-epic { color: #ff62d8; }
-        .ach-rarity-chip.rarity-legendary { color: var(--neon-yellow); }
         .ach-desc {
             /* 共享库以 <p> 渲染：margin 归零防浏览器默认外边距破坏卡片节奏 */
             margin: 4px 0 0;
@@ -768,7 +757,7 @@
     <script src="audio.js?v=20261118-1"></script>
     <script src="fx.js?v=20261118-1"></script>
     <script src="fullscreen.js?v=20261118-1"></script>
-    <script src="ach-common.js?v=20261118-3"></script>
+    <script src="ach-common.js?v=20261118-4"></script>
     <script src="snap-common.js?v=20261118-1"></script>
     <script src="pause-common.js?v=20261118-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
