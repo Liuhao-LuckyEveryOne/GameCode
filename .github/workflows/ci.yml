@@ -1,0 +1,57 @@
+# 像素街机厅 · CI 自动化（2026-11-18 引入）
+#
+# 两阶段设计（顺序不可调换）：
+#   阶段 1 守护检查 —— 先单独跑 tests/check.py。verify_all.py 的第 1 步会自动
+#     重建分享包（tools/sync_packages.py），若直接跑全量，"改了 js 忘了 sync"
+#     的仓库态漂移会被自动重建静默抹平、检查全绿照常通过；守护检查前置，
+#     让此类漂移在 CI 上显形为红（check.py 的分享包一致性项对陈旧 zip 报错）。
+#   阶段 2 全量验证 —— tools/verify_all.py 四步流水（sync → check → 无头冒烟
+#     → 无头行为回归），与本地一键验证完全同源，任一步失败非零码退出即红。
+#
+# 无头浏览器：verify_all.py 的探测清单末尾按裸命令名 chromium 走 PATH 查找，
+#   故把 runner 预装的 google-chrome 以 chromium 命令名包装进 /usr/local/bin，
+#   verify_all.py 零改动复用。包装而非软链的原因：补 --no-sandbox——Ubuntu 24.04
+#   系 AppArmor 收紧无特权用户命名空间，Chrome 沙箱在 CI 环境可能起不来；CI 为
+#   一次性虚拟机且仅访问本地回环测试页，去沙箱为无头 CI 的标准做法。
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 准备无头浏览器
+        run: |
+          if command -v chromium >/dev/null 2>&1; then
+            echo "runner 已自带 chromium：$(command -v chromium)"
+          else
+            if ! command -v google-chrome >/dev/null 2>&1; then
+              # 兜底：runner 镜像未来移除预装 Chrome 时从官方源安装稳定版
+              wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+              sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+            fi
+            # 以 chromium 命令名包装进 PATH（--no-sandbox 见文件头注释）
+            printf '#!/bin/sh\nexec %s --no-sandbox "$@"\n' "$(command -v google-chrome)" \
+              | sudo tee /usr/local/bin/chromium >/dev/null
+            sudo chmod +x /usr/local/bin/chromium
+            echo "已包装 google-chrome 为 chromium：$(command -v chromium)"
+          fi
+
+      - name: 守护检查（仓库态静态一致性）
+        run: python tests/check.py
+
+      - name: 全量四步验证（sync → check → 无头冒烟 → 无头行为回归）
+        run: python tools/verify_all.py
