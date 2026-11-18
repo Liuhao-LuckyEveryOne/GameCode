@@ -439,7 +439,7 @@ function spyObtain(frame) {
 async function s7s8_embedAndAch() {
     // 进度快照种子（食物在别行远处：窗口内必然不进食，保证断言确定性）；成就档种子由 bootSnake 接管
     const seedSnap = (score) => JSON.stringify({
-        v: 2, diff: 0, cols: 20, rows: 20,
+        v: 1, diff: 0, cols: 20, rows: 20,
         snake: [{ x: 2, y: 10 }, { x: 1, y: 10 }, { x: 0, y: 10 }], // snake[0] 为蛇头，向右排开
         dir: 'right', dirQueue: [],
         food: { x: 17, y: 4 }, score, eaten: 0, maxCombo: 0, gold: 0
@@ -836,7 +836,7 @@ async function s17_fxGateCrossPage() {
 
     // 种子快照（同 S8 口径）：食物远处窗口内不进食，移动 tick 仅发蛇头尾迹粒子——确定性发射源
     const seedSnap = JSON.stringify({
-        v: 2, diff: 0, cols: 20, rows: 20,
+        v: 1, diff: 0, cols: 20, rows: 20,
         snake: [{ x: 2, y: 10 }, { x: 1, y: 10 }, { x: 0, y: 10 }],
         dir: 'right', dirQueue: [],
         food: { x: 17, y: 4 }, score: 105, eaten: 0, maxCombo: 0, gold: 0

@@ -1640,6 +1640,9 @@ document.addEventListener('keydown', e => {
     function flyBackSnapshot(frame, card) {
         if (REDUCED_MOTION || !frame || !card) return; // 减少动效：仅保留原 CRT 关机演出
         try {
+            // 同源直读契约：大厅与游戏页恒为同源部署（file:// 亦为同目录直开），contentDocument 可达，
+            // 跨源部署等异常由外层 try-catch 统一吞掉并退回原 CRT 关机演出。刻意不走 postMessage 协议：
+            // toDataURL 为同步截帧，协议化需引入异步握手与七游戏接线成本，收益不成比例
             // 从 iframe 内挑选像素面积最大的画布作为游戏主画布（部分游戏存在静态层等辅助画布）
             const doc = frame.contentDocument;
             if (!doc) return;
@@ -1807,7 +1810,8 @@ document.addEventListener('keydown', e => {
 
 // ---------- 卡片音效：悬停播放对应游戏特色音，点击播放该游戏的另一款代表音效 ----------
 (function () {
-    // 卡片链接 → 音效映射（不同游戏不同音色）
+    // 卡片音效配置表：卡片链接（去缓存参数后的文件名）→ hover/click 音效，七游戏集中此处一处，
+    // 新增卡片只需补一行映射；未登记的卡片静默无声（下方 !sfx 早退，不报错）
     const cardSfx = {
         'snake.html': { hover: SFX.cardSnake, click: SFX.start },
         'tetris.html': { hover: SFX.cardTetris, click: SFX.tLevelUp },

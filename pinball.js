@@ -2196,5 +2196,54 @@ window.__ARCADE_TESTS__ = [
         if (Ach.isOpen() !== saved.achOpen) Ach.toggle(); // 恢复成就墙开合原状
         balls[0].vx = saved.vx; balls[0].vy = saved.vy; balls[0].trail.length = saved.trail;
     } },
+    // 高速隧穿压力：满速球连撞左壁（最坏穿透场景），物理子步细化下球心永不出墙、反弹响应正确
+    { name: 'stepBall 满速撞左壁不隧穿越界', fn: () => {
+        const b = makeBall(WORLD_W / 2, WORLD_H / 2, -MAX_SPEED, 0); // 满速水平射向左壁（游离球，不入 balls 数组、不影响真实对局）
+        let minX = b.x;
+        for (let f = 0; f < 30; f++) { // 逐帧复刻 updatePhysics 的子步拆分：单步位移 ≤ SUBSTEP_LEN
+            const sub = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil((Math.hypot(b.vx, b.vy) + gravity * FIXED_DT) * FIXED_DT / SUBSTEP_LEN)));
+            for (let s = 0; s < sub; s++) stepBall(FIXED_DT / sub, b);
+            minX = Math.min(minX, b.x);
+        }
+        if (minX >= 50) throw new Error('未命中左壁，压力场景失效: ' + minX);
+        if (minX < BALL_R + WALL_HALF - 0.5) throw new Error('球心隧穿左壁: ' + minX);
+        if (b.vx <= 0) throw new Error('撞壁后未反弹回右侧');
+        if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) throw new Error('坐标非法');
+    } },
+    // 挡板托球压力：球落在左挡板胶囊体中点上方受压，碰撞位置校正永不把球陷进胶囊体内；
+    // 挡板斜面无摩擦，球会缓慢滑向尖端，30 步（0.25s）内保证仍停在胶囊段上可断言
+    { name: 'stepBall 挡板胶囊托球不陷入', fn: () => {
+        const f = flippers[0];
+        const tip = flipperTip(f);
+        const mx = (f.ax + tip.x) / 2, my = (f.ay + tip.y) / 2; // 胶囊线段中点
+        const minD = BALL_R + FLIP_HALF;
+        const b = makeBall(mx, my - minD - 1, 0, 0); // 中点正上方 1px 落球
+        for (let s = 0; s < 30; s++) stepBall(FIXED_DT, b);
+        // 复刻胶囊最近点求间距：断言结束时球贴在胶囊表面（陷入则间距小于半径和，隧穿飞离则远大于）
+        const dx = tip.x - f.ax, dy = tip.y - f.ay, len2 = dx * dx + dy * dy;
+        let t = ((b.x - f.ax) * dx + (b.y - f.ay) * dy) / len2;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const dist = Math.hypot(b.x - (f.ax + dx * t), b.y - (f.ay + dy * t));
+        if (dist < minD - 0.5) throw new Error('球陷入挡板胶囊: ' + dist);
+        if (dist > minD + 8) throw new Error('球未稳定停在挡板上: ' + dist);
+    } },
+    // 弹柱陷入压力：满速球正面撞中央弹柱，位置校正即时推出、永不陷入弹柱体内；
+    // 弹柱撞击会加分与震屏，用例结束还原这两个全局，副作用不外溢到其它用例
+    { name: 'stepBall 满速撞中央弹柱不陷入', fn: () => {
+        const saved = { score, hitShake };
+        const bp = bumpers[2];
+        const minD = BALL_R + bp.r;
+        const b = makeBall(90, bp.y, MAX_SPEED, 0); // 满速水平射向中央弹柱
+        let minDist = Infinity;
+        for (let f = 0; f < 24; f++) { // 逐帧复刻 updatePhysics 的子步拆分
+            const sub = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil((Math.hypot(b.vx, b.vy) + gravity * FIXED_DT) * FIXED_DT / SUBSTEP_LEN)));
+            for (let s = 0; s < sub; s++) stepBall(FIXED_DT / sub, b);
+            minDist = Math.min(minDist, Math.hypot(b.x - bp.x, b.y - bp.y));
+        }
+        score = saved.score; hitShake = saved.hitShake;
+        if (minDist >= minD + 10) throw new Error('未命中弹柱，压力场景失效: ' + minDist);
+        if (minDist < minD - 0.5) throw new Error('球陷入弹柱: ' + minDist);
+        if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) throw new Error('坐标非法');
+    } },
 ];
 FX.behavior('pinball', window.__ARCADE_TESTS__);

@@ -916,12 +916,17 @@ function isCollision(head) {
 /* 难度按钮组点击时序收口共享库 bindDifficultyButtons：blur 防空格误触（snake 原缺失，
  * 随库补齐）→ 清全部高亮/点亮当前 → saveRaw 持久化序号（index 模式）→ SFX 点击音 →
  * onChange，全序列在库内 click 监听完成；游戏侧仅在 onChange 读按钮 data-* 写自家难度变量 */
+/** 当前难度档序号（0 无敌 / 1 简单 / 2 中等 / 3 困难）：初始 2 与 HTML 默认高亮「中等」一致，
+ * 由 bindDifficultyButtons 的 onChange 统一维护（点击与 sync 程序化恢复两条路径都会触发）；
+ * 快照 diff 字段与存档守卫直接读本变量，不再经 DOM 类名反推 */
+let difficultyIndex = 2;
 const difficultyCtl = Arcade.bindDifficultyButtons({
     bar: document.getElementById('difficultySelect'),
     storageKey: DIFFICULTY_KEY,
     persist: 'index',
     lockedDuringPlay: () => isRunning && !isDying, // 对局进行中禁切难度（局中守卫统一收口）
-    onChange: (btn) => {
+    onChange: (btn, idx) => {
+        difficultyIndex = idx; // 记录当前档序号，供快照 diff 字段直读
         gameSpeed = parseInt(btn.dataset.speed, 10);
         baseSpeed = gameSpeed; // 记录难度基准速度，作为进食提速递进的起点
         foodPoints = parseInt(btn.dataset.points, 10);
@@ -997,15 +1002,6 @@ function gameOver(isWin) {
 // 特有的快照字段契约：构建 / 校验 / 应用三钩子。
 
 /**
- * 由当前高亮的难度按钮反推难度档序号（找不到高亮按钮视为状态异常）
- * @returns {number} 难度档序号（0 无敌 / 1 简单 / 2 中等 / 3 困难；-1 = 状态异常）
- */
-function currentDifficultyIndex() {
-    return [...document.querySelectorAll('.difficulty-btn')]
-        .indexOf(document.querySelector('.difficulty-btn.active'));
-}
-
-/**
  * 构建当前局纯数据快照：仅含数组 / 数值 / 字符串，不含任何函数与 DOM 引用，
  * 可安全 JSON 序列化。快照字段（首字段固定版本号 v，恢复时校验）：
  *   v             快照格式版本，当前写入 1；更早的无 dirQueue 字段旧档，恢复时回退单字段 nextDir
@@ -1024,7 +1020,7 @@ function currentDifficultyIndex() {
 function buildSnakeSnapshot() {
     return {
         v: 1,
-        diff: currentDifficultyIndex(),
+        diff: difficultyIndex,
         cols: boardCols,
         rows: boardRows,
         snake: snake.map(s => ({ x: s.x, y: s.y })), // 逐节拷贝，序列化内容与活状态解耦
@@ -1046,11 +1042,10 @@ function buildSnakeSnapshot() {
  * @returns {boolean} 全部字段合法返回 true，任一非法返回 false
  */
 function validateSnakeSnapshot(snap) {
-    // 版本号不符（损坏或未来格式）：立即弃用（v1/v2 均兼容读取）
-    if (!snap || typeof snap !== 'object' || (snap.v !== 1 && snap.v !== 2)) return false;
-    // 难度档：非负整数且对应难度按钮真实存在
+    // 版本号不符（损坏或未来格式）：立即弃用（本字段自快照上线以来恒为 1，无历史版本需兼容）
+    if (!snap || typeof snap !== 'object' || snap.v !== 1) return false;
+    // 难度档：0~3 整数（无敌/简单/中等/困难固定四档，范围校验即存在性校验）
     if (!Number.isInteger(snap.diff) || snap.diff < 0 || snap.diff > 3) return false;
-    if (!document.querySelectorAll('.difficulty-btn')[snap.diff]) return false;
     // 棋盘规格：必须为有限数值且与当前棋盘一致（CSS 锁定 500×500 → 20×20，正常恒等）
     if (!Number.isFinite(snap.cols) || !Number.isFinite(snap.rows) ||
         snap.cols !== boardCols || snap.rows !== boardRows) {
@@ -1147,11 +1142,11 @@ function applySnakeSnapshot(snap) {
     return true;
 }
 
-// 快照管线实例：保存/清除分流（进行中且非死亡演出且难度高亮正常才保存）与
+// 快照管线实例：保存/清除分流（进行中且非死亡演出才保存）与
 // 恢复管线（校验失败 / 应用失败 / 抛错一律清档回退新开局）由 Snap.create 统一实现
 const snapPipe = Snap.create({
     key: SAVE_KEY,
-    canSave: () => isRunning && !isDying && currentDifficultyIndex() >= 0,
+    canSave: () => isRunning && !isDying, // 难度档由 difficultyIndex 状态直读，构建期恒合法，无需 DOM 反推校验
     build: buildSnakeSnapshot,
     validate: validateSnakeSnapshot,
     apply: applySnakeSnapshot

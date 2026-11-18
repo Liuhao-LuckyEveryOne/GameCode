@@ -47,6 +47,8 @@
  *                （Object.assign(SFX, {...}) 挂载，须在 audio.js 之后、业务 js 之前加载），
  *                本库收敛为「合成引擎 + 通用音 + 大厅音」；合成原语 tone/noise/arpeggio
  *                以 _tone/_noise/_arpeggio 内部约定键暴露（仅面向分册，业务代码禁止调用）
+ * v3.6（20261119）：嵌入态 boot 迁移分流——子页跳过旧键迁移与初始持久化写（状态权威在父页，
+ *                防父子页各自迁移写同键互相踩踏）；子页仅只读预取新键获取初始档位，最终以父页广播收敛
  * 音控状态通过 localStorage（键 arcadeAudio）在所有页面间共享；
  * 嵌入模式（?embed 于 iframe 内运行）下状态由大厅（父页）统一持有，经 postMessage 实时同步大厅与游戏
  */
@@ -87,9 +89,11 @@ const SFX = (() => {
      * 这层兜底必须存在：boot 位于 SFX IIFE 的求值路径上，异常一旦逃逸，整个音效库求值中断 →
      * SFX 未定义 → 依赖它的各游戏脚本连锁失败 → 全站无声 + 页面报错，单点故障被放大为全站故障 */
     const boot = (() => {
-        // 键缺失 / JSON 损坏 / 存储不可用统一 null → 走旧键迁移
+        // 键缺失 / JSON 损坏 / 存储不可用统一 null → 走旧键迁移；嵌入模式子页到此为止：
+        // 状态权威在父页，子页重复迁移会与父页写同键互相踩踏，仅只读预取新键拿初始档位
+        // （http(s) 同源嵌入共享父页存档可即时正确，file:// 跨帧不共享则取默认值等父页广播收敛）
         const cur = pickAudio(Arcade.loadJSON(AUDIO_KEY));
-        if (cur) return cur;
+        if (cur || EMBED) return cur || { m: false, b: VOL_STEPS.length - 1, s: VOL_STEPS.length - 1 };
         let m = false, b = VOL_STEPS.length - 1, s = VOL_STEPS.length - 1; // 默认：有声 + 双通道满档
         // 旧键迁移：arcadeSound==='off' 映射为静音，arcadeVol 档位合法则原样保留
         // （旧键结构为 {b, s} 无 m，不经 pickAudio，仅校验双通道整数档位）
@@ -101,11 +105,14 @@ const SFX = (() => {
     })();
     let muted = boot.m;                 // 一键静音标志（独立于档位：静音不破坏设置，恢复时档位无损还原）
     let vol = { b: boot.b, s: boot.s }; // 双通道音量档位（b=BGM 音乐，s=SFX 音效）
-    // 迁移后立即落新键并清理旧键。saveJSON/removeRaw 均在原语内部兜底不会抛，
-    // 存储被禁时仅内存态运行，旧键清不掉、留待下次启动（存储恢复后）再清
-    Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s });
-    Arcade.removeRaw('arcadeSound');
-    Arcade.removeRaw('arcadeVol');
+    // 迁移后立即落新键并清理旧键（仅父页角色；嵌入子页不持久化，状态随父页广播收敛）。
+    // saveJSON/removeRaw 均在原语内部兜底不会抛，存储被禁时仅内存态运行，
+    // 旧键清不掉、留待下次启动（存储恢复后）再清
+    if (!EMBED) {
+        Arcade.saveJSON(AUDIO_KEY, { m: muted, b: vol.b, s: vol.s });
+        Arcade.removeRaw('arcadeSound');
+        Arcade.removeRaw('arcadeVol');
+    }
 
     /**
      * 持久化当前音控状态到 localStorage（父页角色专用；嵌入模式子页状态由大厅统一持有）

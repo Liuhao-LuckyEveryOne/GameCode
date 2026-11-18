@@ -1452,7 +1452,7 @@ function clearPanelTimers() {
 
 /** 开始新一局：隐藏全部遮罩并重开棋盘 */
 function startGame() {
-    document.activeElement.blur(); // 移除按钮焦点，防止空格/回车误触按钮
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); // 移除按钮焦点，防止空格/回车误触按钮
     clearPanelTimers(); // 重开新局：清掉上一局尚未到点的面板/烟花定时器，防止旧定时器到点操作已失效的面板 DOM
     hideOverlay(startScreen);
     hideOverlay(winScreen);
@@ -1470,7 +1470,7 @@ function startGame() {
 
 /** 胜利后继续挑战：关闭胜利面板，沿用当前局面继续玩 */
 function continueGame() {
-    document.activeElement.blur();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     hideOverlay(winScreen);
     playing = true;
     SFX.bgm.start('n1024'); // 胜利演出期间 BGM 已停，继续挑战重新响起

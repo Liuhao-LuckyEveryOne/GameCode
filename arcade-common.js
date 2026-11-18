@@ -226,8 +226,9 @@ const Arcade = (() => {
                 activate(btn);
                 // 持久化所选难度：index 模式存序号裸串（兼容历史存档格式），data-diff 模式存键名
                 saveRaw(o.storageKey, persist === 'data-diff' ? key : String(idx));
-                // SFX 由 audio.js 先于业务 js 加载，点击期必然已就绪，直接调用
-                SFX.uiClick();
+                // 音效反馈软依赖：常规加载序下 audio.js 先于业务 js 就绪；本库定位零依赖基础库，
+                // 被单独环境（测试装置等）加载时 SFX 可能不存在，typeof 防御跳过发声（与 fullscreen.js 同口径）
+                if (typeof SFX !== 'undefined') SFX.uiClick();
             });
         });
 
