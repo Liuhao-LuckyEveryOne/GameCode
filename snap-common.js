@@ -103,9 +103,16 @@
      * 保存（进行中）或清除（非进行中）快照。保留导出：作为 bindAutoSave 的
      * 内部实现（单独调用仅限无需 SAVE 消息接线的特殊场景）。
      * @param {{save: Function}} pipe Snap.create 产出的管线实例
+     * @returns {{destroy: Function}} 绑定句柄：destroy() 移除 pagehide 监听
+     *   （既有调用方不受影响——不调用 destroy 时行为与旧版完全一致）
      */
     function bindPageHide(pipe) {
-        window.addEventListener('pagehide', () => pipe.save());
+        const onHide = () => pipe.save();
+        window.addEventListener('pagehide', onHide);
+        return {
+            /** 解除绑定：移除注册的 pagehide 监听（页面销毁/重建管线时调用，防重复绑定重复保存） */
+            destroy: function () { window.removeEventListener('pagehide', onHide); }
+        };
     }
 
     /**
@@ -118,10 +125,17 @@
      * 等待该回执，消除"关机动画 0.55s 时间窗赌子页已写完"的竞态；子页主线程
      * 卡顿导致回执迟到时，父页按超时兜底照常摘层（pagehide 兜底仍在）
      * @param {{save: Function}} pipe Snap.create 产出的管线实例
+     * @returns {{destroy: Function}} 绑定句柄：destroy() 解除双注册——移除 pagehide
+     *   监听并废弃 SAVE 消息响应（既有调用方不受影响——不调用 destroy 时行为与旧版完全一致）
      */
     function bindAutoSave(pipe) {
-        bindPageHide(pipe);
+        const pageHide = bindPageHide(pipe);
+        // 消息监听置废标志：Arcade.onTrustedMessage 注册的是匿名守卫监听且未提供移除
+        // API（守卫收口属 arcade-common.js 的职责面，本库不越界代管），解绑退而求其次——
+        // destroy 后回调短路空转，监听器虽在但不再响应任何消息，效果等同解绑
+        let dead = false;
         Arcade.onTrustedMessage((e) => {
+            if (dead) return; // 已解绑：短路空转，不再保存/回执
             if (e.data && e.data.type === Arcade.MSG.SAVE) {
                 pipe.save();
                 // 存档回执（ACK）：快照已落盘（保存/清除分支均算），父页收到后才摘除 iframe
@@ -132,6 +146,13 @@
                 } catch (err) { /* 回执失败不影响存档本身，父页按超时兜底 */ }
             }
         });
+        return {
+            /** 解除绑定：废弃 SAVE 消息响应并移除 pagehide 兜底（页面销毁/重建管线时调用） */
+            destroy: function () {
+                dead = true;
+                pageHide.destroy();
+            }
+        };
     }
 
     /* ---------------------------- 失焦接线 ---------------------------- */
@@ -142,10 +163,20 @@
      * 游戏清理函数内部的暂停守卫天然幂等）。清理内容（手势/按键/连发状态）与
      * 自动暂停守卫由游戏回调自行处置，本库只收编双通道注册。
      * @param {Function} handler 失焦清理函数（游戏具名 handleFocusLoss）
+     * @returns {{destroy: Function}} 绑定句柄：destroy() 移除 blur 与
+     *   visibilitychange 双通道监听（既有调用方不受影响——不调用 destroy 时行为与旧版完全一致）
      */
     function bindFocusLoss(handler) {
+        const onHidden = () => { if (document.hidden) handler(); };
         window.addEventListener('blur', handler);
-        document.addEventListener('visibilitychange', () => { if (document.hidden) handler(); });
+        document.addEventListener('visibilitychange', onHidden);
+        return {
+            /** 解除绑定：移除 blur 与 visibilitychange 双通道监听（页面销毁/重建引擎时调用） */
+            destroy: function () {
+                window.removeEventListener('blur', handler);
+                document.removeEventListener('visibilitychange', onHidden);
+            }
+        };
     }
 
     /* ---------------------------- 导出 ---------------------------- */

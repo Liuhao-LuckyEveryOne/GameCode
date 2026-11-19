@@ -46,6 +46,18 @@ const REDUCED_MOTION = Arcade.prefersReducedMotion; // 探测收口于 arcade-co
     setTimeout(() => { if (boot.isConnected) boot.remove(); }, 1600);
 })();
 
+// ---------- localStorage 键名常量表：大厅自用散键在此单点定义（字符串与各读写处逐字一致） ----------
+// 游戏侧最高分键（BEST_DEFS.keys）与成就存档键（ACH_DEFS.key）为 check.py 与各游戏文件
+// 双向静态比对的字面量契约，留在两表内不并入本表；此处只收大厅自身的键与清除前缀族
+const KEYS = {
+    // 「上次游玩」记录键：值为最近启动的游戏 id
+    LAST_PLAYED: 'arcade_last',
+    // 游玩时长键前缀：拼游戏 id 组成实际存储键（arcade_playtime_<游戏id>）
+    PLAYTIME_PREFIX: 'arcade_playtime_'
+};
+// 全站重置按前缀整族清除的键：成就存档/进行中快照/每日挑战/游玩时长（复用上方前缀单点）/华容道最高分/华容道评级
+KEYS.RESET_PREFIXES = ['arcade_ach_', 'arcade_save_', 'arcade_daily_', KEYS.PLAYTIME_PREFIX, 'klotskiBest_', 'klotskiRank_'];
+
 // ---------- 卡片最高分与「上次游玩」：读取各游戏写入的 localStorage 记录 ----------
 // 各游戏最高分键与语义方向（与游戏页内读写代码严格一致）：
 // snake/tetris/pac/bee/pinball/1024 均为分数（越大越好）；
@@ -76,7 +88,6 @@ const BEST_DEFS = [
     // 两个键一并读取（readBest 取最大值），避免大厅漏掉新纪录
     { id: '1024', keys: ['1024HighScore', '1024BestScore'], direction: 'high' }
 ];
-const LAST_PLAYED_KEY = 'arcade_last'; // 「上次游玩」记录键：值为最近启动的游戏 id
 
 /**
  * 从卡片 href 提取游戏 id：去掉缓存版本号查询串与 .html 后缀（snake.html?v=1 → snake）
@@ -210,10 +221,24 @@ const ACH_DEFS = [
         ]
     }
 ];
-/** 参与游玩时长统计的游戏 id（与卡片 href 解析出的 game id 一致） */
-const PLAYTIME_IDS = ['snake', 'tetris', 'pac', 'bee', 'pinball', 'klotski', '1024'];
 /** 全站成就总数（进度环分母）：由相片表逐游戏聚合派生，避免平行维护 total 数字 */
 const ACH_TOTAL = ACH_DEFS.reduce((sum, def) => sum + def.photos.length, 0);
+
+/** 大厅侧七游戏单一元数据表：每游戏一行收口其在大厅的全部元数据，消费点统一读本表——
+ *  best 为 BEST 角标定义（指向 BEST_DEFS 条目：候选键与语义方向，check.py 字面量契约所在）；
+ *  ach 为成就殿堂定义（指向 ACH_DEFS 条目：存档键、墙区名与相片表）；
+ *  playtime 为是否参与游玩时长统计（卡片时长角标与子页上报白名单共用此标记）；
+ *  resetKeys 为「重置进度」须精确清除的无公共前缀散键（旧成就迁移/每日挑战/进行中快照）。
+ *  id 与 best/ach 条目 id 同名、行序与两表及大厅卡片排列一致（按行索引对位） */
+const GAMES = [
+    { id: 'snake', best: BEST_DEFS[0], ach: ACH_DEFS[0], playtime: true, resetKeys: [] },
+    { id: 'tetris', best: BEST_DEFS[1], ach: ACH_DEFS[1], playtime: true, resetKeys: [] },
+    { id: 'pac', best: BEST_DEFS[2], ach: ACH_DEFS[2], playtime: true, resetKeys: ['pacDotsTotal'] },
+    { id: 'bee', best: BEST_DEFS[3], ach: ACH_DEFS[3], playtime: true, resetKeys: ['beeAchievements'] },
+    { id: 'pinball', best: BEST_DEFS[4], ach: ACH_DEFS[4], playtime: true, resetKeys: [] },
+    { id: 'klotski', best: BEST_DEFS[5], ach: ACH_DEFS[5], playtime: true, resetKeys: ['klotskiDaily', 'klotskiProgress'] },
+    { id: '1024', best: BEST_DEFS[6], ach: ACH_DEFS[6], playtime: true, resetKeys: [] }
+];
 
 /**
  * 读取某游戏的成就解锁映射：兼容三代存档格式——
@@ -245,9 +270,12 @@ function readUnlockMap(def) {
  * @param {number} seconds 本次上报秒数（>0，四舍五入为整数秒累加）
  */
 function addPlaytime(id, seconds) {
-    // 隐私模式等存储不可用：loadRaw 兜底按 0 计，saveRaw 写失败静默
-    const old = parseInt(Arcade.loadRaw('arcade_playtime_' + id), 10) || 0;
-    Arcade.saveRaw('arcade_playtime_' + id, String(old + Math.round(seconds)));
+    // 与 readPlaytimeMinutes 同一防御级：读-改-写整段包 try-catch，隐私模式等
+    // 存储不可用时静默丢弃本次累计，不沿消息回调中断后续处理
+    try {
+        const old = parseInt(Arcade.loadRaw(KEYS.PLAYTIME_PREFIX + id), 10) || 0;
+        Arcade.saveRaw(KEYS.PLAYTIME_PREFIX + id, String(old + Math.round(seconds)));
+    } catch (e) { /* 存储不可用：本次时长按丢失处理 */ }
 }
 
 /**
@@ -257,16 +285,17 @@ function addPlaytime(id, seconds) {
  */
 function readPlaytimeMinutes(id) {
     try {
-        return Math.floor((parseInt(Arcade.loadRaw('arcade_playtime_' + id), 10) || 0) / 60);
+        return Math.floor((parseInt(Arcade.loadRaw(KEYS.PLAYTIME_PREFIX + id), 10) || 0) / 60);
     } catch (e) { return 0; }
 }
 
 /** 刷新全部卡片的游玩时长角标：累计不足 1 分钟隐藏，有记录显示「N 分钟」 */
 function refreshTimeBadges() {
-    for (let i = 0; i < PLAYTIME_IDS.length; i++) {
-        const el = document.getElementById('pt-' + PLAYTIME_IDS[i]);
+    for (let i = 0; i < GAMES.length; i++) {
+        if (!GAMES[i].playtime) continue; // 未参与时长统计的游戏不出角标
+        const el = document.getElementById('pt-' + GAMES[i].id);
         if (!el) continue;
-        const mins = readPlaytimeMinutes(PLAYTIME_IDS[i]);
+        const mins = readPlaytimeMinutes(GAMES[i].id);
         el.hidden = mins <= 0;
         el.textContent = mins + ' 分钟';
     }
@@ -326,7 +355,7 @@ function refreshBest() {
  * 刷新「上次游玩」角标：仅 arcade_last 记录对应的卡片加 .is-last 显示角标
  */
 function refreshLastBadge() {
-    const lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无纪录处理
+    const lastId = Arcade.loadRaw(KEYS.LAST_PLAYED); // 隐私模式：读失败兜底 null 按无纪录处理
     const cards = document.querySelectorAll('.card');
     for (let i = 0; i < cards.length; i++) {
         cards[i].classList.toggle('is-last', cardGameId(cards[i].getAttribute('href')) === lastId);
@@ -346,7 +375,7 @@ function refreshLastBadge() {
     refreshLastBadge();
     refreshTimeBadges();
     // 存在「上次游玩」记录：把初始键盘焦点放到对应卡片，进场即可空格续玩
-    const lastId = Arcade.loadRaw(LAST_PLAYED_KEY); // 隐私模式：读失败兜底 null 按无记录处理
+    const lastId = Arcade.loadRaw(KEYS.LAST_PLAYED); // 隐私模式：读失败兜底 null 按无记录处理
     if (lastId) {
         const cards = document.querySelectorAll('.card');
         for (let i = 0; i < cards.length; i++) {
@@ -369,7 +398,6 @@ let trophyClosedAt = -1e9;
 (function () {
     const hall = document.getElementById('trophyHall');
     const btn = document.getElementById('trophyToggle');
-    if (!hall || !btn) return; // 殿堂结构缺失时整段跳过，不影响其余大厅功能
     const totalEl = document.getElementById('thTotal');
     const ringFg = document.getElementById('thRingFg');
     const ringText = document.getElementById('thRingText');
@@ -378,6 +406,10 @@ let trophyClosedAt = -1e9;
     const rankHintEl = document.getElementById('thRankHint'); // 距更高阶称号差值提示
     const mileEl = document.getElementById('thMile');
     const gridEl = document.getElementById('thGrid');
+    // 殿堂与渲染链子元素齐全性守卫：任一缺失即整段跳过，避免 render() 中途抛错
+    // 中断本 IIFE 后续接线，也不影响其余大厅功能
+    if (!hall || !btn || !totalEl || !ringFg || !ringText || !rankEl
+        || !rankBarEl || !rankHintEl || !mileEl || !gridEl) return;
     const RING_LEN = 2 * Math.PI * 56; // 进度环周长（r=56 与 SVG 圆一致）
     /** 奖杯 SVG 图标（material emoji_events 24×24 路径，currentColor 继承行状态色：完成金亮/未完成暗灰） */
     const CUP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.73 1.75 2.29 3.05 4.11 3.4V19H9v2h6v-2h-2.5v-2.66c1.82-.35 3.38-1.65 4.11-3.4C18.08 12.63 20 10.55 20 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>';
@@ -553,13 +585,13 @@ let trophyClosedAt = -1e9;
         }
         disarmReset();
         // 清除三类：① 前缀族键（成就/进行中快照/每日挑战/游玩时长/华容道最高分与评级）
-        // ② BEST_DEFS 全量最高分精确键（含 klotskiBest_ 之外的六游戏高分键，前缀键重复删除无害）
-        // ③ 零散进度键（bee 旧成就迁移键/华容道每日/华容道进行中/吃豆旧累计/上次游玩）
-        ['arcade_ach_', 'arcade_save_', 'arcade_daily_', 'arcade_playtime_', 'klotskiBest_', 'klotskiRank_']
-            .forEach(p => Arcade.removeByPrefix(p));
-        BEST_DEFS.forEach(def => def.keys.forEach(k => Arcade.removeRaw(k)));
-        ['beeAchievements', 'klotskiDaily', 'klotskiProgress', 'pacDotsTotal', LAST_PLAYED_KEY]
-            .forEach(k => Arcade.removeRaw(k));
+        // ② 各游戏全量最高分精确键（含 klotskiBest_ 之外的六游戏高分键，前缀键重复删除无害）
+        // ③ 各游戏零散进度键（见 GAMES.resetKeys：旧成就迁移/华容道每日/华容道进行中/吃豆旧累计）
+        //    与「上次游玩」全局键
+        KEYS.RESET_PREFIXES.forEach(p => Arcade.removeByPrefix(p));
+        GAMES.forEach(g => g.best.keys.forEach(k => Arcade.removeRaw(k)));
+        GAMES.forEach(g => g.resetKeys.forEach(k => Arcade.removeRaw(k)));
+        Arcade.removeRaw(KEYS.LAST_PLAYED);
         // 反馈：CRT 断电音呼应「数据清零」；进度类角标与殿堂即刻归零——
         // storage 事件只发给同源其它文档，本页清除不会自触发，须主动刷新
         SFX.crtOff();
@@ -1778,7 +1810,7 @@ document.addEventListener('keydown', e => {
             // 存续期间（投币后约 6.0 秒 = 金币飞行 2.7s + 分层点亮波浪最长约 3.0s）静默吞掉本次点击——只投币，不启动
             if (document.body.classList.contains('lights-on')) return;
             // 记录本次启动的游戏为「上次游玩」（本页写入不触发本页 storage 事件，需手动刷角标）
-            Arcade.saveRaw(LAST_PLAYED_KEY, cardGameId(card.getAttribute('href'))); // 隐私模式：写失败静默，游戏照常启动
+            Arcade.saveRaw(KEYS.LAST_PLAYED, cardGameId(card.getAttribute('href'))); // 隐私模式：写失败静默，游戏照常启动
             refreshLastBadge();
             // 取卡片内联的霓虹色作为 LOADING 过渡主题色，并把卡片本身传入作为关机回流缩略落点
             openGame(card.getAttribute('href'), card.style.getPropertyValue('--glow').trim(), card);
@@ -1794,7 +1826,7 @@ document.addEventListener('keydown', e => {
     Arcade.onTrustedMessage(e => {
         const d = e.data;
         // 游玩时长上报：子页 FX.playtime 周期冲账，父页累计落盘并刷新卡片角标
-        if (d && d.type === Arcade.MSG.PLAYTIME && PLAYTIME_IDS.indexOf(d.id) !== -1
+        if (d && d.type === Arcade.MSG.PLAYTIME && GAMES.some(g => g.id === d.id && g.playtime)
             && typeof d.seconds === 'number' && d.seconds > 0) {
             addPlaytime(d.id, d.seconds);
             refreshTimeBadges();

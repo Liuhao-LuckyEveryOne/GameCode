@@ -1284,8 +1284,141 @@ def check_fs_selectors_problems():
     return problems
 
 
+# ---------- 检查项 16：难度数值校验 ----------
+# 设计需求文档沉淀的难度数值（初始降速/得分链/Boss 血量/评级门槛等）是玩家
+# 直接感知的调参结果，游戏 js 中的具名常量与数值被误改后无任何报错。本项按
+# 「文档锚正则提取数值 → 词边界断言存在于对应游戏 js 原文 + 具名常量存在」
+# 的既有字面量模式校验，防数值漂移与常量重命名。
+# 稳健性：任一锚在文档中未命中即记「跳过」不计失败——文档表格改版（换措辞/
+# 换列序）时本项自动降级为提示，锚同步后再恢复断言，避免文档格式变化误报。
+DOC_PATH = ROOT / "docs" / "设计需求文档.md"
+
+# 每条 spec：(游戏 js 名, [(锚正则, 锚用途说明), ...], [具名常量词边界正则, ...])
+# 数值提取：捕获组优先；无捕获组时提取匹配段内全部数字 token。纯一位数字
+# 过滤不参与断言（词边界下易误中、断言价值为零）
+DIFF_DOC_SPECS = [
+    ("snake.js", [
+        (r"\|\s*(?:简单|中等|困难)\s*\|\s*(\d+)\s*ms", "三档初始降速"),
+        (r"\b0\.93\b", "进食提速倍率"),
+    ], [r"\bSPEED_FACTOR\b", r"\bSPEED_MIN\b", r"\bbaseSpeed\b"]),
+    ("tetris.js", [
+        (r"消\s*\d[^|\n]*\|\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", "消行得分链"),
+        (r"锁定延迟[^|\n]*\|\s*落地后\s*(\d+)\s*ms[^|\n]*?最多推迟\s*(\d+)\s*次", "锁定延迟与推迟上限"),
+    ], [r"\bLINE_SCORES\b", r"\bLOCK_DELAY\b", r"\bDAS_DELAY\b", r"\bARR_INTERVAL\b"]),
+    ("pac.js", [
+        (r"400\s*/\s*800\s*/\s*1600", "幽灵连杀得分链"),
+        (r"奖励命\s*\|\s*每累计\s*(\d{4,})\s*分", "奖励命门槛"),
+    ], [r"\bONE_UP_SCORE\b"]),
+    ("bee.js", [
+        (r"Boss 血量[^|\n]*\|\s*(\d{2,})\s*\+\s*(\d+)\s*[×x]", "Boss 血量基线与每波增量"),
+        (r"Boss 击破奖励[^|\n]*\|\s*(\d{3,})\s*\+\s*(\d+)", "击破奖励基线与每波增量"),
+    ], [r"\bBOSS_BASE_HP\b", r"\bBOSS_HP_PER_WAVE\b", r"\bBOSS_BONUS\b", r"\bPOWERUP_DROP_CHANCE\b"]),
+    ("pinball.js", [
+        (r"弹柱[^|\n]*\|\s*(\d+)", "弹柱得分"),
+        (r"JACKPOT[^|\n]*\|\s*(\d{3,})", "JACKPOT 大奖"),
+        (r"按住蓄力（至多\s*(\d+(?:\.\d+)?)\s*秒", "弹射器蓄力时长"),
+    ], [r"\bJACKPOT_SCORE\b", r"\bCHARGE_TIME\b"]),
+    ("klotski.js", [
+        (r"\b1\.15\b", "S 评级步数比门槛"),
+        (r"\b1\.4\b", "A 评级步数比门槛"),
+        (r"\b1\.8\b", "B 评级步数比门槛"),
+    ], [r"\bRANK_TIERS\b"]),
+    ("1024.js", [
+        (r"\|\s*(?:简单|普通|困难)\s*\|\s*(\d)\s*[×x]\s*(\d)\s*\|\s*(\d)\s*次", "三档棋盘与撤销次数"),
+    ], [r"\bUNDO_LIMITS\b"]),
+]
+
+_NUM_TOKEN_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def check_diff_values_problems():
+    """难度数值校验：文档提取数值逐个在游戏 js 原文断言存在，具名常量防重命名
+
+    锚未命中记跳过（不计失败）；锚命中但数值/常量在 js 中缺失即报。
+    文档文件本身缺失视为真缺口报红。
+
+    返回:
+        问题清单（空列表 = 通过）
+    """
+    problems = []
+    skipped = []
+    if not DOC_PATH.is_file():
+        return [f"docs/设计需求文档.md 缺失（难度数值校验无数据源）"]
+    doc = DOC_PATH.read_text(encoding="utf-8")
+    for js_name, anchors, consts in DIFF_DOC_SPECS:
+        path = ROOT / js_name
+        if not path.is_file():
+            problems.append(f"{js_name} 缺失（难度数值无处断言）")
+            continue
+        js = path.read_text(encoding="utf-8")
+        # 具名常量断言：与数值解耦，常量缺失独立报（锚跳过不影响此断言）
+        for c in consts:
+            if not re.search(c, js):
+                problems.append(f"{js_name} 未找到具名常量 {c.strip(chr(92) + chr(98))}（被重命名/删除即难度接线失守）")
+        nums = []
+        for pattern, purpose in anchors:
+            m = re.search(pattern, doc)
+            if not m:
+                skipped.append(f"{js_name}：{purpose} 锚未命中（文档格式可能已变化，明确跳过不误报）")
+                continue
+            groups = m.groups()
+            if groups:
+                nums.extend(g for g in groups if g)
+            else:
+                nums.extend(_NUM_TOKEN_RE.findall(m.group(0)))
+        # 一位纯数字过滤后逐个词边界断言（0.93/1.15 等小数与多位整数参与）
+        for n in nums:
+            if re.fullmatch(r"\d", n):
+                continue
+            if not re.search(r"(?<![\w.])" + re.escape(n) + r"(?![\w.])", js):
+                problems.append(f"{js_name} 未找到文档数值 {n}（难度数值与设计文档漂移）")
+    # 跳过仅提示不走 problems：文档改版属正常演进，人工按需同步锚
+    if skipped:
+        print("       [skip] " + "; ".join(skipped))
+    return problems
+
+
+# ---------- 检查项 17：演出要素存在性 ----------
+# CRT 全屏切换 / 开关机音 / reduced-motion 演出禁用属「演出类」功能，视觉效果
+# 无法静态验证，但接线与元素存在性可以。本项抓三面存在性：
+# a) 大厅 + 七游戏页均有 #fullscreenToggle 切换元素（fullscreen.js 接线目标）；
+# b) 共享库探测/门控口：arcade-common.js 探测口、fx.js 演出禁用门控、
+#    fullscreen.js CRT 开关机音接线口；
+# c) CRT 开关机音实际接线页：index.js（大厅）与 bee.js/1024.js（独立打开时
+#    自行接线）——按当前实际代码结构断言，不要求全部游戏页一致。
+STAGE_HTML_SPECS = ["index.html", "snake.html", "tetris.html", "pac.html",
+                    "bee.html", "pinball.html", "klotski.html", "1024.html"]
+STAGE_HTML_ANCHOR = re.compile(r"""\bid\s*=\s*["']fullscreenToggle["']""")
+STAGE_JS_SPECS = [
+    ("arcade-common.js", r"\bprefersReducedMotion\b", "reduced-motion 探测口"),
+    ("fx.js", r"\bprefersReduced\b", "演出类效果禁用门控"),
+    ("fullscreen.js", r"\bonCrtAudio\b", "CRT 开关机音接线口"),
+    ("index.js", r"\bSFX\.crtOn\b", "大厅 CRT 开机音接线"),
+    ("bee.js", r"\bFS\.onCrtAudio\b", "bee 独立打开时 CRT 音接线"),
+    ("1024.js", r"\bFS\.onCrtAudio\b", "1024 独立打开时 CRT 音接线"),
+]
+
+
+def check_stage_presence_problems():
+    """演出要素存在性：全屏切换元素、演出禁用路径、CRT 音接线逐面断言存在
+
+    返回:
+        问题清单（空列表 = 通过）
+    """
+    problems = []
+    for page in STAGE_HTML_SPECS:
+        path = ROOT / page
+        if path.is_file() and not STAGE_HTML_ANCHOR.search(path.read_text(encoding="utf-8")):
+            problems.append(f"{page} 缺少 id=\"fullscreenToggle\" 全屏/CRT 切换元素（演出接线目标缺失）")
+    for js_name, anchor, purpose in STAGE_JS_SPECS:
+        path = ROOT / js_name
+        if path.is_file() and not re.search(anchor, path.read_text(encoding="utf-8")):
+            problems.append(f"{js_name} 缺少 {purpose}（{anchor.strip(chr(92) + chr(98))}）——演出接线断裂")
+    return problems
+
+
 def main():
-    """主流程：依次运行十五项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十七项检查，汇总结果并按退出码约定返回。"""
     targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
@@ -1303,6 +1436,8 @@ def main():
         ("大厅成就/最高分同步", check_lobby_defs_problems),
         ("冒烟白盒契约", check_smoke_whitebox_problems),
         ("全屏选择器契约", check_fs_selectors_problems),
+        ("难度数值校验", check_diff_values_problems),
+        ("演出要素存在性", check_stage_presence_problems),
     ]
     all_ok = True
     for label, fn in checks:

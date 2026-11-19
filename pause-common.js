@@ -69,6 +69,9 @@
         function enter(next, byBlur) {
             opts.setPaused(next, byBlur); // 游戏标志与专属落点先行（与既有实现一致：先置态再动遮罩/音频）
             if (opts.overlay) opts.overlay.style.display = next ? 'block' : 'none';
+            // 音效软依赖：常规加载序下 audio.js 先于业务 js 就绪，被单独环境（测试装置等）
+            // 加载时 SFX 可能不存在，typeof 防御跳过整段 BGM 挂起/接续与提示音（与 arcade-common.js、fullscreen.js 同口径）
+            if (typeof SFX === 'undefined') return;
             if (next) {
                 SFX.bgm.pause(); // 背景音乐挂起，与暂停遮罩同步
                 if (!byBlur) (opts.pauseSfx || SFX.uiPause)(); // 失焦自动暂停不发声（历史行为对齐）
@@ -113,6 +116,8 @@
      *   document 级监听 mousedown（bee 模式）/ exclude 仅 target='document' 时生效，
      *   e.target.closest(o.exclude) 命中则忽略（默认 'button, a'）
      * @throws {Error} engine 缺失或缺 resume，或 target='overlay' 未传 overlay
+     * @returns {{destroy: Function}} 绑定句柄：destroy() 移除本函数注册的监听
+     *   （既有调用方不受影响——不调用 destroy 时行为与旧版完全一致）
      */
     function bindOverlayResume(engine, o) {
         if (!engine || typeof engine.resume !== 'function') {
@@ -120,20 +125,32 @@
         }
         o = o || {};
         const target = o.target || 'overlay';
+        let unbind = null; // 监听移除函数：绑定成功后赋值，destroy 统一经此解除
         if (target === 'overlay') {
             if (!o.overlay) {
                 throw new Error('Pause.bindOverlayResume 参数缺失（target=overlay 时 overlay 必传）');
             }
             // klotski 模式：仅在遮罩上按下才恢复，游戏区域不受影响
-            o.overlay.addEventListener('pointerdown', () => engine.resume());
+            const onDown = () => engine.resume();
+            o.overlay.addEventListener('pointerdown', onDown);
+            unbind = () => o.overlay.removeEventListener('pointerdown', onDown);
         } else {
             // bee 模式：document 级按下即恢复，按钮/链接点击除外（closest 命中说明目标是控件）
             const exclude = o.exclude || 'button, a';
-            document.addEventListener('mousedown', (e) => {
+            const onDown = (e) => {
                 if (e.target.closest && e.target.closest(exclude)) return;
                 engine.resume();
-            });
+            };
+            document.addEventListener('mousedown', onDown);
+            unbind = () => document.removeEventListener('mousedown', onDown);
         }
+        return {
+            /** 解除绑定：移除注册的监听（页面销毁/引擎重建时调用，防重复绑定叠加响应） */
+            destroy: function () {
+                if (unbind) unbind();
+                unbind = null;
+            }
+        };
     }
 
     /* ---------------------------- 导出 ---------------------------- */

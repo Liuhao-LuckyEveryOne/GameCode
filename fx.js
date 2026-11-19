@@ -21,8 +21,10 @@
 const FX = (() => {
     /** 是否偏好减弱动效（系统级设置；各游戏据此跳过粒子/卡帧等纯装饰演出，探测收口于 arcade-common.js） */
     const prefersReduced = Arcade.prefersReducedMotion;
-    /** 嵌入判据（本库唯一口径，与 audio.js / fullscreen.js 对齐）：运行于 iframe 且 URL 携带 ?embed 标记 */
-    const EMBED = window.parent !== window && new URLSearchParams(location.search).has('embed');
+    /** 嵌入判据（本库唯一口径，与 fullscreen.js / audio.js 的 EMBED 保持一致，修改时三处须同步）：
+     *  运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入） */
+    const embedVal = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
+    const EMBED = window.parent !== window && embedVal !== null && embedVal !== '0' && embedVal !== 'false';
 
     /**
      * 高清屏适配：按 devicePixelRatio 放大画布物理分辨率，同时以 setTransform 锁定 CSS 逻辑坐标系，
@@ -241,7 +243,7 @@ const FX = (() => {
      * 定长粒子对象池：预分配、循环复用，避免高频演出反复 new 对象造成 GC 抖动。
      * 用法：
      *   const pool = new FX.Pool(300, () => ({x:0,y:0,vx:0,vy:0,life:0,max:1}));
-     *   每帧：pool.obtain() 取粒子并填充属性 → 更新/绘制 → pool.sweep() 剔除死亡粒子
+     *   每帧：pool.obtain() 取粒子并填充属性 → pool.each() 遍历更新/绘制 → pool.sweep() 剔除死亡粒子
      */
     class Pool {
         /**
@@ -273,6 +275,17 @@ const FX = (() => {
             const p = this.items[this.cursor];
             this.cursor = (this.cursor + 1) % this.n;
             return p;
+        }
+
+        /**
+         * 遍历活跃区粒子（items 前 n 个，按下标正序）：对外只读遍历接口，
+         * 供游戏页推进物理与绘制，替代直接访问内部字段 items/n 的写法
+         * @param {Function} fn 遍历回调（入参为活跃粒子对象；回调内不得调用
+         *   obtain/sweep/clear 改变活跃区，否则遍历下标失真）
+         * @returns {void}
+         */
+        each(fn) {
+            for (let i = 0; i < this.n; i++) fn(this.items[i]);
         }
 
         /**

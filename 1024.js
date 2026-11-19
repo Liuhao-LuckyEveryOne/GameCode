@@ -65,12 +65,6 @@ const WIN_VALUE = 1024;
 const SPAWN4_PROB = 0.1;
 /** 飘字存活时长（秒） */
 const FLOAT_DUR = 0.9;
-/** 最高分 localStorage 键（新键，与全库 {game}HighScore 命名风格统一，如 pacHighScore / snakeHighScore） */
-const BEST_KEY = '1024HighScore';
-/** 旧版最高分键（历史遗留 1024BestScore）：新键缺失时回退读取并一次性迁移写入新键，保留老玩家最高分 */
-const LEGACY_BEST_KEY = '1024BestScore';
-/** 难度选择存档键（localStorage），页面加载时恢复上一次选择（对齐其他游戏难度记忆） */
-const DIFFICULTY_KEY = '1024Difficulty';
 
 /* ---------- 每日挑战：日期种子开局（同一天所有新开局生成完全一致的谜题） ---------- */
 
@@ -79,8 +73,23 @@ const DAILY_DATE = (() => {
     const d = new Date();
     return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
 })();
-/** 每日挑战达成存档键（街机厅统一前缀 arcade_daily_）：当日已达成则新开局走普通模式，次日自动恢复挑战 */
-const DAILY_KEY = 'arcade_daily_1024_' + DAILY_DATE;
+/** localStorage 键名单点定义（收敛文件内散落的键名常量，值与既有键完全一致，仅集中维护） */
+const KEYS = {
+    /** 最高分键（新键，与全库 {game}HighScore 命名风格统一，如 pacHighScore / snakeHighScore） */
+    best: '1024HighScore',
+    /** 旧版最高分键（历史遗留）：新键缺失时回退读取并一次性迁移写入新键，保留老玩家最高分 */
+    legacyBest: '1024BestScore',
+    /** 难度选择存档键，页面加载时恢复上一次选择（对齐其他游戏难度记忆） */
+    difficulty: '1024Difficulty',
+    /** 每日挑战达成存档键（街机厅统一前缀 arcade_daily_）：当日已达成则新开局走普通模式，次日自动恢复挑战 */
+    daily: 'arcade_daily_1024_' + DAILY_DATE,
+    /** 对局进度镜像快照键（街机厅统一契约 arcade_save_1024，与 snake/tetris/pac/bee/pinball 同族）：
+     *  收到 arcade:save 消息 / 页面卸载时保存，下次进入校验版本号与字段后恢复续玩；
+     *  玩家主动重开、切换难度、达成胜利、棋盘死局结算时清除 */
+    save: 'arcade_save_1024',
+    /** 成就存档键（跨局持久化，与贪吃蛇的 arcade_ach_snake 同族） */
+    ach: 'arcade_ach_1024',
+};
 /** 是否处于每日挑战模式：当日未达成的新开局置位；续玩快照恢复与普通局均为 false */
 let dailyMode = false;
 /** 每日挑战种子随机源（mulberry32 闭包）：dailyMode 下供 spawnTile 使用，保证同日开局方块序列一致 */
@@ -129,7 +138,7 @@ function dailyRand() {
  * 已达成则保持普通模式；徽章可见性由 updateHud 统一刷新
  */
 function setupDailyChallenge() {
-    const done = !!Arcade.loadRaw(DAILY_KEY); // 存储不可用时视为未达成
+    const done = !!Arcade.loadRaw(KEYS.daily); // 存储不可用时视为未达成
     dailyMode = !done;
     if (dailyMode) dailyRng = mulberry32(dateSeed(DAILY_DATE));
 }
@@ -140,14 +149,10 @@ function setupDailyChallenge() {
 function completeDailyChallenge() {
     if (!dailyMode) return;
     dailyMode = false; // 立即退出每日模式：胜利面板后续的继续挑战/重开走普通流程
-    Arcade.saveRaw(DAILY_KEY, '1'); // 存储不可用时静默跳过
+    Arcade.saveRaw(KEYS.daily, '1'); // 存储不可用时静默跳过
     addFloatText('每日挑战达成!', BOARD_W * 0.5, BOARD_H * 0.34, '#ffd23e', 22);
     SFX.n1024Milestone(); // 复用里程碑号角做达成音
 }
-/** 对局进度镜像快照 localStorage 键（街机厅统一契约 arcade_save_1024，与 snake/tetris/pac/bee/pinball 同族）：
- *  收到 arcade:save 消息 / 页面卸载时保存，下次进入校验版本号与字段后恢复续玩；
- *  玩家主动重开、切换难度、达成胜利、棋盘死局结算时清除 */
-const SAVE_KEY = 'arcade_save_1024';
 /** 各方向的行列增量（dr：行偏移 / dc：列偏移） */
 const VECTORS = {
     up: { dr: -1, dc: 0 },
@@ -180,6 +185,10 @@ const KEY_DIRS = {
 };
 /** 各难度每局可撤销步数（棋盘越宽松反悔机会越多） */
 const UNDO_LIMITS = { easy: 5, normal: 3, hard: 1 };
+/** 撤销快照栈上限（内存栈与存档镜像共用同一常量）：超限从队头丢弃最旧快照；
+ *  撤销次数受 UNDO_LIMITS 限制（最多 5 次），远小于本上限，撤销行为不受影响，
+ *  仅杜绝极端长局下内存栈无界增长 */
+const HISTORY_MAX = 32;
 /** 里程碑数值：本局首次合并出时触发强化反馈（≥2048 追加全屏烟花秀） */
 const MILESTONE_VALUES = [128, 256, 512, 2048, 4096];
 /** 滑动手势生效的最小位移（px），低于阈值不触发（触屏与鼠标拖拽共用） */
@@ -213,8 +222,6 @@ const HITSTOP_MIN_VALUE = 64;
  * 用时统计冻结，渲染循环照常推进棋盘动画背景（成就墙 CSS 动画不受逻辑暂停影响）。
  */
 
-/** 成就存档 localStorage 键（跨局持久化，与贪吃蛇的 arcade_ach_snake 同族） */
-const ACH_KEY_1024 = 'arcade_ach_1024';
 /** 历史最佳统计默认值：best 里缺省的统计一律按 0 起算（新增统计向后兼容旧档） */
 const ACH_BEST_DEFAULTS = { score: 0, maxTile: 0, merges: 0, mergesTotal: 0, moves: 0 };
 /** 成就定义表（8 条，四档稀有度 普通3/稀有2/史诗2/传说1，顺序即成就墙展示顺序）：
@@ -325,6 +332,10 @@ let milestones = new Set();
 let deathFade = null;
 /** 胜利/失败面板及烟花演出的 setTimeout 句柄池：面板提前关闭时统一 clearTimeout，防止旧定时器到点操作已失效的面板 DOM */
 let panelTimers = [];
+/** 当前可见遮罩面板（startScreen / winScreen / gameOverScreen，null 为全部隐藏）：
+ *  面板态的唯一状态源，由 showOverlay / hideOverlay 维护，键盘路由据此推导面板可见性，
+ *  DOM style.display 仅作单向输出不再反向读取（与布尔状态双源并存时，改面板实现会静默破坏快捷键） */
+let visiblePanel = null;
 /** 本局是否已庆祝过刷新纪录（首次超越既有最高的瞬间只庆祝一次，重开时复位） */
 let celebratedRecord = false;
 /** 危险预警等级：0 安全 / 1 仅剩 2 空格 / 2 满盘或仅剩 1 空格（驱动红色脉冲边框与警报音） */
@@ -361,7 +372,7 @@ const achToastStack = document.getElementById('achToastStack');
 // canOpen 恒真对齐原分支语义：V 任意状态（含胜利/结束面板）均可开墙，快捷继续由 Enter 承担
 Ach.init({
     defs: ACHIEVEMENTS_1024,
-    storageKey: ACH_KEY_1024,
+    storageKey: KEYS.ach,
     bestDefaults: ACH_BEST_DEFAULTS,
     mount: { wall: achWall, grid: achGrid, count: achCountEl, total: achTotalEl, barFill: achBarFill, toasts: achToastStack },
     canOpen: () => true
@@ -489,15 +500,17 @@ function spawnTile(playSound) {
 }
 
 /** 增加分数并实时刷新 HUD 与最高分
- *  @param {number} points 本次得分（合并结果值或连击奖励） */
-function addScore(points) {
+ *  @param {number} points 本次得分（合并结果值或连击奖励）
+ *  @param {boolean} [refreshHud=true] 是否即时刷新分数 HUD：move 内的合并加分与
+ *  连击加成传 false，由本步末尾统一刷新一次，避免单步重复数字滚动与强制回流 */
+function addScore(points, refreshHud = true) {
     const prevBest = best; // 记录旧最高分，用于捕捉"首次超越"的庆祝时机
     score += points;
     // 实时写盘：即使中途关页也不丢新纪录
     if (score > best) {
         best = score;
         isNewRecord = true;
-        Arcade.saveRaw(BEST_KEY, String(best)); // 存储不可用时静默放弃，不影响本局计分与庆祝
+        Arcade.saveRaw(KEYS.best, String(best)); // 存储不可用时静默放弃，不影响本局计分与庆祝
         // 首次超越既有纪录的瞬间：金色闪光 + 中央大字庆祝（每局只庆祝一次；
         // 此前无纪录的新手局不庆祝，结算面板另有正式的新纪录播报）
         if (!celebratedRecord && prevBest > 0) {
@@ -508,15 +521,15 @@ function addScore(points) {
             SFX.n1024Record();
         }
     }
-    updateHud();
+    if (refreshHud) updateHud();
 }
 
 /** 执行一次方向滑动（本游戏的核心回合逻辑）
  *  遍历顺序保证靠近方向一侧的块先移动/合并；每块沿方向滑至
  *  边界/异值块前，若前方为同值且未合并块则合二为一。
  *  @param {string} dir 方向：up / down / left / right
- *  @param {boolean} [announceBlock=true] 无效滑动是否播撞墙闷响
- *  （连滑补发时传 false：长按撞墙期间不再闷响连击，只保留手动按键的反馈） */
+ *  @param {boolean} [announceBlock=true] 无效滑动是否播撞墙反馈（闷响 + 摇头）
+ *  （连滑补发时传 false：长按撞墙期间不再闷响连击与摇头演出，只保留手动出招的反馈） */
 function move(dir, announceBlock = true) {
     const v = VECTORS[dir];
     // 本步之前的完整快照（值矩阵 + 分数 + 连击），有效滑动后入栈供撤销
@@ -581,8 +594,8 @@ function move(dir, announceBlock = true) {
                 const tx = cellX(nc), ty = cellY(nr);
                 ghosts.push({ value: tile.value, x: tile.x, y: tile.y, tx, ty, t: 0 });
                 ghosts.push({ value: mergeTarget.value, x: mergeTarget.x, y: mergeTarget.y, tx, ty, t: 0 });
-                // 得分 = 合并结果值，飘字与粒子落在目标格中心
-                addScore(newValue);
+                // 得分 = 合并结果值，飘字与粒子落在目标格中心（HUD 延后到步末统一刷新一次）
+                addScore(newValue, false);
                 const style = getTileStyle(newValue);
                 const cx = tx + CELL / 2;
                 const cy = ty + CELL / 2;
@@ -598,7 +611,7 @@ function move(dir, announceBlock = true) {
                 if (comboNext >= 2) {
                     const bonus = Math.round(newValue * 0.1 * (comboNext - 1));
                     if (bonus > 0) {
-                        addScore(bonus);
+                        addScore(bonus, false); // 连击加成同样延后刷新，避免单步两次强制回流重播跳动
                         addFloatText('+' + bonus, cx, cy - 18, '#ff3ea5', 10); // 粉色小字标于主飘字上方
                     }
                 }
@@ -637,11 +650,17 @@ function move(dir, announceBlock = true) {
     }
 
     if (!moved) {
-        // 摇头提示：±3px 水平抖动强化"此路不通"（连滑补发也会触发，但幅度小不打断节奏；减弱动效时跳过）
-        if (!FX.prefersReduced) headShake = HEAD_SHAKE_DUR;
-        if (announceBlock) SFX.n1024Block(); // 无效滑动：低频闷响，撞墙反馈（连滑补发静默防噪）
+        // 撞墙演出（摇头 + 闷响）仅手动出招触发：连滑补发撞墙静默，防长按期间演出连击
+        if (announceBlock) {
+            // 摇头提示：±3px 水平抖动强化"此路不通"（减弱动效时跳过）
+            if (!FX.prefersReduced) headShake = HEAD_SHAKE_DUR;
+            SFX.n1024Block(); // 无效滑动：低频闷响，撞墙反馈
+        }
         return;          // 不补块、不判胜负
     }
+
+    // 分数 HUD 收口：本步的合并加分与连击加成合并为一次 updateHud（一次数字滚动 + 一次跳动重播回流）
+    if (mergesThisMove > 0) updateHud();
 
     // 连击推进：本步有合并连击 +1，无合并连击清零，并刷新 HUD
     if (mergesThisMove > 0) combo++;
@@ -667,6 +686,7 @@ function move(dir, announceBlock = true) {
     }
     // 撤销快照入栈（保存本步之前的状态）并刷新撤销按钮可用态
     history.push({ board: prevBoard, score: prevScore, combo: prevCombo });
+    if (history.length > HISTORY_MAX) history.shift(); // 超限从队头丢弃最旧快照：内存栈与存档镜像共用同一上限，长局内存不再无界累积
     updateUndoHud();
     updateGoalHud(); // 合并可能抬升最大方块，同步推进目标进度条
 
@@ -1247,8 +1267,8 @@ function build1024Snapshot() {
         hasWon,                                                      // 是否已达成过 1024
         isNewRecord,                                                 // 本局是否刷新过最高分
         milestones: Array.from(milestones),                          // 已触发里程碑集合（Set 序列化为数组）
-        // 撤销栈镜像：只保留最近 32 步（slice(-32) 负索引从尾部截取），与恢复端上限一致
-        history: history.slice(-32).map((h) => ({ board: h.board, score: h.score, combo: h.combo })),
+        // 撤销栈镜像：只保留最近 HISTORY_MAX 步（slice 负索引从尾部截取），与内存栈及恢复端上限一致
+        history: history.slice(-HISTORY_MAX).map((h) => ({ board: h.board, score: h.score, combo: h.combo })),
     };
 }
 
@@ -1256,7 +1276,7 @@ function build1024Snapshot() {
 // 处于开始界面 / 胜利面板 / 死局结算等非进行中状态时转为清除快照（快照只服务于未打完的局）；
 // 组装意外与存储不可用（隐私模式 / 配额满）由管线整体 try/catch 静默，不影响游戏本体
 const snapPipe = Snap.create({
-    key: SAVE_KEY,
+    key: KEYS.save,
     canSave: () => playing,
     build: build1024Snapshot,
     validate: validate1024Snapshot,
@@ -1280,7 +1300,7 @@ const snapPipe = Snap.create({
  *   hasWon      是否已达成过 1024（恢复后不再重复触发胜利演出）
  *   isNewRecord 本局是否刷新过最高分（结算面板「新纪录」标记用）
  *   milestones  已触发里程碑档位数组
- *   history     撤销栈镜像（仅保留最近 32 步，防止极端长局存档膨胀）
+ *   history     撤销栈镜像（仅保留最近 HISTORY_MAX 步，防止极端长局存档膨胀）
  * @returns {void}
  */
 function saveSnapshot() {
@@ -1301,7 +1321,7 @@ function clearProgress() {
  * 结构版本号（v !== 1 立即视为无效）、难度归属、棋面矩阵（SIZE×SIZE 且
  * 每格为 0 或 2 的幂）、分数/连击为非负整数、剩余撤销次数范围、
  * hasWon/isNewRecord 布尔类型、棋面至少一个方块、撤销栈逐条结构
- * （超长截断至最近 32 步）。里程碑为纯表现层标记，宽容处理不参与失效判定。
+ * （超长截断至最近 HISTORY_MAX 步）。里程碑为纯表现层标记，宽容处理不参与失效判定。
  * @param {*} snap 待校验快照对象
  * @returns {boolean} 快照合法返回 true；任一校验失败返回 false（存档由管线统一清除）
  */
@@ -1317,8 +1337,8 @@ function validate1024Snapshot(snap) {
     let tileCount = 0;
     for (const row of snap.board) for (const v of row) if (v) tileCount++;
     if (!tileCount) return false;
-    // 撤销栈校验：超长镜像先截断至最近 32 步（与保存端上限一致），再逐条检查结构与取值
-    const historySaved = Array.isArray(snap.history) ? snap.history.slice(-32) : [];
+    // 撤销栈校验：超长镜像先截断至最近 HISTORY_MAX 步（与保存端上限一致），再逐条检查结构与取值
+    const historySaved = Array.isArray(snap.history) ? snap.history.slice(-HISTORY_MAX) : [];
     for (const h of historySaved) {
         if (!h || typeof h !== 'object' || !isValidBoard(h.board)) return false;
         if (!Number.isInteger(h.score) || h.score < 0) return false;
@@ -1335,8 +1355,8 @@ function validate1024Snapshot(snap) {
  * @returns {boolean} 应用成功返回 true
  */
 function apply1024Snapshot(snap) {
-    // 撤销栈镜像截断至最近 32 步（与保存端 / 校验端上限一致）
-    const historySaved = Array.isArray(snap.history) ? snap.history.slice(-32) : [];
+    // 撤销栈镜像截断至最近 HISTORY_MAX 步（与保存端 / 校验端 / 内存栈上限一致）
+    const historySaved = Array.isArray(snap.history) ? snap.history.slice(-HISTORY_MAX) : [];
     // 里程碑仅保留合法档位值（纯表现层标记，宽容处理不判存档失效）
     const milestoneSaved = Array.isArray(snap.milestones)
         ? snap.milestones.filter((m) => MILESTONE_VALUES.indexOf(m) !== -1)
@@ -1369,13 +1389,19 @@ function restoreSnapshot() {
     return snapPipe.restore();
 }
 
-/** 显示指定遮罩面板
+/** 显示指定遮罩面板：同步维护面板状态源，DOM 显示为单向输出
  *  @param {HTMLElement} el 遮罩元素 */
-function showOverlay(el) { el.style.display = 'block'; }
+function showOverlay(el) {
+    visiblePanel = el;
+    el.style.display = 'block';
+}
 
-/** 隐藏指定遮罩面板
+/** 隐藏指定遮罩面板：状态源正指向该面板时复位，其余面板不受影响
  *  @param {HTMLElement} el 遮罩元素 */
-function hideOverlay(el) { el.style.display = 'none'; }
+function hideOverlay(el) {
+    if (visiblePanel === el) visiblePanel = null;
+    el.style.display = 'none';
+}
 
 /** 将本局用时秒数格式化为 mm:ss 文本
  *  @param {number} seconds 用时秒数
@@ -1503,7 +1529,7 @@ function togglePause() {
  * 不回调），onChange 内只保留游戏侧的尺寸重算与旧档清理 */
 const difficultyCtl = Arcade.bindDifficultyButtons({
     bar: document.querySelector('.difficulty-select'),
-    storageKey: DIFFICULTY_KEY,
+    storageKey: KEYS.difficulty,
     persist: 'data-diff',
     canPick: (btn, idx, key) => !!DIFFICULTIES[key] && key !== currentDifficulty,
     lockedDuringPlay: () => playing, // 对局进行中禁切难度（局中守卫统一收口）
@@ -1516,7 +1542,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
         resetBoard(); // 以新尺寸重铺预览棋盘，开始面板背后即时可见
         // 切换难度：若存档属于被放弃的旧难度则清除；初始化恢复难度时存档与新难度一致，不受影响
         // （存储不可用时读取返回 null，跳过旧档清理，不中断难度切换）
-        const stale = Arcade.loadRaw(SAVE_KEY); // 存储不可用时静默跳过
+        const stale = Arcade.loadRaw(KEYS.save); // 存储不可用时静默跳过
         if (stale) {
             try {
                 if (JSON.parse(stale).diff !== key) clearProgress();
@@ -1527,7 +1553,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
 
 /** 推进自定义连滑：按住方向键期间，先等 REPEAT_DELAY 再以 REPEAT_RATE 节奏补发滑动。
  *  替代系统按键重复（初始延迟约 0.5s 且节奏随机），长按连滑更跟手；
- *  非对局态（面板/暂停）冻结计时，不补发；补发撞墙时静默防闷响连击
+ *  非对局态（面板/暂停）冻结计时，不补发；补发撞墙时静默防闷响与摇头连击
  *  @param {number} dt 帧间隔（秒） */
 function updateRepeat(dt) {
     // 无按住方向，或不在可操作对局态：不推进计时（暂停 / 成就墙关闭后从原节奏点继续）
@@ -1566,7 +1592,7 @@ document.addEventListener('keydown', (event) => {
             doUndo();
             break;
         case 'r': case 'R': // 对局中立即重开（暂停态重开由 startGame 复位暂停）；结算面板下 R 与按钮/Enter 同效
-            if (playing || gameOverScreen.style.display === 'block') startGame();
+            if (playing || visiblePanel === gameOverScreen) startGame();
             break;
         case 'p': case 'P': // 暂停/恢复（键位与 tetris/pinball 的 P 一致）
             if (playing) {
@@ -1583,10 +1609,10 @@ document.addEventListener('keydown', (event) => {
                 }
                 break;
             }
-            if (winScreen.style.display === 'block') {
+            if (visiblePanel === winScreen) {
                 event.preventDefault();
                 continueGame();
-            } else if (gameOverScreen.style.display === 'block') {
+            } else if (visiblePanel === gameOverScreen) {
                 event.preventDefault();
                 startGame();
             } else if (!playing && !history.length) {
@@ -1718,20 +1744,20 @@ initAmbient(); // 常驻星尘（重开一局不重铺，保持连续漂浮）
 // 最高分读取：新键优先；隐私模式 / 禁用站点数据等读取异常按 0 处理；
 // 新键缺失而旧键存在时一次性迁移老玩家最高分到新键（保留老玩家纪录，此后读写均用新键）
 try {
-    const storedBest = Arcade.loadRaw(BEST_KEY);
+    const storedBest = Arcade.loadRaw(KEYS.best);
     if (storedBest !== null) {
         best = parseInt(storedBest, 10) || 0;
     } else {
-        const legacyBest = Arcade.loadRaw(LEGACY_BEST_KEY);
+        const legacyBest = Arcade.loadRaw(KEYS.legacyBest);
         if (legacyBest !== null) {
             best = parseInt(legacyBest, 10) || 0;
-            Arcade.saveRaw(BEST_KEY, String(best)); // 迁移写入失败静默，本局照常使用旧值
+            Arcade.saveRaw(KEYS.best, String(best)); // 迁移写入失败静默，本局照常使用旧值
         }
     }
 } catch (e) { /* 存储不可用时最高分按 0 处理 */ }
 // 难度恢复：与上一次选择一致（对齐其他游戏难度记忆；必须先于 restoreSnapshot，否则存档 diff 校验失败）；
 // sync 为程序化恢复路径（高亮+onChange，不存档不发声），外层守卫保持"未知键名/默认难度跳过"原状
-const savedDifficulty = Arcade.loadRaw(DIFFICULTY_KEY); // 存储不可用时保持 null，走默认难度
+const savedDifficulty = Arcade.loadRaw(KEYS.difficulty); // 存储不可用时保持 null，走默认难度
 if (DIFFICULTIES[savedDifficulty] && savedDifficulty !== DEFAULT_DIFFICULTY) {
     try {
         difficultyCtl.sync(savedDifficulty);

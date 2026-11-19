@@ -64,24 +64,35 @@ let eatenCount = 0;
 let foodPoints = 10;
 /** 无敌模式开关（仅"无敌"难度开启）：撞墙不死亡改为环绕穿墙，撞自身直接穿过 */
 let invincibleMode = false;
-/** 难度选择存档键（localStorage），页面加载时恢复上一次选择 */
-const DIFFICULTY_KEY = 'snakeDifficulty';
-/** 历史最高分存档键（localStorage） */
-const HIGH_SCORE_KEY = 'snakeHighScore';
-/** 进度镜像快照存档键（localStorage）：返回游戏厅/页面卸载时保存本局进度，下次进入校验恢复续玩 */
-const SAVE_KEY = 'arcade_save_snake';
+/** 当日日期串 YYYYMMDD（本地时区，跨日自动换新目标）：前置定义供 KEYS.DAILY 拼接 */
+const DAILY_DATE = (() => {
+    const d = new Date();
+    return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+})();
+/** localStorage 存档键单点定义（值不变，兼容历史存档）：全文件引用此表，禁止散落裸写键名字面量 */
+const KEYS = {
+    DIFFICULTY: 'snakeDifficulty',             // 难度选择存档键（裸串序号），页面加载时恢复上一次选择
+    HIGH_SCORE: 'snakeHighScore',              // 历史最高分存档键（裸串数值）
+    SAVE: 'arcade_save_snake',                 // 进度镜像快照存档键：返回游戏厅/页面卸载时保存本局进度，下次进入校验恢复续玩
+    ACHIEVEMENT: 'arcade_ach_snake',           // 成就存档键（跨局累计）：v2 格式 { unlocked: { id: 解锁时间戳 }, best: { 各项历史最佳 } }
+    DAILY: 'arcade_daily_snake_' + DAILY_DATE  // 每日挑战达成落盘键（值 '1'；当日已达成则不再重复演出）
+};
 /** 是否处于暂停状态 */
 let isPaused = false;
 /** 本局是否刷新了历史最高分（结算面板据此显示"新纪录"提示） */
 let isNewRecord = false;
 /** 历史最高分（localStorage 持久化） */
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 回退默认 0），不中断初始化
-let highScore = parseInt(Arcade.loadRaw(HIGH_SCORE_KEY) || '0', 10);
+let highScore = parseInt(Arcade.loadRaw(KEYS.HIGH_SCORE) || '0', 10);
 
 /* ===================== 特效状态 ===================== */
 
 /** 死亡演出总时长（秒）：震动 + 红色迸溅 + 蛇身逐节熄灭 */
 const DEATH_DURATION = 0.9;
+/** 死亡震动时段：仅死亡演出前该比例进度内画面震动，进度超过后振幅归零 */
+const DEATH_SHAKE_FRACTION = 0.35;
+/** 死亡震动最大振幅（像素）：演出初期随机抖动的幅度上限，随进度线性衰减到 0 */
+const DEATH_SHAKE_AMP = 5;
 /** 是否处于死亡演出中（演出结束才弹出结算面板） */
 let isDying = false;
 /** 死亡演出剩余时间（秒） */
@@ -124,13 +135,24 @@ let shakeTime = 0;
 const canvas = document.getElementById('gameCanvas');
 /** 2D 绘图上下文 */
 const ctx = canvas.getContext('2d');
-// 静态背景层三件套声明前置：下方顶层 setupDisplay() 会先置位脏标记，若声明晚于该调用将触发 TDZ 加载崩溃
-/** 静态背景层离屏画布（物理分辨率与主画布保持一致） */
-const gridLayerCanvas = document.createElement('canvas');
-/** 静态背景层绘制上下文 */
-const gridLayerCtx = gridLayerCanvas.getContext('2d');
-/** 背景层脏标记：true 时下一帧重建（DPR 适配 / 画布尺寸变化时由 setupDisplay 置位） */
-let gridLayerDirty = true;
+// 静态背景层声明前置：下方顶层 setupDisplay() 会先 markDirty 置位脏标记，若声明晚于该调用将触发 TDZ 加载崩溃
+/** 静态背景层（共享工厂 Arcade.createGridLayer 三件套：离屏画布 + 上下文 + 脏标记，物理分辨率与主画布一致）；
+ *  网格绘制内容（暗底 + 绿网格）以 paint 闭包注入——闭包引用的 boardW/boardH/gridSize 运行期才求值
+ *  （首帧 blit 时已初始化），创建期无 TDZ 风险 */
+const gridLayer = Arcade.createGridLayer(canvas, (c) => {
+    c.fillStyle = '#0f1a12';
+    c.fillRect(0, 0, boardW, boardH);
+    c.strokeStyle = 'rgba(57, 255, 106, 0.05)';
+    c.lineWidth = 1;
+    c.beginPath();
+    for (let g = gridSize; g < boardW; g += gridSize) {
+        c.moveTo(g + 0.5, 0);
+        c.lineTo(g + 0.5, boardH);
+        c.moveTo(0, g + 0.5);
+        c.lineTo(boardW, g + 0.5);
+    }
+    c.stroke();
+});
 /** 当前分数显示元素 */
 const scoreElement = document.getElementById('score');
 /** 最高分显示元素 */
@@ -180,7 +202,7 @@ function setupDisplay() {
     boardH = dims.h;
     boardCols = Math.round(boardW / gridSize);
     boardRows = Math.round(boardH / gridSize);
-    gridLayerDirty = true; // 画布物理分辨率/DPR 已变：下一帧重建静态背景层
+    gridLayer.markDirty(); // 画布物理分辨率/DPR 已变：下一帧重建静态背景层
 }
 
 /**
@@ -229,8 +251,6 @@ if (typeof ResizeObserver !== 'undefined') {
 
 /* ===================== 成就系统 ===================== */
 
-/** 成就存档键（localStorage，跨局累计）：v2 格式 { unlocked: { id: 解锁时间戳 }, best: { 各项历史最佳 } } */
-const ACHIEVEMENT_KEY = 'arcade_ach_snake';
 /** 历史最佳初始值：length 初始 3 节对齐蛇身初始长度，避免新档进度出现"3 节以下"的怪异空态 */
 const BEST_DEFAULTS = { score: 0, length: 3, combo: 0, gold: 0, eaten: 0 };
 /**
@@ -249,24 +269,26 @@ const SNAKE_ACHIEVEMENTS = [
     { id: 'gold5',    name: '淘金高手',   icon: '💰', rarity: 'rare',      cat: '收集', desc: '单局捕获 5 枚金苹果', stat: 'gold',   target: 5 },
     { id: 'eat100',   name: '大胃王',     icon: '🍎', rarity: 'epic',      cat: '成长', desc: '单局吃掉 100 个食物', stat: 'eaten',  target: 100 },
 ];
+/** 成就墙 HUD 六件套（共享工厂 Arcade.createAchHud：六个 id 的 DOM 查询单点收敛到公共库） */
+const achHud = Arcade.createAchHud();
 /** 成就墙 DOM 覆盖层（开合由共享库接线，打开期间逻辑 tick 冻结） */
-const achWall = document.getElementById('achWall');
+const achWall = achHud.wall;
 /** 成就卡片网格容器（内容每次开墙时按最新存档重建） */
-const achGrid = document.getElementById('achGrid');
+const achGrid = achHud.grid;
 /** 头部已解锁计数数字元素（开墙时滚动补间到位） */
-const achCountElement = document.getElementById('achCount');
+const achCountElement = achHud.count;
 /** 头部成就总数元素 */
-const achTotalElement = document.getElementById('achTotal');
+const achTotalElement = achHud.total;
 /** 头部总完成度进度条填充元素 */
-const achBarFill = document.getElementById('achBarFill');
+const achBarFill = achHud.barFill;
 /** 右上角解锁 toast 堆叠容器 */
-const achToastStack = document.getElementById('achToastStack');
+const achToastStack = achHud.toasts;
 
 // 接入共享成就库：存档装载与 v1 迁移 / 解锁（toast + 号角音 + 史诗/传说烟花）/ 墙渲染 /
 // V·Esc·遮罩点击·关闭按钮接线全部下沉 ach-common.js（本文件 keydown 的 V/Esc 分支随之移除）
 Ach.init({
     defs: SNAKE_ACHIEVEMENTS,
-    storageKey: ACHIEVEMENT_KEY,
+    storageKey: KEYS.ACHIEVEMENT,
     bestDefaults: BEST_DEFAULTS,
     mount: { wall: achWall, grid: achGrid, count: achCountElement, total: achTotalElement, barFill: achBarFill, toasts: achToastStack }
 });
@@ -510,36 +532,9 @@ function updateEffects(dt) {
     }
 }
 
-/* ---------- 静态背景层离屏缓存：网格底色仅在脏标记置位时重绘一次，每帧一次 drawImage 贴回 ---------- */
-
-/**
- * 将暗色棋盘网格背景渲染到离屏层：不透明暗底填充 + 细网格线。
- * 替代旧版每帧全量重绘的 drawGridBg——原先每帧 1 次 fillRect + 约 40 段网格路径，
- * 现仅在尺寸/DPR 变化时重建一次，每帧只剩 1 次 drawImage 贴回
- */
-function renderGridLayer() {
-    // 读主画布 dpr：离屏层与主画布共用同一逻辑坐标系。
-    // 防御：fx.js 版本引用未升导致浏览器持有旧缓存（缺 dims 能力）时按 dataset 回退——
-    // 若直接调用缺失的 FX.dims 会让本函数每帧抛错、画布永不绘制（无格无蛇无食物白屏）
-    const view = (typeof FX.dims === 'function')
-        ? FX.dims(canvas)
-        : { dpr: parseFloat(canvas.dataset.dpr) || 1 };
-    gridLayerCanvas.width = canvas.width; // 物理分辨率与主画布对齐（1:1 贴回不缩放）
-    gridLayerCanvas.height = canvas.height;
-    gridLayerCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0); // 锁 CSS 逻辑坐标，绘制代码零换算
-    gridLayerCtx.fillStyle = '#0f1a12';
-    gridLayerCtx.fillRect(0, 0, boardW, boardH);
-    gridLayerCtx.strokeStyle = 'rgba(57, 255, 106, 0.05)';
-    gridLayerCtx.lineWidth = 1;
-    gridLayerCtx.beginPath();
-    for (let g = gridSize; g < boardW; g += gridSize) {
-        gridLayerCtx.moveTo(g + 0.5, 0);
-        gridLayerCtx.lineTo(g + 0.5, boardH);
-        gridLayerCtx.moveTo(0, g + 0.5);
-        gridLayerCtx.lineTo(boardW, g + 0.5);
-    }
-    gridLayerCtx.stroke();
-}
+/* ---------- 静态背景层离屏缓存：网格底色仅在脏标记置位时重绘一次，每帧一次 drawImage 贴回 ----------
+ * 三件套与脏重建逻辑（物理分辨率对齐 + dpr 防御回退）已下沉共享库 Arcade.createGridLayer，
+ * 声明于顶部 DOM 引用区，暗底 + 网格绘制内容以 paint 闭包注入，行为与旧 renderGridLayer 一致 */
 
 /**
  * 绘制食物：粉色方块 + 呼吸光晕 + 反相收缩的外圈脉冲环；
@@ -710,17 +705,13 @@ function drawFloatTexts() {
  */
 function draw(now, t) {
     // 静态背景层：脏标记置位时重建一次，之后每帧仅一次 drawImage 贴回（绘制于震动层之下，与旧版一致）
-    if (gridLayerDirty) {
-        renderGridLayer();
-        gridLayerDirty = false;
-    }
-    ctx.drawImage(gridLayerCanvas, 0, 0, boardW, boardH);
+    gridLayer.blit(ctx, boardW, boardH);
 
     ctx.save();
-    // 死亡演出前 35% 时段画面随机震动，振幅线性衰减到 0
+    // 死亡演出前 DEATH_SHAKE_FRACTION 时段画面随机震动，振幅线性衰减到 0
     if (isDying) {
         const dk = 1 - deathTimer / DEATH_DURATION;
-        const amp = Math.max(0, 1 - dk / 0.35) * 5;
+        const amp = Math.max(0, 1 - dk / DEATH_SHAKE_FRACTION) * DEATH_SHAKE_AMP;
         if (amp > 0.1) {
             ctx.translate((Math.random() - 0.5) * 2 * amp, (Math.random() - 0.5) * 2 * amp);
         }
@@ -808,7 +799,7 @@ function moveSnake() {
         if (score > highScore) {
             highScore = score;
             registerRecord();
-            Arcade.saveRaw(HIGH_SCORE_KEY, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
+            Arcade.saveRaw(KEYS.HIGH_SCORE, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
             highScoreElement.textContent = `HI ${highScore}`;
         }
     } else if (head.x === food.x && head.y === food.y) {
@@ -844,7 +835,7 @@ function moveSnake() {
         if (score > highScore) {
             highScore = score;
             registerRecord();
-            Arcade.saveRaw(HIGH_SCORE_KEY, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
+            Arcade.saveRaw(KEYS.HIGH_SCORE, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
             highScoreElement.textContent = `HI ${highScore}`;
         }
 
@@ -922,7 +913,7 @@ function isCollision(head) {
 let difficultyIndex = 2;
 const difficultyCtl = Arcade.bindDifficultyButtons({
     bar: document.getElementById('difficultySelect'),
-    storageKey: DIFFICULTY_KEY,
+    storageKey: KEYS.DIFFICULTY,
     persist: 'index',
     lockedDuringPlay: () => isRunning && !isDying, // 对局进行中禁切难度（局中守卫统一收口）
     onChange: (btn, idx) => {
@@ -1145,7 +1136,7 @@ function applySnakeSnapshot(snap) {
 // 快照管线实例：保存/清除分流（进行中且非死亡演出才保存）与
 // 恢复管线（校验失败 / 应用失败 / 抛错一律清档回退新开局）由 Snap.create 统一实现
 const snapPipe = Snap.create({
-    key: SAVE_KEY,
+    key: KEYS.SAVE,
     canSave: () => isRunning && !isDying, // 难度档由 difficultyIndex 状态直读，构建期恒合法，无需 DOM 反推校验
     build: buildSnakeSnapshot,
     validate: validateSnakeSnapshot,
@@ -1353,8 +1344,7 @@ function renderLoop(now) {
 // 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2；无敌 0 / 简单 1 / 中等 2 / 困难 3）；
 // sync 为程序化恢复路径（高亮+onChange，不存档不发声），越界序号由 sync 内静默忽略
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 转 NaN），走默认难度
-let savedDifficultyIndex = NaN;
-savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10);
+const savedDifficultyIndex = parseInt(Arcade.loadRaw(KEYS.DIFFICULTY), 10);
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     // try/catch 兜底：此调用发生在渲染循环启动之前，一旦抛错整个初始化链中断
     // ——rAF 与看门狗都不会注册，画布永久白屏无自愈机会
@@ -1367,24 +1357,17 @@ if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
 // 位置约束：必须位于下方 restoreSnapshot() 调用之前——续玩恢复成功路径会调用
 // updateDailyGoal()，若其依赖的 const/let（dailyGoalElement 等）尚未初始化将触发
 // TDZ ReferenceError，顶层脚本中断导致 rAF 与看门狗均未注册（无格无蛇无食物白屏）
-/** 当日日期串 YYYYMMDD（本地时区，跨日自动换新目标） */
-const DAILY_DATE = (() => {
-    const d = new Date();
-    return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-})();
 /** 当日目标长度（蛇总节数，含蛇头）：15 + 日期哈希 % 16 → 每日 15~30 节不等 */
 const DAILY_GOAL = (() => {
     let h = 0;
     for (let i = 0; i < DAILY_DATE.length; i++) h = (h * 31 + DAILY_DATE.charCodeAt(i)) >>> 0; // 多项式整数哈希
     return 15 + h % 16;
 })();
-/** 每日挑战达成落盘键（arcade_daily_snake_<YYYYMMDD>，值 '1'；当日已达成则不再重复演出） */
-const DAILY_SNAKE_KEY = 'arcade_daily_snake_' + DAILY_DATE;
 /** 每日目标 HUD 元素（STATS 面板「今日」行） */
 const dailyGoalElement = document.getElementById('dailyGoal');
 /** 当日是否已达成（读取失败按未达成处理，可重新达成） */
 let dailyGoalDone = (() => {
-    try { return Arcade.loadRaw(DAILY_SNAKE_KEY) === '1'; } catch (e) { return false; }
+    try { return Arcade.loadRaw(KEYS.DAILY) === '1'; } catch (e) { return false; }
 })();
 
 /**
@@ -1399,7 +1382,7 @@ function updateDailyGoal() {
     if (len >= DAILY_GOAL) {
         dailyGoalDone = true;
         dailyGoalElement.textContent = '达成 ' + DAILY_GOAL;
-        Arcade.saveRaw(DAILY_SNAKE_KEY, '1'); // 存储不可用时静默放弃
+        Arcade.saveRaw(KEYS.DAILY, '1'); // 存储不可用时静默放弃
         SFX.newRecord(); // 复用破纪录号角：达成演出更醒目
         const headSeg = snake[0];
         if (headSeg) {

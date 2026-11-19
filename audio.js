@@ -53,8 +53,10 @@
  * 嵌入模式（?embed 于 iframe 内运行）下状态由大厅（父页）统一持有，经 postMessage 实时同步大厅与游戏
  */
 const SFX = (() => {
-    /** 嵌入模式标记：URL 携带 ?embed 且确实运行于 iframe 之中（判定方式与 fullscreen.js 一致） */
-    const EMBED = new URLSearchParams(location.search).has('embed') && window.parent !== window;
+    /** 嵌入模式标记：运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入）；
+     *  判定口径与 fullscreen.js / fx.js 的 EMBED 保持一致，修改时三处须同步 */
+    const embedVal = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
+    const EMBED = window.parent !== window && embedVal !== null && embedVal !== '0' && embedVal !== 'false';
     /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
     const POST_MSG_TARGET = Arcade.MSG_TARGET;
     let ctx = null; // AudioContext（首次使用时懒创建，规避浏览器自动播放限制）
@@ -153,7 +155,9 @@ const SFX = (() => {
     function ensure() {
         if (muted) return null;
         if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.state === 'suspended') ctx.resume();
+        // resume() 返回 Promise：无用户手势等场景被浏览器拒绝时静默吞掉，
+        // 避免 unhandled rejection 反复刷控制台（下次手势 ensure 会再次尝试恢复）
+        if (ctx.state === 'suspended') ctx.resume().catch(() => { /* 恢复失败不致命，留待下一次手势重试 */ });
         return ctx;
     }
 
@@ -266,6 +270,7 @@ const SFX = (() => {
      * @param {number} delay 延迟开始时间（秒，用于串行音符）
      */
     function tone(freq, dur, type = 'square', vol = 0.15, slideTo = 0, delay = 0) {
+        if (muted) return; // 禁用态纵深守卫：本原语经 _tone 内部约定键暴露给音效分册，"禁用态不调用"原先仅是注释约定，固化为代码保证
         const c = ensure();
         if (!c) return;
         const t0 = c.currentTime + delay;
@@ -290,6 +295,7 @@ const SFX = (() => {
      * @param {number} freq 带通中心频率（Hz）
      */
     function noise(dur = 0.15, vol = 0.12, freq = 1000) {
+        if (muted) return; // 禁用态纵深守卫：与 _tone 同口径，禁用态不生成噪声样本不发声（原先仅是注释约定）
         const c = ensure();
         if (!c) return;
         // 白噪声为平稳随机信号，样本内容与时长截取位置无关：缓存不足本次时长时才（重新）生成更长的 buffer，
@@ -323,6 +329,7 @@ const SFX = (() => {
      * @param {number} vol 音量（0~1）
      */
     function arpeggio(freqs, noteDur = 0.09, type = 'square', vol = 0.15) {
+        if (muted) return; // 禁用态纵深守卫：逐音逐个短路浪费 forEach 循环，入口直接返回（tone 内守卫兜底）
         freqs.forEach((f, i) => tone(f, noteDur, type, vol, 0, i * noteDur));
     }
 

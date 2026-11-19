@@ -15,7 +15,7 @@
  * + 平滑缩放（进入 0.5s / 退出 0.45s easeOutQuint），
  * 多重动效同步推进；标题以淡入衔接定位切换；过渡期间抑制 resize 重算防止动画被打断
  * 另收口 CRT 开关机音通知（FS.onCrtAudio）：本地 fullscreenchange 与嵌入 arcade:fs
- * 广播两条全屏状态路径统一在 sync() 内通知游戏注入的 on/off 回调（首条嵌入广播仅静默校准）
+ * 广播两条全屏状态路径统一在 applyFsState() 内通知游戏注入的 on/off 回调（首条嵌入广播仅静默校准）
  *
  * 嵌入模式（?embed=1）：页面作为大厅的 iframe 子页运行时，
  * 全屏状态统一由大厅（顶层文档）持有，子页通过 postMessage 与父页通信：
@@ -48,8 +48,10 @@ const FS = (() => {
         return (bottom > 0 ? bottom : TOP_SAFE_FALLBACK) + 16;
     }
 
-    /** 嵌入模式标记：URL 携带 ?embed=1 且确实运行于 iframe 之中 */
-    const EMBED = new URLSearchParams(location.search).has('embed') && window.parent !== window;
+    /** 嵌入模式标记：运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入）；
+     *  判定口径与 fx.js / audio.js 的 EMBED 保持一致，修改时三处须同步 */
+    const embedVal = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
+    const EMBED = window.parent !== window && embedVal !== null && embedVal !== '0' && embedVal !== 'false';
     /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
     const POST_MSG_TARGET = Arcade.MSG_TARGET;
 
@@ -111,17 +113,23 @@ const FS = (() => {
         return null;
     }
 
+    /** 标题原位锚点表：搬出前的 nextSibling 是节点引用，dataset 只能存字符串，故经 WeakMap 持有
+     *  （键为标题元素、弱引用不阻碍 GC）；"已搬出"状态判定则走 dataset.fsRef 字符串标志，
+     *  与 fx.js 的 canvas.dataset.dpr 同一存取风格，不再往 DOM 上挂自定义属性 */
+    const titleAnchorMap = new WeakMap();
+
     /**
      * 全屏缩放前将位于缩放容器内部的标题搬移到 body 末尾
      * 原因：容器获得 transform 后会成为 fixed 后代的包含块，
      * 若标题留在容器内，其 fixed 顶部锚定将随容器变换而错位；
      * 搬出后标题 fixed 锚定视口，且容器测量高度不再含标题占位，
-     * 居中计算一次到位。幂等：已搬出（__fsRef 存在）时跳过
+     * 居中计算一次到位。幂等：已搬出（dataset.fsRef 标志存在）时跳过
      * @param {HTMLElement|null} title 标题元素
      */
     function detachTitleDom(title) {
-        if (!title || title.__fsRef) return;
-        title.__fsRef = title.nextSibling; // 记住原位锚点，还原时插回
+        if (!title || title.dataset.fsRef) return;
+        titleAnchorMap.set(title, title.nextSibling); // 记住原位锚点，还原时插回
+        title.dataset.fsRef = '1'; // 已搬出标志：幂等判定与还原后清理统一走它
         if (title.parentNode) title.parentNode.removeChild(title);
         document.body.appendChild(title);
     }
@@ -133,10 +141,12 @@ const FS = (() => {
      */
     function restoreTitleDom(title) {
         if (!title) return;
-        if (title.__fsRef && title.__fsRef.parentNode) {
-            title.__fsRef.parentNode.insertBefore(title, title.__fsRef);
+        const anchor = titleAnchorMap.get(title);
+        if (anchor && anchor.parentNode) {
+            anchor.parentNode.insertBefore(title, anchor);
         }
-        title.__fsRef = null;
+        titleAnchorMap.delete(title);
+        delete title.dataset.fsRef; // 清除已搬出标志（delete 而非置空串，避免残留空属性）
     }
 
     /**
@@ -441,16 +451,20 @@ const FS = (() => {
     }
 
     /**
-     * 同步按钮文本与游戏区域缩放（真正的全屏切换会附带过渡动画，resize 重算则即时生效）
-     * @param {boolean} [fs] 外部传入的全屏态（嵌入模式由父页广播）；省略时自行读取文档全屏态
+     * 应用一次全屏态落点（CRT 音通知 + 按钮文本 + 缩放适配），两条状态来源路径的统一核心：
+     * 本地 fullscreenchange（真实文档全屏态）与嵌入模式父页广播（arcade:fs 显式值）。
+     * 以 viaEmbed 显式参数区分来源，消除旧 sync(fs) 时代"参数是否为 boolean"隐式区分
+     * 全屏态与广播标记的语义双载
+     * @param {boolean} state 目标全屏态（本地路径传 isFullscreen()，嵌入路径传父页广播值）
+     * @param {boolean} viaEmbed 是否嵌入广播路径（首条为 hello 回复的现状同步，仅静默校准基线不发声）
      */
-    function sync(fs) {
-        const on = typeof fs === 'boolean' ? fs : isFullscreen();
+    function applyFsState(state, viaEmbed) {
+        const on = state;
         const switched = on !== lastFs; // 判定本次是否为真正的全屏切换（非 resize 重算），切换瞬间才播过渡
         // CRT 音通知：本地真实翻转必通知；嵌入路径首条广播必送校准（即使与基线相同，
         // 也要消费掉"现状同步"这个首条，避免后续真实翻转被误静音），其后仅真实翻转通知
-        if (switched || (typeof fs === 'boolean' && !crtSynced)) {
-            crtNotify(on, typeof fs === 'boolean'); // 显式入参仅嵌入广播处理点传入，以此区分两条路径
+        if (switched || (viaEmbed && !crtSynced)) {
+            crtNotify(on, viaEmbed);
         }
         lastFs = on; // 记录当前全屏态，供窗口尺寸变化时按状态重算
         const btn = document.getElementById('fullscreenToggle');
@@ -459,8 +473,17 @@ const FS = (() => {
     }
 
     /**
+     * 本地全屏切换落点：应用状态并向子 iframe 广播
+     * （fullscreenchange 不会穿越文档边界，需手动转发给子页同步按钮与缩放）
+     */
+    function broadcastFsState() {
+        applyFsState(isFullscreen(), false);
+        broadcast();
+    }
+
+    /**
      * 切换全屏并播报点击反馈音
-     * @param {HTMLButtonElement} [btn] 全屏按钮元素（文本由 sync 事件统一更新）
+     * @param {HTMLButtonElement} [btn] 全屏按钮元素（文本由 applyFsState 统一更新）
      */
     function toggle(btn) {
         // 音效库存在时播放点击确认音，与音效开关体验一致
@@ -517,7 +540,7 @@ const FS = (() => {
         Arcade.onTrustedMessage(e => {
             if (e.source !== window.parent) return; // 只信任父页消息
             const d = e.data;
-            if (d && d.type === Arcade.MSG.FS) sync(!!d.fs);
+            if (d && d.type === Arcade.MSG.FS) applyFsState(!!d.fs, true); // 嵌入广播路径：显式携带来源标记
         });
         window.parent.postMessage({ type: Arcade.MSG.HELLO }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
     }
@@ -540,8 +563,9 @@ const FS = (() => {
     }
 
     // 全屏状态变化时同步按钮文本与缩放，并向子 iframe 广播（含按 ESC 退出）
-    document.addEventListener('fullscreenchange', () => { sync(); broadcast(); });
-    document.addEventListener('webkitfullscreenchange', sync);
+    document.addEventListener('fullscreenchange', broadcastFsState);
+    // webkit 旧版路径沿用历史行为差异：仅应用本地状态，不向子 iframe 广播
+    document.addEventListener('webkitfullscreenchange', () => applyFsState(isFullscreen(), false));
 
     // 全局 F 键切换全屏：与音效 M 键同模式——捕获阶段监听防止游戏侧 stopPropagation 拦截，
     // 排除输入场景避免打字误触；嵌入模式下 toggle 内部转发 arcade:fs 由父页统一处理

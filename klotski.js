@@ -77,14 +77,29 @@ const SLIDE_DUR = 0.11;
 const DRAG_THRESHOLD = 14;
 /** 无法移动时画面震动初始强度（秒） */
 const SHAKE_TIME = 0.18;
-/** 布局选择存档键（localStorage），页面加载时恢复上一次选择 */
-const LAYOUT_KEY = 'klotskiLayout';
-/** 每日一题存档键前缀：完整键 = 前缀 + '_' + 当日日期，存当日完成步数 */
-const DAILY_KEY = 'klotskiDaily';
-/** 进度快照存档键（localStorage，与其它街机游戏同一契约）：保存布局/难度/棋子位置/步数 */
-const SAVE_KEY = 'arcade_save_klotski';
-/** 难度选择存档键（localStorage），页面加载时恢复上一次选择 */
-const DIFF_KEY = 'klotskiDifficulty';
+/**
+ * localStorage 存档键集中定义（单点维护）：键名与游戏厅大厅及历史存档约定一致，
+ * 改名即弃档，勿随意变动；全部键名字面量仅在此处出现
+ */
+const KEYS = {
+    layout: 'klotskiLayout', // 布局选择，页面加载时恢复上一次选择
+    daily: 'klotskiDaily', // 每日一题前缀：完整键 = daily + '_' + 当日日期，存当日完成步数
+    save: 'arcade_save_klotski', // 进度快照（与其它街机游戏同一契约）：保存布局/难度/棋子位置/步数
+    difficulty: 'klotskiDifficulty', // 难度选择，页面加载时恢复上一次选择
+    bestPrefix: 'klotskiBest_', // 最少步纪录前缀：完整键 = bestPrefix + 难度id + '_' + 布局id（旧版无难度段）
+    rankPrefix: 'klotskiRank_' // 最佳评级前缀：完整键 = rankPrefix + 难度id + '_' + 布局id
+};
+/** 布局选择存档键（字面量统一收口于上方 KEYS） */
+const LAYOUT_KEY = KEYS.layout;
+/** 每日一题存档键前缀（字面量统一收口于上方 KEYS）：完整键 = 前缀 + '_' + 当日日期 */
+const DAILY_KEY = KEYS.daily;
+/** 进度快照存档键（字面量统一收口于上方 KEYS） */
+const SAVE_KEY = KEYS.save;
+/** 难度选择存档键（字面量统一收口于上方 KEYS） */
+const DIFF_KEY = KEYS.difficulty;
+/** 撤销栈长度上限：超限从队头丢弃最旧记录。klotski 撤销不限次数，极端长局理论上可无限
+ *  累积；单步记录极小，256 步已远超正常解题长度（魔改最长布局最优解也在百步级），仅杜绝无界增长 */
+const UNDO_STACK_MAX = 256;
 
 /**
  * 难度 id 列表（下标即难度序号，不设"无敌"档）：
@@ -544,6 +559,16 @@ function checkTense() {
 }
 
 /**
+ * 压入撤销记录并在超限时丢弃队头最旧一条（键盘与拖拽两条滑动路径共用，DRY）：
+ * 栈深封顶于 UNDO_STACK_MAX，撤销时 pop 的是最近记录，丢头不影响撤销行为
+ * @param {{ piece: object, dx: number, dy: number, steps: number }} entry 撤销记录
+ */
+function pushUndo(entry) {
+    undoStack.push(entry);
+    if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+}
+
+/**
  * 执行一次滑动并结算（键盘/方向键路径）：实际滑行 min(steps, 可滑格数) 格，
  * 累计步数、压入撤销栈、播放音效并检查通关
  * @param {object} p 待移动的棋子
@@ -566,7 +591,7 @@ function trySlide(p, dx, dy, steps = 1) {
     p.y += dy * n;
     moves += n;
     if (!demoActive) Ach.trackRunStat('moves', moves); // 本局步数实时上报成就统计（演示复现不计入玩家成绩）
-    undoStack.push({ piece: p, dx, dy, steps: n });
+    pushUndo({ piece: p, dx, dy, steps: n });
     invalidateHint(); // 棋面已变：提示展示与解路径缓存作废
     if (p.t === 'cao') SFX.klMoveCao(n); // 曹操专属：低音区厚重滑音
     else SFX.klMove(n); // 音高随滑动格数递增，连滑越远越高昂
@@ -699,7 +724,7 @@ function currentDiffId() {
  * @returns {string} localStorage 键名
  */
 function bestKey(layoutId, diffId) {
-    return 'klotskiBest_' + diffId + '_' + layoutId;
+    return KEYS.bestPrefix + diffId + '_' + layoutId;
 }
 
 /**
@@ -712,7 +737,7 @@ function bestKey(layoutId, diffId) {
 function readBest(layoutId, diffId) {
     let v = parseInt(Arcade.loadRaw(bestKey(layoutId, diffId)) || '0', 10);
     if (!v && diffId === 'normal') {
-        v = parseInt(Arcade.loadRaw('klotskiBest_' + layoutId) || '0', 10); // 旧版纪录视为进阶档
+        v = parseInt(Arcade.loadRaw(KEYS.bestPrefix + layoutId) || '0', 10); // 旧版纪录视为进阶档
     }
     return Number.isNaN(v) ? 0 : v;
 }
@@ -724,7 +749,7 @@ function readBest(layoutId, diffId) {
  * @returns {string} localStorage 键名
  */
 function rankKey(layoutId, diffId) {
-    return 'klotskiRank_' + diffId + '_' + layoutId;
+    return KEYS.rankPrefix + diffId + '_' + layoutId;
 }
 
 /**
@@ -2963,7 +2988,7 @@ canvas.addEventListener('pointerup', e => {
         p.y += d.dir[1] * n;
         moves += n;
         if (!demoActive) Ach.trackRunStat('moves', moves); // 本局步数实时上报成就统计（与键盘走子路径同口径；演示复现不计入玩家成绩）
-        undoStack.push({ piece: p, dx: d.dir[0], dy: d.dir[1], steps: n });
+        pushUndo({ piece: p, dx: d.dir[0], dy: d.dir[1], steps: n });
         invalidateHint(); // 棋面已变：提示展示与解路径缓存作废
         if (p.t === 'cao') SFX.klMoveCao(n); // 曹操专属：低音区厚重滑音
         else SFX.klMove(n); // 音高随滑动格数递增，连滑越远越高昂
@@ -3076,7 +3101,9 @@ document.addEventListener('keydown', e => {
     if (e.key >= '1' && e.key <= String(LAYOUTS.length)) {
         const idx = parseInt(e.key, 10) - 1;
         if (idx !== layoutIndex) {
-            selectLayout(document.querySelectorAll('.layout-btn')[idx]);
+            const btn = document.querySelectorAll('.layout-btn')[idx];
+            if (!btn) return; // HTML 按钮数与 LAYOUTS.length 不符（DOM 漂移）时安全退出，不让该次按键抛错
+            selectLayout(btn);
         }
     }
 });

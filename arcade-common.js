@@ -8,7 +8,9 @@
  * 职责三：指针捕获守卫（setPointerCapture 对已释放/合成指针抛 NotFoundError 的统一兜底）
  * 职责四：通用难度按钮组绑定（bindDifficultyButtons，收编七游戏 selectDifficulty 同构实现）
  * 职责五：系统级「减少动态效果」偏好唯一探测点（prefersReducedMotion，fx/fullscreen/gamepad/大厅统一消费）
- * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, removeByPrefix, capturePointer, bindDifficultyButtons, prefersReducedMotion }
+ * 职责六：跨游戏渲染/HUD 同构样板工厂（createGridLayer 离屏网格层三件套 / createAchHud 成就墙六件套，
+ *         dpr 读取口径与成就墙 id 契约单点收敛；当前 snake/tetris 接入，其余游戏各自变体不强制迁移）
+ * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, removeByPrefix, capturePointer, bindDifficultyButtons, prefersReducedMotion, createGridLayer, createAchHud }
  * ========================================================================== */
 const Arcade = (() => {
     'use strict';
@@ -251,9 +253,66 @@ const Arcade = (() => {
         };
     }
 
+    /**
+     * 离屏静态网格层三件套工厂：离屏画布 + 绘制上下文 + 脏标记的通用封装
+     * （snake 棋盘背景 / tetris 台面网格的同构样板下沉；渲染行为与两游戏原实现逐位一致）。
+     * dpr 读取与 FX.dims 同口径——物理缩放比记录于主画布 dataset.dpr，本库定位零依赖基础库
+     * （先于 fx.js 加载），故不引用 FX，按同公式自读（未适配画布按 1 回退，天然带回退语义）
+     * @param {HTMLCanvasElement} mainCanvas 主画布：离屏层物理分辨率与其对齐，保证 1:1 贴回不缩放
+     * @param {Function} paint 网格内容绘制回调 (layerCtx) => void：仅脏重建时调用一次；
+     *   clearRect/底色填充由回调自行负责（snake 不透明暗底覆盖、tetris 透明底，策略不同不强行统一）
+     * @returns {{canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, markDirty: Function, blit: Function}}
+     */
+    function createGridLayer(mainCanvas, paint) {
+        const layerCanvas = document.createElement('canvas');
+        const layerCtx = layerCanvas.getContext('2d');
+        let dirty = true; // 初始即脏：首帧 blit 必然重建一次（等价原实现声明后置位的时序）
+        return {
+            canvas: layerCanvas,
+            ctx: layerCtx,
+            /** 置脏：下一帧 blit 重建离屏层内容（主画布物理分辨率/DPR 变化时调用） */
+            markDirty() { dirty = true; },
+            /**
+             * 脏则重建并整层贴回主画布上下文（游戏每帧调用一次）
+             * @param {CanvasRenderingContext2D} targetCtx 主画布绘制上下文
+             * @param {number} w 贴回目标逻辑宽度（主画布 CSS 逻辑尺寸，如 boardW / VIEW_W）
+             * @param {number} h 贴回目标逻辑高度
+             */
+            blit(targetCtx, w, h) {
+                if (dirty) {
+                    // 赋 width/height 会整层清空并重置变换，等效原 renderGridLayer 的逐次重建
+                    const dpr = parseFloat(mainCanvas.dataset.dpr) || 1;
+                    layerCanvas.width = mainCanvas.width;
+                    layerCanvas.height = mainCanvas.height;
+                    layerCtx.setTransform(dpr, 0, 0, dpr, 0, 0); // 锁 CSS 逻辑坐标，绘制代码零换算
+                    if (paint) paint(layerCtx);
+                    dirty = false;
+                }
+                targetCtx.drawImage(layerCanvas, 0, 0, w, h);
+            }
+        };
+    }
+
+    /**
+     * 成就墙 HUD 六件套工厂：#achWall/#achGrid/#achCount/#achTotal/#achBarFill/#achToastStack
+     * 六个 id 的 DOM 查询单点收敛（snake/tetris 同构样板下沉；id 由共享 CSS 与 ach-common.js
+     * 的 Ach.init mount 契约约定，业务页禁止擅改；其余游戏的成就墙变体不强制迁移）
+     * @returns {{wall: Element, grid: Element, count: Element, total: Element, barFill: Element, toasts: Element}} 六件套集合：调用方按需解构为具名 const，保持既有引用点零改动
+     */
+    function createAchHud() {
+        return {
+            wall: document.getElementById('achWall'),
+            grid: document.getElementById('achGrid'),
+            count: document.getElementById('achCount'),
+            total: document.getElementById('achTotal'),
+            barFill: document.getElementById('achBarFill'),
+            toasts: document.getElementById('achToastStack')
+        };
+    }
+
     // 系统级「减少动态效果」偏好全站唯一探测点：各库/大厅读取本值，禁止各自重复探测
     const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION };
+    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION, createGridLayer, createAchHud };
 })();
 window.Arcade = Arcade;

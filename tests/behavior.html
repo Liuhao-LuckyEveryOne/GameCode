@@ -29,7 +29,7 @@
 </head>
 <body>
 <h1>行为测试 · 像素街机厅</h1>
-<div class="sub">离屏 iframe 装载七个游戏页（?behavior=1），收集 arcade:behavior 报文按名归账；全部到齐或 9 秒超时出结论</div>
+<div class="sub">离屏 iframe 装载七个游戏页（?behavior=1），收集 arcade:behavior 报文按名归账；另以同源装载附加断言补测音频/结算/pagehide/手柄链路；双通道全部落账或 9 秒超时出结论</div>
 <div id="summary" class="running">进行中…（0/7 上报）</div>
 <ol id="results"></ol>
 <pre id="detail"></pre>
@@ -50,6 +50,11 @@
  *   - window.BEHAVIOR_RESULTS 暴露完整明细
  *   - 失败明细写入 #detail（headless dump-dom 与手工排查均可直接读取）
  *   - 恢复测试前的 localStorage 快照（游戏页加载/测试会写入存档，防污染真实进度）
+ * 附加断言装置：报文通道只覆盖 fx.js 测试钩子已编排的场景，音频核心面/结算面板/
+ * pagehide 快照兜底/手柄端到端这些运行时契约没有钩子可用，故移植 smoke.html 的
+ * 同源装载模式（fetch + document.write + rAF 泵桩）直调子页符号补测，结果经
+ * mergeExtra 并入同一归账表与报文通道合计计分；同源装载不带 ?behavior=1，
+ * 测试钩子不激活、不发报文，两通道互不重复
  * 界面展示：顶部汇总条实时显示「n/7 上报」，每个游戏一行状态
  * （等待上报 → 通过 x/y / 失败 x/y / 超时未上报），仅增量渲染不改变上述自动化契约
  */
@@ -90,7 +95,7 @@ function restoreStorage() {
 
 /** 刷新顶部汇总条：按当前上报数显示进行中/最终结论（finish 与逐个上报共用） */
 function updateSummary() {
-    const reported = GAMES.filter((g) => results[g]).length;
+    const reported = reportedSet.size;
     const el = document.getElementById('summary');
     if (finished) {
         const r = window.BEHAVIOR_RESULTS;
@@ -138,7 +143,11 @@ function updateRow(g, r) {
 function finish() {
     if (finished) return;
     finished = true;
-    const missing = GAMES.filter((g) => !results[g]);
+    const missing = GAMES.filter((g) => !reportedSet.has(g));
+    // 看门狗到期时附加断言未落账的页补记失败，结论如实反映缺口而非静默遗漏
+    for (const g of GAMES) {
+        if (!extraTouched[g]) mergeExtra(g, '附加断言', false, '看门狗到期仍未完成（子页装载/断言超时）');
+    }
     let pass = 0;
     let total = 0;
     for (const g of GAMES) {
@@ -147,7 +156,7 @@ function finish() {
         pass += r.pass;
         total += r.total;
     }
-    const ok = missing.length === 0 && total > 0 && pass === total;
+    const ok = missing.length === 0 && extraDone >= GAMES.length && total > 0 && pass === total;
     window.BEHAVIOR_RESULTS = { ok: ok, pass: pass, total: total, missing: missing, detail: results };
     document.title = ok
         ? '行为通过 ' + pass + '/' + total
@@ -170,13 +179,35 @@ function finish() {
 }
 
 // 接收各游戏 iframe 的 arcade:behavior 报文按名归账，同步刷新对应状态行；全部到齐即收尾
+// 报文装置与附加断言装置双通道归账的独立进度：
+// reportedSet 只由报文监听器写入（占位统计不算上报）；extraDone 统计附加断言
+// 已完成的页数；extraTouched 标记该页是否已有附加断言落账（含失败补记）
+const reportedSet = new Set();
+let extraDone = 0;
+const extraTouched = {};
+
+/** 收尾门槛：报文全部到齐且七页附加断言全部落账后才允许 finish
+ *  （双装置并行，任一通道未齐即收尾会把另一通道的缺口漏出结论） */
+function maybeFinish() {
+    if (GAMES.every((g) => reportedSet.has(g)) && extraDone >= GAMES.length) finish();
+}
+
 window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || d.type !== 'arcade:behavior') return;
-    results[d.name] = d;
-    updateRow(d.name, d);
+    const cur = results[d.name];
+    if (cur) {
+        // 附加断言装置先行完成时已建占位统计，此处合并报文计数而非覆盖
+        cur.pass += d.pass;
+        cur.total += d.total;
+        cur.fails.push(...(d.fails || []));
+    } else {
+        results[d.name] = d;
+    }
+    reportedSet.add(d.name);
+    updateRow(d.name, results[d.name]);
     updateSummary();
-    if (GAMES.every((g) => results[g])) finish();
+    maybeFinish();
 });
 
 // 超时兜底：任一游戏页加载/上报失败也给出结论
@@ -186,6 +217,251 @@ setTimeout(finish, TIMEOUT_MS);
 
 // 离页兜底恢复存档（finish 未能执行时尽力还原）
 window.addEventListener('pagehide', restoreStorage);
+
+// ==================================================================
+// 同源附加断言装置（第二归账通道）：报文通道只覆盖 fx.js 测试钩子已编排的
+// 场景；音频核心面、结算面板、pagehide 快照兜底与手柄端到端这些运行时契约
+// 没有钩子可用，故移植 smoke.html 的同源装载模式在此直调子页符号补测。
+// 结果经 mergeExtra 并入同一归账表，与报文通道合计后统一出结论
+// （maybeFinish 双门槛：报文齐 + 附加齐）。同源装载不带 ?behavior=1，
+// fx.js 测试钩子不激活、不发报文，两通道互不重复。
+// ==================================================================
+
+/** 轮询等待条件达成（与 smoke.html 同款装置）：判定抛错视为未达成，超时 reject */
+function waitUntil(fn, label, timeout) {
+    timeout = timeout || 8000;
+    return new Promise((resolve, reject) => {
+        const t0 = performance.now();
+        (function poll() {
+            let hit = null;
+            try { hit = fn(); } catch (e) { hit = null; } // 判定函数抛错视为未达成
+            if (hit) return resolve(hit);
+            if (performance.now() - t0 > timeout) return reject(new Error(label + '（' + Math.round(timeout / 1000) + 's 等待超时）'));
+            setTimeout(poll, 60);
+        })();
+    });
+}
+
+/**
+ * 同源装载一个游戏页（smoke.html bootGamePage 同款）：about:blank iframe 上先装
+ * rAF 泵桩再 document.write 注入真实页面 HTML——页面执行期注册的全部 rAF 落队，
+ * 由 frame.__pump(n) 确定性驱动（gamepad 轮询与游戏主循环均依赖 rAF）；
+ * base href="../" 让子页脚本/样式相对路径可解析
+ * @param {string} htmlPath 游戏页路径（如 '../snake.html'）
+ * @returns {Promise<HTMLIFrameElement>} 就绪的 iframe（挂 __pump）
+ */
+async function bootExtraPage(htmlPath) {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;border:0';
+    document.body.appendChild(frame);
+    await new Promise((resolve) => { frame.addEventListener('load', resolve); frame.src = 'about:blank'; });
+    const w = frame.contentWindow;
+    const q = [];
+    let t = 2000; // 合成帧时钟起点避开真实时钟原点附近，防首帧 dt 计算异常（与 smoke.html 同款）
+    // 桩必须先于页面脚本安装（document.write 之前）：页面执行期发出的 rAF 全部落队等待泵
+    w.requestAnimationFrame = (cb) => { q.push(cb); return q.length; };
+    w.cancelAnimationFrame = () => {};
+    frame.__pump = (n) => { while (n-- > 0) { t += 16.6; for (const cb of q.splice(0)) cb(t); } };
+    const html = await (await fetch(htmlPath, { cache: 'no-store' })).text();
+    const d = frame.contentDocument;
+    d.open(); d.write('<!DOCTYPE html><base href="../">' + html); d.close();
+    // 就绪判据与 smoke.html 一致：FX/startGame 挂载即 audio/fx/游戏逻辑已全部执行
+    await waitUntil(() => frame.contentWindow.FX && typeof frame.contentWindow.startGame === 'function',
+        htmlPath + ' 子页脚本未就绪（FX/startGame 未挂载）');
+    return frame;
+}
+
+/**
+ * 附加断言落账：并入该游戏的归账统计（报文通道未到时先建占位，监听器按合并语义
+ * 叠加报文计数），并标记该页附加断言已落账（finish 看门狗据此补记缺口）
+ * @param {string} g 游戏名 @param {string} tag 断言名
+ * @param {boolean} ok 是否通过 @param {string} detail 失败明细
+ */
+function mergeExtra(g, tag, ok, detail) {
+    if (!results[g]) results[g] = { name: g, pass: 0, total: 0, fails: [] };
+    const r = results[g];
+    r.total++;
+    if (ok) r.pass++; else r.fails.push(tag + '：' + detail);
+    extraTouched[g] = true;
+    if (reportedSet.has(g)) updateRow(g, r); // 报文未到时不刷行：监听器合并报文计数时会一并刷新，避免行内容闪变
+}
+
+/**
+ * 音频体系运行时断言：①SFX 公开面存在（_tone/_noise 分册挂载约定键 + bgm 五方法
+ * + 音量/静音入口）；②暂停链路端到端——包装 bgm.pause 计数 → 直调 Pause.create
+ * 组装最小引擎（不传 overlay 规避各页遮罩显示格式差异，断言只看暂停标志与 BGM
+ * 挂起）→ toggle → 断言标志置位且 bgm.pause 被调用
+ * @param {Window} w 子页 window @param {string} g 游戏名
+ */
+function extraAudio(w, g) {
+    const sfx = w.SFX;
+    mergeExtra(g, '音频/SFX核心面',
+        !!(sfx && typeof sfx._tone === 'function' && typeof sfx._noise === 'function' && sfx.bgm &&
+            typeof sfx.bgm.start === 'function' && typeof sfx.bgm.pause === 'function' &&
+            typeof sfx.bgm.resume === 'function' && typeof sfx.bgm.stop === 'function' &&
+            typeof sfx.bgm.playing === 'function' &&
+            typeof sfx.volSet === 'function' && typeof sfx.muteToggle === 'function'),
+        'SFX 公开面缺失（_tone/_noise/bgm.start|pause|resume|stop|playing/volSet/muteToggle 之一不存在）');
+    if (!(sfx && sfx.bgm && typeof sfx.bgm.pause === 'function')) return; // 核心面已失败：暂停链路依赖项不成立，避免连环噪声失败
+    let pauseCalls = 0;
+    const origPause = sfx.bgm.pause;
+    // 属性覆盖即包装：pause-common 经 SFX.bgm.pause() 属性链调用，包装必然生效
+    sfx.bgm.pause = function () { pauseCalls++; return origPause.apply(this, arguments); };
+    try {
+        let paused = false;
+        const engine = w.Pause.create({ isPaused: () => paused, canToggle: () => true, setPaused: (v) => { paused = v; } });
+        engine.toggle();
+        mergeExtra(g, '音频/暂停引擎接线', paused === true, 'toggle 后暂停标志未置位（Pause.create 注入契约不符）');
+        mergeExtra(g, '音频/暂停触发bgm.pause', pauseCalls >= 1, 'toggle 后 SFX.bgm.pause 未被调用（暂停链路未挂起 BGM）');
+    } catch (err) {
+        mergeExtra(g, '音频/暂停链路', false, err && err.message ? err.message : String(err));
+    } finally {
+        sfx.bgm.pause = origPause; // 还原包装：残留桩会污染该页后续运行
+    }
+}
+
+/** 各游戏 game over 直调触发映射：结算函数均为经典函数声明挂 window（父页可直调，
+ *  与 smoke.html S18 直调 startGame 同口径）；bee 首调走死亡演出分支（deathFxShown
+ *  门控即 return），连调两次才进结算分支；klotski 通关制没有 game over（表外降级） */
+const GAMEOVER_TRIGGER = {
+    snake: (w) => w.gameOver(false),
+    tetris: (w) => w.gameOver(),
+    pac: (w) => w.gameOver(),
+    bee: (w) => { w.endGame(); w.endGame(); },
+    pinball: (w) => w.gameOver(),
+    '1024': (w) => w.showGameOver()
+};
+
+/**
+ * 结算链路断言：直调各页结算入口 → 断言 gameOverScreen 面板可见（display 直写
+ * 'block' 为六页统一实现口径）+ 最高分落盘管线可用（以私有探测键走 Arcade
+ * saveRaw→loadRaw→removeRaw 读写删闭环，不动真实最高分键，避免干扰并行报文
+ * 场景的档位假设）+ 结算流程未损坏真实最高分档
+ * @param {Window} w 子页 window @param {Document} d 子页 document @param {string} g 游戏名
+ */
+function extraGameOver(w, d, g) {
+    if (g === 'klotski') {
+        // 通关制游戏没有 game over：降级断言胜利结算面板存在（结算出口存在性的最稳口径）
+        mergeExtra(g, '结算/面板存在', !!d.getElementById('winScreen'), 'winScreen 胜利结算面板不在 DOM 中');
+        return;
+    }
+    const panel = d.getElementById('gameOverScreen');
+    mergeExtra(g, '结算/面板存在', !!panel, 'gameOverScreen 结算面板不在 DOM 中');
+    if (!panel) return;
+    try {
+        GAMEOVER_TRIGGER[g](w);
+        mergeExtra(g, '结算/面板可见', panel.style.display === 'block', '触发 game over 后结算面板未显示（display 非 block）');
+    } catch (err) {
+        mergeExtra(g, '结算/触发链路', false, err && err.message ? err.message : String(err));
+        return;
+    }
+    try {
+        const probe = 'arcade_save_probe_' + g; // 私有探测键：验证落盘通路即撤，不触碰真实档
+        w.Arcade.saveRaw(probe, '77');
+        const roundTrip = w.Arcade.loadRaw(probe) === '77';
+        w.Arcade.removeRaw(probe);
+        mergeExtra(g, '结算/最高分落盘管线', roundTrip && w.Arcade.loadRaw(probe) === null,
+            'Arcade 存取通路读写删闭环失败（saveRaw→loadRaw→removeRaw）');
+    } catch (err) {
+        mergeExtra(g, '结算/最高分落盘管线', false, err && err.message ? err.message : String(err));
+    }
+    const raw = localStorage.getItem(g + 'HighScore'); // 六个计分游戏最高分键同构（大厅 BEST_DEFS 同名口径）
+    mergeExtra(g, '结算/最高分档完好', raw === null || !isNaN(parseInt(raw, 10)),
+        '结算后最高分键值非法（实际：' + raw + '）');
+}
+
+/**
+ * pagehide 快照兜底断言：重新开局（结算段已终结上局，进行中对局才走保存分支）
+ * → 包装 Arcade.saveJSON 捕获快照写入 → 派发合成 pagehide → 断言 arcade_save_
+ * 前缀快照落盘。兜底不走 postMessage：Snap.bindPageHide 直接经 pipe.save 写本机存储
+ * @param {Window} w 子页 window @param {string} g 游戏名
+ */
+function extraPageHide(w, g) {
+    let saved = null;
+    const orig = w.Arcade.saveJSON;
+    w.Arcade.saveJSON = function (key, value) { if (!saved) saved = { key: key, value: value }; return orig.apply(this, arguments); };
+    try {
+        w.startGame(); // 结算段终结了上局：重新开局保证 pipe.save 走"进行中→保存"分支
+        w.dispatchEvent(new w.Event('pagehide'));
+        mergeExtra(g, 'pagehide/快照兜底', !!(saved && String(saved.key).indexOf('arcade_save_') === 0),
+            '派发 pagehide 后未捕获 arcade_save_ 前缀快照写入（Snap.bindPageHide 兜底接线断裂）');
+    } catch (err) {
+        mergeExtra(g, 'pagehide/快照兜底', false, err && err.message ? err.message : String(err));
+    } finally {
+        w.Arcade.saveJSON = orig; // 还原包装
+    }
+}
+
+/**
+ * 手柄端到端断言（smoke.html S21 的跨页全覆盖版）：Object.defineProperty 桩替换
+ * navigator.getGamepads（Gamepad API 为轮询式数据源、无原生按键事件，黑盒替换
+ * 数据源即标准手法）→ 泵帧驱动 gamepad.js 轮询 → 断言连接状态上浮 GP.connected；
+ * 按下十字上（standard mapping 槽位 12 → ArrowUp）泵帧 → 断言合成 keydown/keyup
+ * 送达 document；snake 页追加 defaultPrevented 断言（页面真实消费合成事件，S21 同口径）
+ * @param {Window} w 子页 window @param {HTMLIFrameElement} frame 挂 __pump 的 iframe @param {string} g 游戏名
+ */
+function extraGamepad(w, frame, g) {
+    mergeExtra(g, '手柄/GP挂载', !!(w.GP && w.GP.connected === false), 'window.GP 未挂载或初始状态非 false（gamepad.js 契约不符）');
+    const pad = { connected: true, id: 'Behavior Pad (STUB)', mapping: 'standard',
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })), axes: [0, 0, 0, 0] };
+    Object.defineProperty(w.navigator, 'getGamepads', { configurable: true, value: () => [pad, null, null, null] });
+    frame.__pump(1); // 轮询循环已入泵队列：泵一帧过连接边沿
+    mergeExtra(g, '手柄/连接上浮', w.GP && w.GP.connected === true, '轮询到已连接手柄后 GP.connected 未上浮为 true');
+    const d = w.document;
+    const log = [];
+    const cap = (e) => log.push({ t: e.type, k: e.key, dp: e.defaultPrevented });
+    d.addEventListener('keydown', cap);
+    d.addEventListener('keyup', cap);
+    try {
+        pad.buttons[12].pressed = true;
+        frame.__pump(2);
+        pad.buttons[12].pressed = false;
+        frame.__pump(2);
+        const downs = log.filter((x) => x.t === 'keydown' && x.k === 'ArrowUp');
+        const ups = log.filter((x) => x.t === 'keyup' && x.k === 'ArrowUp');
+        mergeExtra(g, '手柄/方向键送达', downs.length >= 1 && ups.length >= 1,
+            '十字上按下/松开未合成 ArrowUp keydown+keyup 送达 document（合成通路断裂）');
+        if (g === 'snake') {
+            const dp = downs.length > 0 && downs[0].dp === true;
+            mergeExtra(g, '手柄/页面消费', dp, 'snake 页键盘监听未消费合成事件（方向键未 preventDefault）');
+        }
+    } finally {
+        d.removeEventListener('keydown', cap);
+        d.removeEventListener('keyup', cap);
+    }
+}
+
+/** 单页附加断言编排：音频 → 结算 → pagehide 兜底 → 手柄（pagehide 段内 startGame
+ *  重开局，其后手柄段的方向键输入落在进行中对局上，snake 的 preventDefault 消费
+ *  断言状态稳定） */
+function runExtraPage(g, frame) {
+    const w = frame.contentWindow;
+    extraAudio(w, g);
+    extraGameOver(w, w.document, g);
+    extraPageHide(w, g);
+    extraGamepad(w, frame, g);
+}
+
+// 附加装置主流程：七页并行装载（与报文装置节奏对齐，串行 fetch 会挤爆 9s 看门狗），
+// 全部就绪后逐页断言、逐页 extraDone 落账；单页装载/断言失败均并入该页归账，不中断整体
+(async () => {
+    const boots = GAMES.map((g) => bootExtraPage('../' + g + '.html').then(
+        (frame) => ({ g: g, frame: frame, err: null }),
+        (err) => ({ g: g, frame: null, err: err })
+    ));
+    const settled = await Promise.all(boots);
+    for (const it of settled) {
+        if (it.err) {
+            mergeExtra(it.g, '附加装置', false, it.err && it.err.message ? it.err.message : String(it.err));
+        } else {
+            try { runExtraPage(it.g, it.frame); }
+            catch (err) { mergeExtra(it.g, '附加断言', false, err && err.message ? err.message : String(err)); }
+        }
+        extraDone++;
+        maybeFinish();
+    }
+})();
 
 // 依次创建 7 个离屏 iframe 加载真实游戏页（?behavior=1 激活各页测试钩子），
 // 同步建立每游戏状态行（等待上报），保证测试过程在界面上可见

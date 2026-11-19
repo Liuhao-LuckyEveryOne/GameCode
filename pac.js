@@ -91,6 +91,10 @@ const GHOST_DEFS = [
 const PAC_BASE_SPEED = 105;
 /** 吃豆人速度上限（像素/秒） */
 const PAC_MAX_SPEED = 150;
+/** 幽灵眼睛回巢速度倍率（相对当前难度幽灵基础速度） */
+const EYES_SPEED_MULT = 2.4;
+/** 眼睛回巢速度上限（像素/秒）：2 倍吃豆人速度上限封顶，防高基础速度档（快照校验允许 ghBase 至 1000）下回巢快到失去拖尾观感；正常难度档（ghBase 80~110 → 192~264）不受钳制 */
+const EYES_SPEED_MAX = PAC_MAX_SPEED * 2;
 /** 转向预输入队列最大深度：同时保留"当前意图 + 下一意图"，快速连按两下不丢第一下 */
 const DIR_QUEUE_MAX = 2;
 /** 近格心预转向吸附距离（像素）：进入该范围即提前完成转向，压缩按键响应延迟（街机原版允许约 50% 格预转，此处取 25% 保守值） */
@@ -127,12 +131,15 @@ const ONE_UP_SCORE = 10000;
  * 老玩家成就与累计吃豆进度绝不丢失；装载/落盘/解锁演出/成就墙渲染/V-Esc 开合均由共享层实现。
  */
 
-/** 成就存档 localStorage 键（跨局持久化，与贪吃蛇的 arcade_ach_snake 同族） */
-const ACH_KEY_PAC = 'arcade_ach_pac';
-/** 进度镜像快照存档键（localStorage）：返回游戏厅/收到 arcade:save 消息/关页时保存当前局，下次进入合法则恢复续玩 */
-const SNAPSHOT_KEY = 'arcade_save_pac';
-/** 旧版跨局累计吃豆独立键：v2 后累计值改存成就存档 best.dotsTotal，本键仅用于迁移读取 */
-const DOTS_TOTAL_KEY = 'pacDotsTotal';
+/** localStorage 存档键单点定义：值与历史线上档完全一致（换名不换值，老玩家存档不受影响），
+ *  收敛原散落各处的键名常量与魔法串，防多处手写漂移；仅供 Arcade 存储 API 族引用 */
+const KEYS = {
+    ach: 'arcade_ach_pac',           // 成就存档键（跨局持久化，与贪吃蛇的 arcade_ach_snake 同族）
+    snapshot: 'arcade_save_pac',     // 进度镜像快照键：返回游戏厅/收到 arcade:save 消息/关页时保存当前局，下次进入合法则恢复续玩
+    dotsTotalLegacy: 'pacDotsTotal', // 旧版跨局累计吃豆独立键：v2 后累计值改存成就存档 best.dotsTotal，本键仅用于迁移读取
+    difficulty: 'pacDifficulty',     // 难度选择存档键：页面加载时恢复上一次选择
+    highScore: 'pacHighScore'        // 本地最高分存档键
+};
 /** 历史最佳统计默认值：best 里缺省的统计一律按默认起算（新增统计向后兼容旧档） */
 const ACH_BEST_DEFAULTS = { score: 0, level: 1, dotsTotal: 0, ghostCombo: 0 };
 /** 成就定义表（8 条，四档稀有度 普通3/稀有2/史诗2/传说1，顺序即成就墙展示顺序）：
@@ -213,8 +220,6 @@ let ghBase = 95;
 let scoreMult = 2;
 /** 无敌模式开关（仅"无敌"难度为 true）：非惊惧态幽灵碰到玩家不掉命、不重置位置、无死亡动画，二者互相穿过 */
 let invincibleMode = false;
-/** 难度选择存档键（localStorage），页面加载时恢复上一次选择 */
-const DIFFICULTY_KEY = 'pacDifficulty';
 /** 连续吃幽灵的连击数（决定 200/400/800/1600 分） */
 let ghostCombo = 0;
 /** waka 音交替标志（吃豆音高低交替，模拟经典 waka-waka） */
@@ -603,7 +608,7 @@ function ghostSpeed(g) {
     // 关卡提速基准：×1.05^(level-1) 累乘，封顶吃豆人当前速度的 0.95 倍
     const pacSpeed = Math.min(PAC_BASE_SPEED + (level - 1) * 5, PAC_MAX_SPEED);
     const base = Math.min(ghBase * Math.pow(1.05, level - 1), pacSpeed * 0.95);
-    if (g.mode === 'eyes') return ghBase * 2.4; // 眼睛飞速回巢
+    if (g.mode === 'eyes') return Math.min(ghBase * EYES_SPEED_MULT, EYES_SPEED_MAX); // 眼睛飞速回巢（超上限钳制防失控）
     if (g.mode === 'exit') return ghBase * 0.7; // 出屋缓慢
     if (g.frightened) return base * 0.55;       // 惊惧减速
     return base;
@@ -612,14 +617,17 @@ function ghostSpeed(g) {
 /* ===================== 流程控制 ===================== */
 
 /**
- * 触发惊惧模式：除回巢眼睛外全部幽灵进入惊惧状态（roam 幽灵掉头），重置连击。
- * 出屋(exit)/屋内(house)幽灵同样进入惊惧属有意取舍：降低无敌/演示档下被屋口幽灵偷袭的压迫感，演示难度友好，非逻辑错误。
+ * 触发惊惧模式：场上幽灵进入惊惧状态（roam 幽灵掉头），重置连击。
+ * 取舍变更：原实现屋内(house)/出屋(exit)幽灵同样置惊恐（旧取舍为降低无敌/演示档
+ * 被屋口幽灵偷袭的压迫感）；现屋内幽灵不再置惊恐——屋内幽灵本就够不着玩家，
+ * 携惊恐出屋会在钻出屋口瞬间整体变蓝，观感突兀且暴露"刚出门就送分"的失衡窗口。
+ * 出屋(exit)途中幽灵已离开屋体仍保持受惊，能量期压迫感不受影响。
  */
 function triggerFright() {
     frightTimer = frightDur;
     ghostCombo = 0;
     for (const g of ghosts) {
-        if (g.mode === 'eyes') continue; // 眼睛不受影响
+        if (g.mode === 'eyes' || g.mode === 'house') continue; // 眼睛与屋内幽灵不受影响
         g.frightened = true;
         if (g.mode === 'roam') g.dir = OPPOSITE[g.dir]; // 经典掉头反应
     }
@@ -660,7 +668,7 @@ function gameOver() {
     state = 'over';
     finalScore.textContent = score;
     if (score > recordBase) {
-        Arcade.saveRaw('pacHighScore', String(score)); // 存储不可用（隐私模式/禁用站点数据）：静默跳过持久化
+        Arcade.saveRaw(KEYS.highScore, String(score)); // 存储不可用（隐私模式/禁用站点数据）：静默跳过持久化
         newRecord.style.display = 'block';
     } else {
         newRecord.style.display = 'none';
@@ -730,7 +738,7 @@ function buildPacSnapshot() {
 // 未开始/死亡过场/清版/已结束清除残留快照）与恢复管线（校验抛错/应用失败一律
 // 清档回退原新开局逻辑）由 Snap.create 统一实现
 const snapPipe = Snap.create({
-    key: SNAPSHOT_KEY,
+    key: KEYS.snapshot,
     canSave: () => state === 'play' || state === 'ready',
     build: buildPacSnapshot,
     validate: validatePacSnapshot,
@@ -944,7 +952,7 @@ function startGame() {
     score = 0;
     level = 1;
     lives = 3;
-    highScore = parseInt(Arcade.loadRaw('pacHighScore') || '0', 10); // 存储不可用（隐私模式/禁用站点数据）时静默保持默认 0，不中断开局流程
+    highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10); // 存储不可用（隐私模式/禁用站点数据）时静默保持默认 0，不中断开局流程
     recordBase = highScore;
     // 本局一次性标志复位：1UP 奖励与破纪录庆祝每局仅触发一次
     oneUpGiven = false;
@@ -962,6 +970,7 @@ function startGame() {
     gameOverScreen.style.display = 'none';
     SFX.pacReady();
     SFX.bgm.start('pac'); // 开局起播吃豆人 BGM（同名重复调用幂等，死亡/清版后 ready 复播走同一入口）
+    snapPipe.clear(); // 开新局即清除残留进度快照（与 gameOver 侧对称防御）：局中 R 重开/结束界面重开一律按全新开局落子，防止旧局快照在关页时覆盖新局进度；存储不可用时静默跳过，确保开局音效不受存储异常中断
 }
 
 /* 暂停引擎收口共享库 pause-common.js：遮罩/BGM/音效序列在库内统一，
@@ -987,7 +996,7 @@ function togglePause() { pausePipe.toggle(); } // 键盘 P/空格、遮罩点击
  * onChange 读取按钮上的惊惧时长、幽灵速度、分数倍率与无敌标记写入游戏参数 */
 const diffCtl = Arcade.bindDifficultyButtons({
     bar: document,
-    storageKey: DIFFICULTY_KEY,
+    storageKey: KEYS.difficulty,
     persist: 'index',
     lockedDuringPlay: () => state === 'play' || state === 'ready', // 对局进行中禁切难度（局中守卫统一收口）
     onChange(btn) {
@@ -1704,7 +1713,7 @@ const achToastStack = document.getElementById('achToastStack');
 // V 无前置门槛故省略 canOpen；自有迁移（v1 数组 + 旧 pacDotsTotal 键）经 migratePacStore 接入
 Ach.init({
     defs: ACHIEVEMENTS_PAC,
-    storageKey: ACH_KEY_PAC,
+    storageKey: KEYS.ach,
     bestDefaults: ACH_BEST_DEFAULTS,
     mount: { wall: achWall, grid: achGrid, count: achCountEl, total: achTotalEl, barFill: achBarFill, toasts: achToastStack },
     migrate: migratePacStore
@@ -1732,7 +1741,7 @@ function migratePacStore(raw) {
         }
     }
     // 旧累计吃豆键迁移：best.dotsTotal 低于旧键历史值时并入（旧档升级首次读取即接续原进度）
-    const legacyDots = Number(Arcade.loadJSON(DOTS_TOTAL_KEY, 0)) || 0;
+    const legacyDots = Number(Arcade.loadJSON(KEYS.dotsTotalLegacy, 0)) || 0;
     if (legacyDots > (store.best.dotsTotal || 0)) store.best.dotsTotal = legacyDots;
     return store;
 }
@@ -1792,6 +1801,8 @@ const KEY_DIR = {
  * 全局键盘控制：方向键 / WASD 压入转向预输入队列（深度 2，快速连按不丢键，
  * 暂停或成就墙打开时方向键不入队，防止恢复瞬间残留方向立即生效）；
  * P 或空格在 play/ready 状态切换暂停；V/Esc 开合成就墙（共享库 ach-common.js 统一接线）；
+ * R 在进行中/恢复局（play/ready，含恢复后暂停态）立即弃当前进度开新局（对齐 1024 的 R 键约定，
+ * 补齐恢复局停在暂停态后既无法弃局也无局内重开入口的问题）；
  * Enter 在开始/结束界面开局或重开
  * @param {KeyboardEvent} e 键盘事件
  */
@@ -1814,6 +1825,13 @@ window.addEventListener('keydown', e => {
     if (e.code === 'KeyP' || e.code === 'Space') {
         e.preventDefault();
         if (!e.repeat && (state === 'play' || state === 'ready')) togglePause(); // 防长按连发
+        return;
+    }
+    if (e.code === 'KeyR') {
+        // 局内重开（对齐 1024 的 R 键约定）：进行中/恢复局（ready 含快照恢复后的暂停态）任意时刻可按，
+        // 走与结束界面重开相同的 startGame 清理+新局路径（内部复位暂停态/关暂停遮罩，并清除残留快照）；
+        // 未开始/结束态与死亡/清版过场不响应（结束态已有 Enter/按钮，过场转瞬即逝无需重开入口）
+        if (!e.repeat && (state === 'play' || state === 'ready')) startGame(); // 防长按连发
         return;
     }
     if (e.code === 'Enter') {
@@ -1913,7 +1931,7 @@ function loop(now) {
 
 // 难度恢复：页面加载时保持与上一次选择一致（按钮序号：0 无敌 / 1 简单 / 2 中等 / 3 困难，
 // 默认中等即序号 2）；sync 程序化选择不存档不发声，越界序号静默忽略
-const savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用（隐私模式/禁用站点数据）时 parse 得 NaN，按默认难度处理不中断初始化
+const savedDifficultyIndex = parseInt(Arcade.loadRaw(KEYS.difficulty), 10); // 存储不可用（隐私模式/禁用站点数据）时 parse 得 NaN，按默认难度处理不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
         diffCtl.sync(savedDifficultyIndex);
@@ -1925,10 +1943,16 @@ if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
 
 buildGrid();
 resetPositions();
-highScore = parseInt(Arcade.loadRaw('pacHighScore') || '0', 10); // 存储不可用（隐私模式/禁用站点数据）时静默保持默认 0，不中断初始化
+highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10); // 存储不可用（隐私模式/禁用站点数据）时静默保持默认 0，不中断初始化
 // 进度镜像恢复：核心状态已创建、默认新局逻辑之前尝试续玩；
-// 成功则停在暂停遮罩等待玩家按 P 继续，失败/无快照则保持原开始界面新开局
+// 成功则停在暂停遮罩等待玩家按 P 继续（此时也可按 R 弃局重开），失败/无快照则保持原开始界面新开局
 restoreSnapshot();
+// 暂停遮罩追加 R 重开键位提示：作为 R 局内重开入口的唯一可见指引，文案动态注入
+// （改动保持仅限本文件，不动 pac.html markup），沿用遮罩内既有 <p> 段落默认风格，
+// 遮罩隐藏时随层整体不可见，无需随暂停态额外开关
+const restartHintEl = document.createElement('p');
+restartHintEl.textContent = '按 R 键弃局重开';
+pauseScreen.appendChild(restartHintEl);
 // 初始 DPR 适配 + 窗口尺寸变化时重算（iframe 嵌入与独立打开均生效）
 setupDisplay();
 window.addEventListener('resize', setupDisplay);

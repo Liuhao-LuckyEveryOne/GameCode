@@ -91,14 +91,19 @@ let dropBase = 600;          // 难度决定的初始下落间隔
 let scoreMult = 2;           // 难度决定的分数倍率
 /** 是否无敌模式：新生成方块与堆叠重叠（堆到顶）时清空棋盘继续游戏，而非结束游戏 */
 let invincibleMode = false;
-/** 难度选择存档键（localStorage），页面加载时恢复上一次选择 */
-const DIFFICULTY_KEY = 'tetrisDifficulty';
+/** localStorage 存档键单点定义（值不变，兼容历史存档）：全文件引用此表，禁止散落裸写键名字面量 */
+const KEYS = {
+    DIFFICULTY: 'tetrisDifficulty', // 难度选择存档键（裸串序号），页面加载时恢复上一次选择
+    HIGH_SCORE: 'tetrisHighScore',  // 历史最高分存档键（裸串数值）
+    ACH: 'arcade_ach_tetris',       // 成就存档键：v2 结构 { unlocked: {id:时间戳}, best: {维度:最佳值} }（沿用旧键名，旧档自动迁移）
+    SAVE: 'arcade_save_tetris'      // 进度快照存档键：返回游戏厅 / 页面卸载 / 父页下发保存指令时写入，下次进入游戏页时恢复
+};
 let dropCounter = 0;         // 下落计时累加器
 let lastTime = 0;            // 上一帧时间戳
 let running = false;         // 游戏是否进行中
 let paused = false;          // 是否暂停
 // 最高分持久化：隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 回退 0），不中断初始化
-let highScore = parseInt(Arcade.loadRaw('tetrisHighScore')) || 0;
+let highScore = parseInt(Arcade.loadRaw(KEYS.HIGH_SCORE)) || 0;
 
 // ---------- T-Spin / B2B 状态 ----------
 let lastActionRotate = false; // 锁定前最后一次成功操作是否为旋转（T-Spin 判定前提：移动/下落会清零，仅旋转置真）
@@ -127,6 +132,7 @@ let softDropTimer = 0; // 软降连发计时累加器（毫秒）
 
 // ---------- 特效状态 ----------
 const CLEAR_FX_TIME = 0.35; // 消行闪白演出时长（秒）
+const CLEAR_FLASH_COUNT = 3; // 消行闪白脉冲次数：CLEAR_FX_TIME 时长内正弦完整振荡周期数（π×次数）
 const TRAIL_TIME = 0.15;    // 硬降残影存活时长（秒）
 const BIGTEXT_TIME = 1.2;   // 中央大字存活时长（秒）
 const PARTICLE_GRAVITY = 320; // 粒子重力（像素/秒²）
@@ -138,6 +144,7 @@ let shakeTime = 0;          // 台面震动剩余时间（秒）
 let flashTime = 0;          // 全屏白闪剩余时间（秒）
 let bigText = null;         // 中央大字 { text, t }（TETRIS! / LEVEL UP / ALL CLEAR）
 const DANGER_ROWS = 4;      // 堆叠最高点进入顶部该行数范围内即触发危险警报
+const DANGER_EDGE_PX = 42;  // 危险警报光带厚度（像素）：四边向内渐隐红色光带的宽度
 const COMBO_TIME = 0.9;     // COMBO 连消飘字存活时长（秒）
 let comboCount = 0;         // 连续消行计数（落块未消行即断连清零）
 let comboText = null;       // 连消飘字 { text, t }
@@ -158,12 +165,13 @@ const pauseScreen = document.getElementById('pauseScreen');
 const gameOverScreen = document.getElementById('gameOverScreen');
 const finalScoreEl = document.getElementById('finalScore');
 const newRecordEl = document.getElementById('newRecord');
-const achWall = document.getElementById('achWall');      // 成就墙全屏遮罩层
-const achGrid = document.getElementById('achGrid');      // 成就卡片网格容器
-const achCountEl = document.getElementById('achCount');  // 已解锁成就计数
-const achTotalEl = document.getElementById('achTotal');  // 成就总数
-const achBarFill = document.getElementById('achBarFill'); // 头部完成度进度条填充
-const achToastStack = document.getElementById('achToastStack'); // 成就解锁 toast 堆叠容器
+const achHud = Arcade.createAchHud(); // 成就墙 HUD 六件套（共享工厂：六个 id 的 DOM 查询单点收敛到公共库）
+const achWall = achHud.wall;      // 成就墙全屏遮罩层
+const achGrid = achHud.grid;      // 成就卡片网格容器
+const achCountEl = achHud.count;  // 已解锁成就计数
+const achTotalEl = achHud.total;  // 成就总数
+const achBarFill = achHud.barFill; // 头部完成度进度条填充
+const achToastStack = achHud.toasts; // 成就解锁 toast 堆叠容器
 const pauseRestoredEl = document.getElementById('pauseRestored'); // 暂停遮罩「已恢复上次进度」提示行
 
 /**
@@ -858,38 +866,28 @@ function drawMatrix(matrix, offsetX, offsetY, color) {
     }
 }
 
-/* ---------- 静态网格层离屏缓存：网格线仅在脏标记置位时重绘一次，每帧一次 drawImage 贴回 ---------- */
+/* ---------- 静态网格层离屏缓存：网格线仅在脏标记置位时重绘一次，每帧一次 drawImage 贴回 ----------
+ * 三件套与脏重建逻辑（物理分辨率对齐 + dpr 读取）下沉共享库 Arcade.createGridLayer（其 dpr
+ * 读取与 FX.dims 同口径），28 段网格线绘制内容以 paint 闭包注入，行为与旧 renderGridLayer 一致；
+ * 棋盘底色（外扩 10px 防震动露边）仍保留每帧绘制（位于 draw 内底色填充段） */
 
-/** 静态网格层离屏画布（物理分辨率与主画布保持一致） */
-const gridLayerCanvas = document.createElement('canvas');
-/** 静态网格层绘制上下文 */
-const gridLayerCtx = gridLayerCanvas.getContext('2d');
-/** 网格层脏标记：true 时下一帧重建（DPR 适配 / 画布尺寸变化时由 resize 监听置位） */
-let gridLayerDirty = true;
-
-/**
- * 将棋盘背景网格线渲染到离屏层：28 段网格路径原先每帧重绘，
- * 现仅在尺寸/DPR 变化时重建一次。棋盘底色（外扩 10px 防震动露边）保留每帧绘制
- */
-function renderGridLayer() {
-    const view = FX.dims(canvas); // 读主画布 dpr：离屏层与主画布共用同一逻辑坐标系
-    gridLayerCanvas.width = canvas.width; // 物理分辨率与主画布对齐（1:1 贴回不缩放）
-    gridLayerCanvas.height = canvas.height;
-    gridLayerCtx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0); // 锁 CSS 逻辑坐标，绘制代码零换算
-    gridLayerCtx.clearRect(0, 0, VIEW_W, VIEW_H);
-    gridLayerCtx.strokeStyle = 'rgba(255,255,255,0.05)';
-    gridLayerCtx.lineWidth = 1;
-    gridLayerCtx.beginPath();
+/** 静态网格层（共享工厂三件套：离屏画布 + 上下文 + 脏标记，物理分辨率与主画布一致；
+ *  脏标记由 resize 监听置位） */
+const gridLayer = Arcade.createGridLayer(canvas, (g) => {
+    g.clearRect(0, 0, VIEW_W, VIEW_H);
+    g.strokeStyle = 'rgba(255,255,255,0.05)';
+    g.lineWidth = 1;
+    g.beginPath();
     for (let c = 1; c < COLS; c++) {
-        gridLayerCtx.moveTo(c * CELL + 0.5, 0);
-        gridLayerCtx.lineTo(c * CELL + 0.5, VIEW_H);
+        g.moveTo(c * CELL + 0.5, 0);
+        g.lineTo(c * CELL + 0.5, VIEW_H);
     }
     for (let r = 1; r < ROWS; r++) {
-        gridLayerCtx.moveTo(0, r * CELL + 0.5);
-        gridLayerCtx.lineTo(VIEW_W, r * CELL + 0.5);
+        g.moveTo(0, r * CELL + 0.5);
+        g.lineTo(VIEW_W, r * CELL + 0.5);
     }
-    gridLayerCtx.stroke();
-}
+    g.stroke();
+});
 
 /**
  * 在预览画布的指定水平带内按实际占用范围居中绘制一个方块（小格子）
@@ -976,21 +974,17 @@ function draw() {
     ctx.fillStyle = '#0f1a1a';
     ctx.fillRect(-10, -10, VIEW_W + 20, VIEW_H + 20);
     // 静态网格层：脏标记置位时重建一次，之后每帧仅一次 drawImage 贴回
-    if (gridLayerDirty) {
-        renderGridLayer();
-        gridLayerDirty = false;
-    }
-    ctx.drawImage(gridLayerCanvas, 0, 0, VIEW_W, VIEW_H);
+    gridLayer.blit(ctx, VIEW_W, VIEW_H);
     // 已固定的方块
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             if (board[r][c]) drawCell(ctx, c * CELL, r * CELL, PIECES[board[r][c] - 1].color);
         }
     }
-    // 消行闪白：满行覆盖白色脉冲（正弦闪 3 次后交棒给粒子）
+    // 消行闪白：满行覆盖白色脉冲（正弦闪 CLEAR_FLASH_COUNT 次后交棒给粒子）
     if (clearing) {
         const k = clearing.timer / CLEAR_FX_TIME; // 1 → 0
-        ctx.fillStyle = `rgba(255,255,255,${0.35 + 0.55 * Math.abs(Math.sin(k * Math.PI * 3))})`;
+        ctx.fillStyle = `rgba(255,255,255,${0.35 + 0.55 * Math.abs(Math.sin(k * Math.PI * CLEAR_FLASH_COUNT))})`;
         for (const r of clearing.rows) ctx.fillRect(0, r * CELL, VIEW_W, CELL);
     }
     // 硬降残影：起始位置的半透明方块矩阵，随时间渐隐
@@ -1083,7 +1077,7 @@ function draw() {
     if (running && stackTopRow() < DANGER_ROWS) {
         const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160); // 呼吸脉冲 0 → 1
         const a = 0.08 + pulse * 0.16;                               // 透明度随呼吸起伏
-        const edge = 42;                                             // 光带厚度（像素）
+        const edge = DANGER_EDGE_PX; // 光带厚度（像素）：四边向内渐隐红色光带的宽度（常量区单点定义）
         // 左右上下四条向内渐隐的红色光带
         let g = ctx.createLinearGradient(0, 0, edge, 0);
         g.addColorStop(0, `rgba(255,50,50,${a})`);
@@ -1149,7 +1143,7 @@ function togglePause() {
  * 全序列在库内 click 监听完成；游戏侧仅在 onChange 读按钮 data-* 写自家难度变量 */
 const difficultyCtl = Arcade.bindDifficultyButtons({
     bar: document.getElementById('difficultySelect'),
-    storageKey: DIFFICULTY_KEY,
+    storageKey: KEYS.DIFFICULTY,
     persist: 'index',
     lockedDuringPlay: () => running, // 对局进行中禁切难度（局中守卫统一收口）
     onChange: (btn) => {
@@ -1250,7 +1244,7 @@ function gameOver() {
     const isRecord = score > highScore;
     if (isRecord) {
         highScore = score;
-        Arcade.saveRaw('tetrisHighScore', String(highScore)); // 与全站其它游戏统一存字符串（存储不可用时静默，不中断结算面板）
+        Arcade.saveRaw(KEYS.HIGH_SCORE, String(highScore)); // 与全站其它游戏统一存字符串（存储不可用时静默，不中断结算面板）
         updateHud();
         SFX.newRecord();  // 破纪录音效
         FX.recordBurst(); // 破纪录全屏金色烟花（内置减弱动效降级）
@@ -1282,6 +1276,9 @@ function loop(t) {
                 clearing.timer -= dt;
                 if (clearing.timer <= 0) finishClear();
             } else {
+                // 空守卫与 keydown 同口径：正常流程 piece 恒存在（startGame / 快照恢复后 spawnPiece），
+                // 此处消除循环内隐式不变量，异常态直接返回（下一帧已由函数开头前置排程预约）
+                if (!piece) return;
                 const deltaMs = Math.min(t - lastTime, 50); // 毫秒，与特效 dt 同按 50ms 封顶：卡顿/切页回帧不会连移 DAS、连发软降或瞬间击穿锁延迟
                 dropCounter += deltaMs;
                 if (dropCounter > dropInterval) {
@@ -1499,8 +1496,6 @@ bindTouchRepeatButton('touchBtnDown', softDrop);           // 软降连发（键
 // 达到 target 即解锁 → 右上角 toast 堆叠提示 + 破纪录音效，史诗/传说追加金色烟花庆典；
 // 成就墙（#achWall）打开期间局面冻结：与手动暂停共用 paused 闸门（主循环 / DAS / 触屏连发
 // 全部以 paused 为闸门，逻辑与特效一并定格），由下方闭包标记记录冻结来源以便精准还原。
-/** localStorage 存档键：v2 结构 { unlocked: {id:时间戳}, best: {维度:最佳值} }（沿用旧键名，旧档自动迁移） */
-const ACH_KEY = 'arcade_ach_tetris';
 /** 历史最佳默认值：level 从 1 起步（等级基数），其余维度从 0 累计 */
 const BEST_DEFAULTS = { score: 0, lines: 0, level: 1, maxRows: 0 };
 /** 成就定义清单（8 条）：id 为存档标识——旧三条（lines40/tetris4/level5）id 原样保留，
@@ -1525,7 +1520,7 @@ let achFrozen = false;
 // onToggle 承载 tetris 特有开合副作用：开墙冻结局面并挂起 BGM，关墙按冻结来源精准还原
 Ach.init({
     defs: ACHIEVEMENTS,
-    storageKey: ACH_KEY,
+    storageKey: KEYS.ACH,
     bestDefaults: BEST_DEFAULTS,
     mount: { wall: achWall, grid: achGrid, count: achCountEl, total: achTotalEl, barFill: achBarFill, toasts: achToastStack },
     onToggle: (open) => {
@@ -1547,11 +1542,8 @@ Ach.init({
     }
 });
 
-// ---------- 进度镜像快照存档键 ----------
-/** 进度快照存档键（localStorage）：返回游戏厅 / 页面卸载 / 父页下发保存指令时写入，下次进入游戏页时恢复 */
-const SAVE_KEY = 'arcade_save_tetris';
-
-/* ---------- 进度镜像快照（存取骨架与触发接线收口于共享库 snap-common.js） ---------- */
+/* ---------- 进度镜像快照（存取骨架与触发接线收口于共享库 snap-common.js；
+ * 存档键已收敛至顶部 KEYS.SAVE 单点定义） ---------- */
 
 /**
  * 构建当前局纯数据快照：数组/数值/布尔，不含函数与 DOM 引用；
@@ -1579,7 +1571,7 @@ function buildTetrisSnapshot() {
 // lockPiece 开头提前落盘，窗口内关闭不丢档）与恢复管线（isValidSnapshot 校验失败 /
 // 组合碰撞冲突 / 抛错一律清档回退新开局）由 Snap.create 统一实现
 const snapPipe = Snap.create({
-    key: SAVE_KEY,
+    key: KEYS.SAVE,
     canSave: () => (running || paused) && !clearing,
     build: buildTetrisSnapshot,
     validate: isValidSnapshot,
@@ -1718,7 +1710,7 @@ window.addEventListener('resize', () => {
     FX.setupCanvas(canvas);
     FX.setupCanvas(nextCanvas);
     FX.setupCanvas(holdCanvas);
-    gridLayerDirty = true; // 主画布物理分辨率/DPR 已变：下一帧重建静态网格层
+    gridLayer.markDirty(); // 主画布物理分辨率/DPR 已变：下一帧重建静态网格层
 });
 
 // ---------- 初始化 ----------
@@ -1726,8 +1718,7 @@ window.addEventListener('resize', () => {
 // 难度恢复：页面加载时保持与上一次选择一致（默认中等，序号 2：无敌0/简单1/中等2/困难3）；
 // sync 为程序化恢复路径（高亮+onChange，不存档不发声），越界序号由 sync 内静默忽略
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 转 NaN），走默认难度
-let savedDifficultyIndex = NaN;
-savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10);
+const savedDifficultyIndex = parseInt(Arcade.loadRaw(KEYS.DIFFICULTY), 10);
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
         difficultyCtl.sync(savedDifficultyIndex);

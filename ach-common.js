@@ -51,6 +51,19 @@
         return Object.prototype.hasOwnProperty.call(obj, key);
     }
 
+    /** HTML 实体转义映射（escapeHtml 用）：覆盖拼入 innerHTML 时会改变结构的五个标记字符 */
+    const HTML_ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+    /**
+     * HTML 转义：成就定义表（icon/name/desc/rarity/cat 等）由各游戏维护，拼入
+     * toast 与成就墙卡片的 innerHTML 前统一转义，防止文本含标记字符时破坏 DOM 结构
+     * @param {string} s 原始文本
+     * @returns {string} 转义后的安全文本（非字符串输入先转字符串）
+     */
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (ch) => HTML_ENTITIES[ch]);
+    }
+
     /* ---------------------------- 存档装载 ---------------------------- */
 
     /**
@@ -182,9 +195,15 @@
 
     /* ---------------------------- 初始化入口 ---------------------------- */
 
+    /** 幂等守卫：init 是否已完成过一次（闭包级标志，口径对齐 fx.js playtime） */
+    let inited = false;
+    /** 首次 init 产出的实例 API：重复调用直接返回同一引用，保证调用方拿到的对象一致 */
+    let firstApi = null;
+
     /**
-     * 为当前游戏初始化成就系统（每页一实例；本函数无重复调用守卫——重复调用会重复装载存档
-     * 并重复注册监听，调用方须保证每页仅初始化一次）
+     * 为当前游戏初始化成就系统（每页一实例；内置幂等守卫——重复调用直接短路返回
+     * 首次的实例 API，不重复装载存档、不重复注册遮罩/键盘监听，杜绝 V 键多次
+     * toggle 等重复初始化副作用，调用方无需再自行保证仅初始化一次）
      * 完成后实例方法合并到 window.Ach，供外部脚本与无头测试直接调用。
      * @param {{
      *   defs: Array<{id: string, name: string, icon: string, desc: string, cat: string,
@@ -208,6 +227,7 @@
      *   实例 API（同时已合并到 window.Ach）
      */
     function init(opts) {
+        if (inited) return firstApi; // 幂等守卫：仅首次调用真正装载存档并注册监听
         if (!opts || !Array.isArray(opts.defs) || !opts.storageKey || !opts.bestDefaults ||
             !opts.mount || !opts.mount.wall) {
             throw new Error('Ach.init 参数缺失（defs/storageKey/bestDefaults/mount.wall 必传，其余节点由库内兜齐）');
@@ -240,9 +260,9 @@
             }
             const el = document.createElement('div');
             el.className = 'ach-toast rarity-' + meta.rarity;
-            el.innerHTML = '<span class="toast-icon">' + meta.icon + '</span>' +
+            el.innerHTML = '<span class="toast-icon">' + escapeHtml(meta.icon) + '</span>' +
                 '<div class="toast-body"><span class="toast-cap">成就解锁</span>' +
-                '<span class="toast-name">' + meta.name + '</span></div>';
+                '<span class="toast-name">' + escapeHtml(meta.name) + '</span></div>';
             stack.appendChild(el);
             el.addEventListener('animationend', (ev) => {
                 if (ev.animationName === 'toastCycle') el.remove();
@@ -264,8 +284,11 @@
             const meta = defs.find((a) => a.id === id);
             if (!meta) return false;
             showToast(meta);
-            (opts.sfx && opts.sfx.unlock ? opts.sfx.unlock : SFX.newRecord)(); // 复用破纪录号角（bee 等可经 sfx 钩子换音）
-            if (meta.rarity === 'epic' || meta.rarity === 'legendary') FX.recordBurst();
+            // 音效/特效软依赖：常规加载序下 audio.js/fx.js 先于业务 js 就绪，被单独环境
+            // （测试装置等）加载时可能不存在，typeof 防御跳过发声/烟花（与 arcade-common.js、fullscreen.js 同口径）
+            if (opts.sfx && opts.sfx.unlock) opts.sfx.unlock();
+            else if (typeof SFX !== 'undefined') SFX.newRecord(); // 复用破纪录号角（bee 等可经 sfx 钩子换音）
+            if ((meta.rarity === 'epic' || meta.rarity === 'legendary') && typeof FX !== 'undefined') FX.recordBurst();
             return true;
         }
 
@@ -309,21 +332,25 @@
                 const dateText = got ?
                     (ts ? '达成于 ' + new Date(ts).toLocaleDateString('zh-CN') : '已达成') :
                     a.cat + ' · 尚未达成';
-                html += '<div class="ach-card ' + (got ? 'unlocked rarity-' + a.rarity : 'locked') +
+                // 定义表文本字段（icon/name/desc/rarity/cat）经 escapeHtml 转义后再拼入 innerHTML：
+                // 字段由各游戏维护，防标记字符破坏卡片 DOM 结构（序号/进度等为代码计算值，无需转义）
+                const rarity = escapeHtml(a.rarity);
+                html += '<div class="ach-card ' + (got ? 'unlocked rarity-' + rarity : 'locked') +
                     '" style="--i:' + i + '">' +
-                    '<span class="ach-rarity-chip rarity-' + a.rarity + '">' + RARITY_LABEL[a.rarity] + '</span>' +
-                    '<div class="ach-icon"><span class="ach-emoji">' + a.icon + '</span>' +
+                    '<span class="ach-rarity-chip rarity-' + rarity + '">' + escapeHtml(RARITY_LABEL[a.rarity]) + '</span>' +
+                    '<div class="ach-icon"><span class="ach-emoji">' + escapeHtml(a.icon) + '</span>' +
                     (got ? '' : '<span class="ach-lock">🔒</span>') + '</div>' +
                     '<div class="ach-info">' +
-                    '<div class="ach-name">' + a.name + '</div>' +
-                    '<p class="ach-desc">' + a.desc + '</p>' +
+                    '<div class="ach-name">' + escapeHtml(a.name) + '</div>' +
+                    '<p class="ach-desc">' + escapeHtml(a.desc) + '</p>' +
                     '<div class="ach-prog"><div class="ach-prog-fill" style="width:' + pct + '%"></div></div>' +
-                    '<div class="ach-prog-meta"><span>' + (hasProg ? best + ' / ' + a.target : '事件达成') + '</span><span>' + dateText + '</span></div>' +
+                    '<div class="ach-prog-meta"><span>' + (hasProg ? best + ' / ' + a.target : '事件达成') + '</span><span>' + escapeHtml(dateText) + '</span></div>' +
                     '</div></div>';
             }
             opts.mount.grid.innerHTML = html;
             // 头部完成度：已解锁计数滚动补间 + 总数 + 总进度条
-            FX.tweenNumber(opts.mount.count, gotCount, COUNT_TWEEN_MS, (v) => String(Math.round(v)));
+            // FX 为软依赖（fx.js 未装载时跳过补间，总数/进度条直接落到终值不受影响）
+            if (typeof FX !== 'undefined') FX.tweenNumber(opts.mount.count, gotCount, COUNT_TWEEN_MS, (v) => String(Math.round(v)));
             opts.mount.total.textContent = String(defs.length);
             opts.mount.barFill.style.width = Math.round((gotCount / defs.length) * 100) + '%';
         }
@@ -344,7 +371,9 @@
             } else {
                 opts.mount.wall.hidden = true;
             }
-            (opts.sfx && opts.sfx.ui ? opts.sfx.ui : SFX.uiClick)();
+            // 开合音软依赖回退链：优先游戏钩子换音，否则全局 SFX（未装载时静默跳过）
+            if (opts.sfx && opts.sfx.ui) opts.sfx.ui();
+            else if (typeof SFX !== 'undefined') SFX.uiClick();
             if (typeof opts.onToggle === 'function') opts.onToggle(state.open);
         }
 
@@ -394,6 +423,8 @@
             renderWall: renderWall
         };
         Object.assign(window.Ach, api);
+        inited = true; // 置位幂等守卫并缓存实例 API（后续重复调用直接短路返回）
+        firstApi = api;
         return api;
     }
 

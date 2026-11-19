@@ -35,6 +35,18 @@
 
 /* ===================== 游戏常量 ===================== */
 
+/**
+ * localStorage 存档键集中定义（单点维护）：键名与游戏厅大厅及历史存档约定一致，
+ * 改名即弃档，勿随意变动；全部键名字面量仅在此处出现
+ */
+const KEYS = {
+    difficulty: 'beeDifficulty', // 上次选择的难度
+    highScore: 'beeHighScore', // 历史最高分
+    achievements: 'arcade_ach_bee', // 成就数据（与项目其余游戏统一 arcade_ach_* 前缀）
+    achievementsLegacy: 'beeAchievements', // 旧版成就键：读取时回退并一次性迁移到新键
+    save: 'arcade_save_bee' // 进度镜像快照（与游戏厅父页约定的命名）
+};
+
 /** 玩家飞船尺寸（像素） */
 const PLAYER_W = 34;
 /** 玩家飞船尺寸（像素） */
@@ -222,8 +234,8 @@ const DASH_COOLDOWN = 1.6;
 
 /* ===================== 难度系统 ===================== */
 
-/** localStorage 存档键：上次选择的难度 */
-const DIFFICULTY_KEY = 'beeDifficulty';
+/** localStorage 存档键：上次选择的难度（字面量统一收口于顶部 KEYS） */
+const DIFFICULTY_KEY = KEYS.difficulty;
 /**
  * 四档难度参数表：所有难度差异均以乘数/覆盖值在既有计算处应用，不复制逻辑
  * - lives：初始生命（无敌/简单 4 / 普通 3 / 困难 2，上限仍为 MAX_LIVES=5，为 1UP 道具留价值）
@@ -234,7 +246,8 @@ const DIFFICULTY_KEY = 'beeDifficulty';
  * - bossHp：Boss 血量乘数
  */
 const DIFFICULTIES = {
-    // 无敌档：完全免疫死亡（受击不掉命、蜂群触底不判负），游玩参数取 easy 最宽松值
+    // 无敌档：完全免疫死亡（受击不掉命、蜂群触底不判负）；游玩参数为 easy 当前值的
+    // 显式展开副本（两档数值此刻逐字一致，自此解耦），此后各自独立调整互不连带
     invincible: { name: '无敌', lives: 4, bullet: 0.85, fire: 0.7, swarm: 0.85, dive: 0.75, bossHp: 0.8 },
     easy: { name: '简单', lives: 4, bullet: 0.85, fire: 0.7, swarm: 0.85, dive: 0.75, bossHp: 0.8 },
     normal: { name: '普通', lives: 3, bullet: 1, fire: 1, swarm: 1, dive: 1, bossHp: 1 },
@@ -321,7 +334,7 @@ let bombFlashTimer = 0;
 let isNewRecord = false;
 /** 历史最高分（localStorage 持久化，键 beeHighScore）；|| 0 兜底脏数据，避免历史存储被污染成非数字时解析出 NaN */
 let highScore = 0;
-highScore = parseInt(Arcade.loadRaw('beeHighScore') || '0', 10) || 0; // 存储被禁时从 0 起算，不阻断页面初始化
+highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10) || 0; // 存储被禁时从 0 起算，不阻断页面初始化
 /** 当前连击数（COMBO_WINDOW 内连续击杀的次数） */
 let comboCount = 0;
 /** 连击窗口剩余时间（秒），归零则连击清零 */
@@ -419,10 +432,10 @@ const ACH_BEST_DEFAULTS = {
     totalKills: 0, // 跨局累计击落数
     totalBombs: 0  // 跨局累计炸弹使用数
 };
-/** 成就数据持久化键名（localStorage，与项目其余游戏统一 arcade_ach_* 前缀） */
-const ACHIEVEMENT_KEY = 'arcade_ach_bee';
-/** 旧版成就键名：早期未遵循 arcade_ach_* 约定，读取时回退此键并一次性迁移到新键，保留老玩家数据 */
-const ACHIEVEMENT_LEGACY_KEY = 'beeAchievements';
+/** 成就数据持久化键名（localStorage，与项目其余游戏统一 arcade_ach_* 前缀；字面量统一收口于顶部 KEYS） */
+const ACHIEVEMENT_KEY = KEYS.achievements;
+/** 旧版成就键名：早期未遵循 arcade_ach_* 约定，读取时回退此键并一次性迁移到新键，保留老玩家数据（字面量统一收口于顶部 KEYS） */
+const ACHIEVEMENT_LEGACY_KEY = KEYS.achievementsLegacy;
 
 /**
  * 成就存档自有迁移钩子：把读出的原始档归一为 v2 形状交共享层采用并落盘。
@@ -837,7 +850,7 @@ function endGame() {
         highScore = score;
         isNewRecord = true;
         // 隐私模式等存储不可用时静默跳过，本局结算仍正常显示新纪录
-        Arcade.saveRaw('beeHighScore', String(highScore));
+        Arcade.saveRaw(KEYS.highScore, String(highScore));
         highScoreElement.textContent = `HI ${highScore}`;
     }
     finalScoreElement.textContent = score;
@@ -2308,8 +2321,8 @@ function render() {
 
 /* ===================== 进度镜像快照 ===================== */
 
-/** 进度快照在 localStorage 中的存档键（与游戏厅父页约定的命名） */
-const SAVE_KEY = 'arcade_save_bee';
+/** 进度快照在 localStorage 中的存档键（与游戏厅父页约定的命名；字面量统一收口于顶部 KEYS） */
+const SAVE_KEY = KEYS.save;
 /** 快照恢复成功的暂停遮罩提示语后缀：随恢复态展示，续玩首帧清除 */
 let restoredNotice = '';
 

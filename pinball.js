@@ -126,6 +126,20 @@ const VIEW_BOTTOM = 640;
 /** 最远端透视缩放比例（远小近大的"小"） */
 const PERSP_MIN = 0.5;
 
+/**
+ * localStorage 存档键名集中定义（单点维护，避免键名魔法字符串散落多处）：
+ * - highScore：历史最高分（存储不可用兜底 0，经脏标记在结算/存档钩子时机落盘）
+ * - difficulty：难度选择序号（页面加载时恢复上一次选择）
+ * - save：进度快照（父页返回游戏厅 arcade:save 消息 / 关页时保存，游戏结束即清除）
+ * - ach：成就系统存档（沿用旧存档键名，老玩家成就与历史最佳无缝延续）
+ */
+const KEYS = {
+    highScore: 'pinballHighScore',
+    difficulty: 'pinballDifficulty',
+    save: 'arcade_save_pinball',
+    ach: 'arcade_ach_pinball'
+};
+
 /* ===================== 游戏状态 ===================== */
 
 /** 游戏状态机：start 开始画面 / ready 待发射 / play 进行中 / lost 失球演出 / over 结束 */
@@ -134,7 +148,7 @@ let state = 'start';
 let score = 0;
 /** 历史最高分（localStorage 持久化，键 pinballHighScore；存储不可用时兜底为 0） */
 let highScore = 0; // 存储不可用（隐私模式/禁用站点数据）时的兜底默认值
-highScore = parseInt(Arcade.loadRaw('pinballHighScore') || '0', 10); // 存储不可用：静默保持兜底 0，不中断初始化
+highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10); // 存储不可用：静默保持兜底 0，不中断初始化
 /** 最高分脏标记：破纪录时置位，由结算/既有存档钩子统一落盘（避免物理碰撞热路径每次得分同步写 localStorage） */
 let highScoreDirty = false;
 /** 剩余球数（含当前在场） */
@@ -147,10 +161,6 @@ let gravity = 780;
 let flipperLen = 74;
 /** 是否无敌模式（仅无敌档为 true）：球离出台面不丢球、不减球数，新球回到初始位置以随机斜向角度自动落下继续 */
 let invincibleMode = false;
-/** 难度选择存档键（localStorage），页面加载时恢复上一次选择 */
-const DIFFICULTY_KEY = 'pinballDifficulty';
-/** 进度快照存档键（localStorage）：父页返回游戏厅（arcade:save 消息）/ 关页时保存当前局进度，游戏结束即清除 */
-const SAVE_KEY = 'arcade_save_pinball';
 /** 本局是否刷新了历史最高分（结算面板据此显示"新纪录"提示） */
 let isNewRecord = false;
 /** 是否处于暂停状态 */
@@ -215,13 +225,13 @@ function spawnSparks(px, py, color, count, speed = 190) {
  * @param {number} dt 帧时间步长（秒）
  */
 function updateSparks(dt) {
-    for (let i = 0; i < sparkPool.n; i++) {
-        const p = sparkPool.items[i];
+    // 经 FX.Pool.each 公共接口正序遍历活跃区（回调内不触碰 obtain/sweep/clear，活跃区不受扰动）
+    sparkPool.each(p => {
         p.life -= dt;
         p.vy += SPARK_GRAVITY * dt;
         p.x += p.vx * dt;
         p.y += p.vy * dt;
-    }
+    });
     sparkPool.sweep();
 }
 /** 上一帧时间戳（毫秒，rAF 传入） */
@@ -549,11 +559,12 @@ function collideTargets(b) {
 /**
  * 球与挡板碰撞（按胶囊体近似：轴到尖端的线段 + 半厚）：
  * 碰撞点处的挡板表面线速度 = 角速度 × 距轴比例 × 长度，
- * 以相对速度计算反弹，实现"拍击把球打出去"的力度传递
- * @param {number} dt 本次物理子步的时间步长（秒），用于求挡板角速度
+ * 以相对速度计算反弹，实现"拍击把球打出去"的力度传递；
+ * 角速度分母固定用 FIXED_DT 而非子步步长——f.prev 每个固定步才更新一次，
+ * 高速球拆多子步时若按子步步长差分，拍击反弹力度会被子步数放大
  * @param {{x:number,y:number,vx:number,vy:number,trail:Array}} b 待碰撞检测的弹球对象
  */
-function collideFlippers(dt, b) {
+function collideFlippers(b) {
     for (const f of flippers) {
         const tip = flipperTip(f);
         const dx = tip.x - f.ax, dy = tip.y - f.ay;
@@ -568,8 +579,9 @@ function collideFlippers(dt, b) {
         if (dist === 0) { nx = 0; ny = -1; } else { nx /= dist; ny /= dist; }
         b.x = cx + nx * minD;
         b.y = cy + ny * minD;
-        // 挡板表面线速度：对碰撞点位置关于角度求导 × 角速度（side 处理右挡板镜像）
-        const omega = (f.angle - f.prev) / dt;
+        // 挡板表面线速度：对碰撞点位置关于角度求导 × 角速度（side 处理右挡板镜像）；
+        // 分母用固定步长（f.prev 每固定步更新一次，子步步长会按子步数放大角速度）
+        const omega = (f.angle - f.prev) / FIXED_DT;
         const ratio = t; // 碰撞点距轴比例（轴 0 → 尖端 1）
         const svx = -Math.sin(f.angle) * f.side * omega * f.len * ratio;
         const svy = Math.cos(f.angle) * omega * f.len * ratio;
@@ -611,7 +623,7 @@ function stepBall(dt, b) {
     collideWalls(b);
     collideBumpers(b);
     collideTargets(b);
-    collideFlippers(dt, b);
+    collideFlippers(b);
 }
 
 /**
@@ -619,7 +631,8 @@ function stepBall(dt, b) {
  * 各球按自身球速把 dt 拆成若干子步（每步位移 ≤ SUBSTEP_LEN）高速细化防穿墙；
  * 倒序遍历便于失球时移除——无敌档换新球从初始位置自动落下继续，
  * 普通档仅移除丢失的球（多球期间其余球得分照常），场上无球才进入失球演出；
- * 无敌档另带兜底检测，球经侧缝逃出或坐标非法时同样换新球继续
+ * 坐标非法（NaN/Infinity）的球所有难度统一回置安全点防永久滞留；
+ * 无敌档另带兜底检测，球经侧缝逃出台面（坐标合法但越界）时同样换新球继续
  * @param {number} dt 帧时间步长（秒）
  */
 function updatePhysics(dt) {
@@ -638,11 +651,14 @@ function updatePhysics(dt) {
             }
             continue; // 该球已离场（移除或重生），继续处理下一颗
         }
-        // 无敌档兜底：球经侧缝逃出台面或坐标非法（未被触底判定捕获）时，
-        // 同样初始化新球落回初始位置，保证游戏永不中断（updatePhysics 仅在 play 状态被调用）
-        if (invincibleMode) {
-            const gone = !Number.isFinite(b.x) || !Number.isFinite(b.y) ||
-                b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2 ||
+        // 坐标非法兜底（所有难度）：NaN/Infinity 的球永远不满足落底判定，普通档会
+        // 永久滞留场上无法收局，统一回置安全点续玩（观感与无敌档 respawnBall 一致）
+        if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) {
+            respawnBall(b);
+        } else if (invincibleMode) {
+            // 无敌档兜底：球经侧缝逃出台面（坐标合法但越界，未被触底判定捕获）时，
+            // 同样初始化新球落回初始位置，保证游戏永不中断（updatePhysics 仅在 play 状态被调用）
+            const gone = b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2 ||
                 b.y < -WORLD_H;
             if (gone) respawnBall(b);
         }
@@ -746,6 +762,21 @@ function updateTimers(dt) {
 /* ===================== 计分与流程控制 ===================== */
 
 /**
+ * 得分 DOM 弹跳动画：放大回弹强化"涨分"瞬间反馈（WAAPI 播完自动清理）。
+ * 独立成函数使 addScore 计分热路径保持纯计分逻辑，视觉演出关注点单点收口
+ */
+function showScorePop() {
+    scoreElement.animate(
+        [
+            { transform: 'scale(1)' },
+            { transform: 'scale(1.18)' },
+            { transform: 'scale(1)' }
+        ],
+        { duration: 160, easing: 'ease-out' }
+    );
+}
+
+/**
  * 加分入口（连击倍率乘算关口）：先按连击规则累进倍率（窗口内每满 COMBO_STEP 次得分升一级），
  * 再以 原始分（已含难度倍率）× 连击倍率 计入总分并刷新侧栏显示，破纪录仅更新内存并置脏标记
  * （由 flushHighScore 在结算/存档钩子时机统一落盘，避免碰撞热路径每次得分都同步写 localStorage）；
@@ -772,15 +803,7 @@ function addScore(pts, wx, wy) {
     score += total;
     Ach.trackRunStat('score', score); // 成就上报：单局得分（addScore 为全部得分唯一入口，达标解锁 score 系成就）
     FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡（128ms 快速插值）
-    // 得分 DOM 弹跳：放大回弹强化"涨分"瞬间反馈（WAAPI 播完自动清理）
-    scoreElement.animate(
-        [
-            { transform: 'scale(1)' },
-            { transform: 'scale(1.18)' },
-            { transform: 'scale(1)' }
-        ],
-        { duration: 160, easing: 'ease-out' }
-    );
+    showScorePop(); // 得分 DOM 弹跳反馈（视觉演出单点收口）
     if (score > highScore) {
         // 破纪录沿检测：仅在首次超越历史最高分的瞬间触发一次专属音效与庆祝特效
         const wasRecord = isNewRecord;
@@ -805,7 +828,7 @@ function addScore(pts, wx, wy) {
 function flushHighScore() {
     if (!highScoreDirty) return; // 无新增破纪录：幂等返回，零 IO
     try {
-        Arcade.saveRaw('pinballHighScore', String(highScore));
+        Arcade.saveRaw(KEYS.highScore, String(highScore));
         highScoreDirty = false; // 写入成功才清脏标记，失败则保留待下次重试
     } catch (err) {
         // 存储不可用：静默忽略（与 saveSnapshot 同口径，不影响游戏）
@@ -975,7 +998,7 @@ function launch(power = 0.35) {
  * 读取重力 / 挡板长度 / 计分倍率 / 无敌标记，立即重建挡板长度与侧栏倍率显示 */
 const diffCtl = Arcade.bindDifficultyButtons({
     bar: document,
-    storageKey: DIFFICULTY_KEY,
+    storageKey: KEYS.difficulty,
     persist: 'index',
     lockedDuringPlay: () => state === 'play' || state === 'ready', // 对局进行中禁切难度（局中守卫统一收口）
     onChange(btn) {
@@ -1107,7 +1130,7 @@ function buildPinballSnapshot() {
 //（两个存档钩子 arcade:save / pagehide 都会先 flush 再按状态分流）。
 // 组装意外与存储异常（隐私模式 / 配额满）由管线整体 try/catch 静默，不影响游戏
 const snapPipe = Snap.create({
-    key: SAVE_KEY,
+    key: KEYS.save,
     canSave: () => {
         flushHighScore(); // 存档钩子时机统一落盘脏最高分，避免中途刷新丢纪录（clear 路径亦保持原顺序）
         return state === 'play' || state === 'ready';
@@ -1240,7 +1263,7 @@ function restoreSnapshot() {
 // 成就墙与解锁 toast 的渲染全部由共享引擎负责；游戏侧仅保留 Ach.isOpen() 主循环闸门
 Ach.init({
     defs: ACHIEVEMENTS,
-    storageKey: 'arcade_ach_pinball', // 沿用旧存档键名，老玩家成就与历史最佳无缝延续
+    storageKey: KEYS.ach, // 沿用旧存档键名，老玩家成就与历史最佳无缝延续
     bestDefaults: BEST_DEFAULTS,
     mount: {
         wall: achWall,
@@ -1732,15 +1755,15 @@ function draw(now) {
         ctx.stroke();
         ctx.globalAlpha = 1;
     }
-    // 命中火花（世界坐标）：绘制在震动偏移复位之前，跟随台面抖动（池活跃区遍历）
-    for (let i = 0; i < sparkPool.n; i++) {
-        const p = sparkPool.items[i];
+    // 命中火花（世界坐标）：绘制在震动偏移复位之前，跟随台面抖动
+    // （经 FX.Pool.each 公共接口正序遍历活跃区，回调内仅读取绘制，不改活跃区）
+    sparkPool.each(p => {
         const sp = project(p.x, p.y);
         ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
         ctx.fillStyle = p.color;
         const s = p.size * sp.s;
         ctx.fillRect(sp.x - s / 2, sp.y - s / 2, s, s);
-    }
+    });
     ctx.globalAlpha = 1;
     if (shook) ctx.setTransform(viewDpr, 0, 0, viewDpr, 0, 0); // 复位震动偏移（按 DPR 恢复预缩放变换），警报/文字层不跟随抖动
     if (state === 'lost') drawLoseFx();
@@ -1896,6 +1919,27 @@ function loop(t) {
 }
 
 /**
+ * 蓄力开始（键盘空格与触屏拉杆区共用实现）：仅 ready 且未暂停且未蓄力时置位，
+ * 置位同时清零蓄力进度并重置充电音节流时间戳（首声立即播放）；守卫不满足时静默忽略
+ */
+function beginCharge() {
+    if (state !== 'ready' || isPaused || charging) return;
+    charging = true;
+    charge = 0;
+    lastChargeSfx = 0; // 新一轮蓄力：重置充电音节流时间戳，首声立即播放
+}
+
+/**
+ * 蓄力释放发射（键盘空格与触屏拉杆区共用实现）：按当前蓄力力度发射并复位蓄力状态；
+ * 守卫不满足（成就墙打开 / 非 ready / 暂停中 / 未蓄力）时仅复位蓄力标记不发射
+ */
+function releaseLaunch() {
+    if (charging && state === 'ready' && !isPaused && !Ach.isOpen()) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
+    charging = false;
+    charge = 0;
+}
+
+/**
  * 全局键盘控制：
  * ← / A 拍左挡板，→ / D 拍右挡板（keydown 按下 / keyup 松开）；
  * 空格在 ready 状态按住蓄力、松开发射（力度决定初速），play 状态切换暂停；
@@ -1925,11 +1969,7 @@ document.addEventListener('keydown', (event) => {
             event.preventDefault();
             if (state === 'ready' && !isPaused) {
                 // 按住空格开始蓄力（!event.repeat 防长按重复触发），松开后由 keyup 发射
-                if (!event.repeat && !charging) {
-                    charging = true;
-                    charge = 0;
-                    lastChargeSfx = 0; // 新一轮蓄力：重置充电音节流时间戳，首声立即播放
-                }
+                if (!event.repeat) beginCharge();
             } else if (state === 'play') {
                 if (!event.repeat) togglePause(); // 防长按连发：系统按键重复率下反复切换暂停
             }
@@ -1956,9 +1996,7 @@ document.addEventListener('keyup', (event) => {
             break;
         case 'Space':
             // 松开空格：按蓄力力度发射（未蓄力或非 ready 状态仅复位蓄力标记）
-            if (charging && state === 'ready' && !isPaused && !Ach.isOpen()) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
-            charging = false;
-            charge = 0;
+            releaseLaunch();
             break;
     }
 });
@@ -2030,10 +2068,7 @@ function handleZoneDown(event) {
         SFX.pan(0.5); // 右挡板：右声道拍击音
         SFX.pinFlip();
     } else {
-        // 与空格 keydown 分支一致：按住蓄力、松手发射；!charging 守卫保证重复起手不重置蓄力进度
-        charging = true;
-        charge = 0;
-        lastChargeSfx = 0; // 新一轮蓄力：重置充电音节流时间戳，首声立即播放
+        beginCharge(); // 与空格 keydown 分支共用：按住蓄力（守卫同款，重复起手不重置蓄力进度）
     }
 }
 
@@ -2051,10 +2086,7 @@ function handleZoneUp(event) {
     } else if (zone === 'right') {
         if (!zoneHeld('right')) flippers[1].pressed = false;
     } else {
-        // 与空格 keyup 分支一致：按蓄力力度发射，守卫不满足则仅复位蓄力标记
-        if (charging && state === 'ready' && !isPaused && !Ach.isOpen()) launch(charge); // 成就墙打开时不发射（开墙瞬间的残留蓄力在此兜底失效）
-        charging = false;
-        charge = 0;
+        releaseLaunch(); // 与空格 keyup 分支共用：按蓄力力度发射，守卫不满足则仅复位蓄力标记
     }
 }
 
@@ -2095,7 +2127,7 @@ Snap.bindFocusLoss(handleFocusLoss);
 // sync 程序化选择不存档不发声、越界序号静默忽略，onChange 内含
 // rebuildFlippers 重建挡板与侧栏倍率刷新，加载时机安全
 let savedDifficultyIndex = NaN; // 存储不可用（隐私模式/禁用站点数据）时兜底 NaN，按默认难度处理
-savedDifficultyIndex = parseInt(Arcade.loadRaw(DIFFICULTY_KEY), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
+savedDifficultyIndex = parseInt(Arcade.loadRaw(KEYS.difficulty), 10); // 存储不可用：静默保持兜底 NaN，不中断初始化
 if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
     try {
         diffCtl.sync(savedDifficultyIndex);
