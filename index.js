@@ -55,8 +55,8 @@ const KEYS = {
     // 游玩时长键前缀：拼游戏 id 组成实际存储键（arcade_playtime_<游戏id>）
     PLAYTIME_PREFIX: 'arcade_playtime_'
 };
-// 全站重置按前缀整族清除的键：成就存档/进行中快照/每日挑战/游玩时长（复用上方前缀单点）/华容道最高分/华容道评级
-KEYS.RESET_PREFIXES = ['arcade_ach_', 'arcade_save_', 'arcade_daily_', KEYS.PLAYTIME_PREFIX, 'klotskiBest_', 'klotskiRank_'];
+// 全站重置按前缀整族清除的键：成就存档/进行中快照/每日挑战/游玩时长（复用上方前缀单点）/华容道最高分/华容道评级/华容道每日一题（klotskiDaily_<日期>，带日期后缀故须前缀清除）
+KEYS.RESET_PREFIXES = ['arcade_ach_', 'arcade_save_', 'arcade_daily_', KEYS.PLAYTIME_PREFIX, 'klotskiBest_', 'klotskiRank_', 'klotskiDaily_'];
 
 // ---------- 卡片最高分与「上次游玩」：读取各游戏写入的 localStorage 记录 ----------
 // 各游戏最高分键与语义方向（与游戏页内读写代码严格一致）：
@@ -236,7 +236,7 @@ const GAMES = [
     { id: 'pac', best: BEST_DEFS[2], ach: ACH_DEFS[2], playtime: true, resetKeys: ['pacDotsTotal'] },
     { id: 'bee', best: BEST_DEFS[3], ach: ACH_DEFS[3], playtime: true, resetKeys: ['beeAchievements'] },
     { id: 'pinball', best: BEST_DEFS[4], ach: ACH_DEFS[4], playtime: true, resetKeys: [] },
-    { id: 'klotski', best: BEST_DEFS[5], ach: ACH_DEFS[5], playtime: true, resetKeys: ['klotskiDaily', 'klotskiProgress'] },
+    { id: 'klotski', best: BEST_DEFS[5], ach: ACH_DEFS[5], playtime: true, resetKeys: ['klotskiProgress'] }, // 每日一题带日期后缀，由 RESET_PREFIXES 的 klotskiDaily_ 前缀族清除；此处仅清旧版内部进度散键
     { id: '1024', best: BEST_DEFS[6], ach: ACH_DEFS[6], playtime: true, resetKeys: [] }
 ];
 
@@ -885,7 +885,7 @@ document.addEventListener('keydown', e => {
         if (!lobbyFx.active) { acc = 0; last = t; requestAnimationFrame(tick); return; }
         acc += t - last;
         last = t;
-        if (acc > 150) { acc = 0; idx = (idx + 1) % path.length; }
+        if (acc > 150) { acc -= 150; idx = (idx + 1) % path.length; }
         ctx.clearRect(0, 0, 160, 160);
         // 闪烁的食物（放在环形路径内部）
         ctx.globalAlpha = 0.55 + 0.45 * Math.sin(t / 200);
@@ -985,7 +985,7 @@ document.addEventListener('keydown', e => {
         const item = seq[si];
         const land = landingY(item);
         if (acc > 80) {
-            acc = 0;
+            acc -= 80; // 保留余数推进，避免高刷屏下按帧重置导致的节奏漂移
             if (py < land) {
                 py++;
             } else {
@@ -1098,7 +1098,8 @@ document.addEventListener('keydown', e => {
         if (REDUCED_MOTION && t !== 0) return;
         // 游戏覆盖层打开期间跳过绘制仅保留调度，重置计时基准避免恢复时跳帧
         if (!lobbyFx.active) { last = t; requestAnimationFrame(tick); return; }
-        const dt = t - last;
+        // dt 限幅：切后台回来单帧间隔可能极大，钳制防止吃豆人瞬移跳变
+        const dt = Math.min(t - last, 50);
         last = t;
         px += dt * 0.045;
         if (px > 200) {
@@ -1859,10 +1860,11 @@ document.addEventListener('keydown', e => {
         if (!sfx) return;
         // 未投币（机台未通电）时悬停/点击不出声，投币点亮后恢复音效反馈
         card.addEventListener('mouseenter', () => {
-            if (!document.body.classList.contains('pre-coin')) sfx.hover();
+            // typeof 守卫：音效方法缺失时静默跳过，防止卡片交互抛 TypeError
+            if (!document.body.classList.contains('pre-coin') && typeof sfx.hover === 'function') sfx.hover();
         });
         card.addEventListener('click', () => {
-            if (!document.body.classList.contains('pre-coin')) sfx.click();
+            if (!document.body.classList.contains('pre-coin') && typeof sfx.click === 'function') sfx.click();
         });
     });
 })();

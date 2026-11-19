@@ -279,10 +279,10 @@
          */
         function unlock(id) {
             if (hasOwn(store.unlocked, id)) return false;
+            const meta = defs.find((a) => a.id === id);
+            if (!meta) return false; // 先查定义表再落盘：脏成就 ID 直接拒绝，防误写存档永久驻留（并污染 klotski 结算统计）
             store.unlocked[id] = Date.now();
             saveStore();
-            const meta = defs.find((a) => a.id === id);
-            if (!meta) return false;
             showToast(meta);
             // 音效/特效软依赖：常规加载序下 audio.js/fx.js 先于业务 js 就绪，被单独环境
             // （测试装置等）加载时可能不存在，typeof 防御跳过发声/烟花（与 arcade-common.js、fullscreen.js 同口径）
@@ -300,6 +300,11 @@
          * @param {number} value 本局当前值
          */
         function trackRunStat(stat, value) {
+            // 未注册键（与 bestDefaults 失步的调用方错误）告警跳过：不写脏键入档，也避免静默失效难排查
+            if (!hasOwn(store.best, stat)) {
+                console.warn('[Ach] trackRunStat 未注册统计项：' + stat);
+                return;
+            }
             if (!(value > store.best[stat])) return;
             store.best[stat] = value;
             saveStore();
@@ -395,6 +400,11 @@
 
         // V 开 / Esc 关（与原各游戏分支语义一致：Esc 仅在墙打开时拦截，不影响其它 Esc 用途）
         window.addEventListener('keydown', (ev) => {
+            // 修饰键组合（Ctrl/Cmd/Alt+V 粘贴等系统快捷键）与输入框焦点不占用 V 键，防止误开墙并吞字符
+            const t = ev.target;
+            const inInput = (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) ||
+                !!(t && t.isContentEditable);
+            if (ev.ctrlKey || ev.metaKey || ev.altKey || inInput) return;
             const isV = ev.code === 'KeyV' || ev.key === 'v' || ev.key === 'V';
             if (isV) {
                 if (ev.repeat) return; // 防长按连发：系统按键重复率下反复切换成就墙开合

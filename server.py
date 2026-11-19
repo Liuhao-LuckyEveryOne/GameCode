@@ -25,19 +25,21 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 
 
 class DualStackServer(ThreadingHTTPServer):
-    """IPv6 双栈服务器：单端口同时接受 IPv6（::1）与 IPv4（127.0.0.1）连接。
+    """IPv6 环回服务器：绑定 ::1（仅本机回环），服务 localhost 的 IPv6 访问。
 
     Windows 下浏览器把 localhost 优先解析为 ::1，纯 IPv4 绑定会导致
-    http://localhost:8765 主文档加载被拒（net::ERR_ABORTED）；改用 AF_INET6
-    并关闭 IPV6_V6ONLY 后，::1 与 IPv4 映射地址（::ffff:127.0.0.1）均由此
-    同一 socket 服务，localhost / 127.0.0.1 两种访问方式全部可达。
+    http://localhost:8765 主文档加载被拒（net::ERR_ABORTED）；故优先走
+    AF_INET6 环回。仅绑定回环地址，开发服务不暴露到局域网/公网接口
+    （旧版双栈通配 :: + 关闭 IPV6_V6ONLY 会同时监听外网接口，已弃用）；
+    无 IPv6 栈的环境由 __main__ 回退 ThreadingHTTPServer(("127.0.0.1", PORT))，
+    回退路径下 127.0.0.1 与 localhost 均可访问。
     """
 
     address_family = socket.AF_INET6
 
     def server_bind(self):
-        # 关闭 v6-only：允许 IPv4 连接以 ::ffff:x.x.x.x 映射形式进入同一端口；
-        # 极少数系统不支持该选项时忽略，保持平台默认行为（至少 IPv6 仍可用）
+        # 关闭 v6-only 尽量保留 IPv4 映射兼容（实际仅 ::1 被监听，IPv4 直连
+        # 在本路径不可达；极少数系统不支持该选项时忽略，至少 IPv6 环回可用）
         try:
             self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
         except OSError:
@@ -71,16 +73,17 @@ if __name__ == "__main__":
     # 起服前先跑一遍静态一致性检查（十五项，检查项明细见 tests/check.py 头部说明）
     run_startup_check()
     # ThreadingHTTPServer 系：多线程并发响应页面/脚本/图片等并行请求；
-    # 双栈绑定空主机名（'' = :: 全接口）优先，无 IPv6 栈的环境回退纯 IPv4 全接口
+    # 两条绑定路径均仅监听本机回环（::1 / 127.0.0.1），开发服务不暴露到局域网/公网
     try:
-        server = DualStackServer(("", PORT), NoCacheHandler)
+        server = DualStackServer(("::1", PORT), NoCacheHandler)
     except OSError as e:
         # 端口被占用（如重复起服）时双栈与 IPv4 回退都绑不上，直接给友好提示退出而非裸抛堆栈
         if e.errno == errno.EADDRINUSE:
             print(f"启动失败：端口 {PORT} 已被占用——可能有另一个街机厅服务器正在运行，请先关闭它或更换 PORT")
             raise SystemExit(1) from e
-        server = ThreadingHTTPServer(("0.0.0.0", PORT), NoCacheHandler)
-    print(f"街机厅开发服务器运行中：http://localhost:{PORT}/index.html （禁缓存模式）")
+        # 无 IPv6 栈等场景回退纯 IPv4 环回
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), NoCacheHandler)
+    print(f"街机厅开发服务器运行中：http://localhost:{PORT}/index.html （禁缓存模式，仅本机可访问）")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

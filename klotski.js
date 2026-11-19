@@ -84,7 +84,7 @@ const SHAKE_TIME = 0.18;
 const KEYS = {
     layout: 'klotskiLayout', // 布局选择，页面加载时恢复上一次选择
     daily: 'klotskiDaily', // 每日一题前缀：完整键 = daily + '_' + 当日日期，存当日完成步数
-    save: 'arcade_save_klotski', // 进度快照（与其它街机游戏同一契约）：保存布局/难度/棋子位置/步数
+    save: 'arcade_save_klotski', // 进度快照（与其它街机游戏同一契约）：保存布局/难度/棋子位置/步数/已用时
     difficulty: 'klotskiDifficulty', // 难度选择，页面加载时恢复上一次选择
     bestPrefix: 'klotskiBest_', // 最少步纪录前缀：完整键 = bestPrefix + 难度id + '_' + 布局id（旧版无难度段）
     rankPrefix: 'klotskiRank_' // 最佳评级前缀：完整键 = rankPrefix + 难度id + '_' + 布局id
@@ -616,6 +616,8 @@ function startSlideAnim(p, fx = p.x, fy = p.y) {
  * 撤销上一次滑动（仅进行中可用；大师难度禁用）：弹出撤销栈反向回移并回退步数
  */
 function undoMove() {
+    if (demoActive) return; // 演示进行中不撤销：侧栏按钮直调绕过了键盘守卫，放行会打断自动走子并弄乱步数（键盘 U 已在键位守卫屏蔽）
+    if (drag) return; // 拖拽未松手不撤销：撤销回移与拖拽位移基准脱节会产生逻辑重叠并被自动存档固化（同方向键守卫口径）
     if (state !== 'playing' || isPaused || undoStack.length === 0) {
         SFX.klBlock();
         return;
@@ -1016,8 +1018,8 @@ function loadLayout(index) {
     bestMoves = readBest(layout.id, currentDiffId()); // 纪录按 难度+布局 分键读取
     bestRank = readRank(layout.id, currentDiffId()); // 最佳评级按 难度+布局 分键读取
     // BFS 求解初始布局的最优步数作为评级基准（异步执行不阻塞开局渲染，
-    // 回调校验局代次——换局/重开后旧结果作废）；取长度后即弃解路径缓存，
-    // 避免玩家未按 H 时残留"初始局面解"导致后续提示跳步
+    // 回调校验局代次——换局/重开后旧结果作废）；解路径缓存保留在缓存表中，
+    // 分发一律为副本（requestSolve 约定），评级基准与后续提示/演示零延迟复用
     optimalMoves = 0; // 异步求解就绪前的兜底（0 = 未知，此间通关评级按 C）
     const gen = ++solveGen; // 捕获本局代次：回调时已换局则丢弃
     requestSolve(encodeBoard(), path => {
@@ -1047,7 +1049,8 @@ function buildKlotskiSnapshot() {
         layout: LAYOUTS[layoutIndex].id, // 布局标识：恢复时据此切到对应布局
         diff: currentDiffId(), // 难度标识：辅助规则不同，存档与难度绑定
         pieces: pieces.map(p => [p.x, p.y]), // 全部棋子当前位置（按布局棋子表顺序对应）
-        moves: moves // 当前步数
+        moves: moves, // 当前步数
+        elapsed: elapsed // 本局已用时：续玩接续计时，防止分段游玩把长局刷成"5 分钟内通关"
     };
 }
 
@@ -1081,7 +1084,7 @@ function clearSnapshot() {
 /**
  * 校验进度快照逐字段（键 arcade_save_klotski）：版本号 / 布局与难度标识可解析 /
  * 棋子数量与该布局棋子表一致 / 各棋子整数坐标且在棋盘界内 / 所有棋子两两互不重叠 /
- * 步数为非负整数。返回布尔风格：任一校验不通过返回 false，
+ * 步数为非负整数 / 用时（可选字段，旧版快照兼容）为非负有限数。返回布尔风格：任一校验不通过返回 false，
  * 由快照管线（snap-common.js）统一清除快照并回退默认新开局流程，绝不因脏数据抛错。
  * @param {object} snap 待校验的快照对象（Arcade.loadJSON 产出，可能为任意脏数据）
  * @returns {boolean} 校验全部通过返回 true；任一不通过返回 false
@@ -1119,6 +1122,8 @@ function validateKlotskiSnapshot(snap) {
     }
     // 步数：非负整数
     if (!Number.isInteger(snap.moves) || snap.moves < 0) return false;
+    // 用时：可选字段（旧版快照无此键，兼容按 0 起算），携带时必须为非负有限数
+    if (snap.elapsed !== undefined && (!Number.isFinite(snap.elapsed) || snap.elapsed < 0)) return false;
     return true;
 }
 
@@ -1156,6 +1161,9 @@ function applyKlotskiSnapshot(snap) {
         pieces[i].y = snap.pieces[i][1];
     }
     moves = snap.moves;
+    // 恢复本局已用时（旧版快照无此键按 0 起算）：计时接续而非归零，堵住
+    // "分段游玩把长局刷成 5 分钟内通关"的成就漏洞
+    elapsed = Number.isFinite(snap.elapsed) && snap.elapsed >= 0 ? snap.elapsed : 0;
     undoStack.length = 0;
     invalidateHint(); // 恢复的棋面与任何旧缓存无关：提示展示与解路径缓存作废
     // 按恢复后的棋面重新求解最优步数作为评级基准（loadLayout 请求的是初始棋面的解，
@@ -1473,7 +1481,7 @@ function ensureSolver() {
  */
 function requestSolve(start, cb) {
     const cached = solveCache.get(start);
-    if (cached) { cb(cached); return; } // 缓存命中：同步回调，不产生任何求解开销
+    if (cached) { cb(cached.slice()); return; } // 缓存命中：同步回调分发副本（提示/演示会 shift 消费，缓存本体绝不外借引用）
     const waiting = inflightSolves.get(start);
     if (waiting) { waiting.push(cb); return; } // 在途合并：挂入队列共享既有的那次求解
     const w = ensureSolver();
@@ -1484,7 +1492,7 @@ function requestSolve(start, cb) {
         const queue = inflightSolves.get(start); // 取出全部等待方后群发同一份结果
         inflightSolves.delete(start);
         if (path && solveCache.size < SOLVE_CACHE_LIMIT) solveCache.set(start, path);
-        for (const fn of queue) fn(path);
+        for (const fn of queue) fn(path ? path.slice() : null); // 群发副本：各等待方（评级/提示/演示）各持独立引用，shift 互不影响且不改写缓存
     });
     w.postMessage({ type: 'solve', id, start });
 }
@@ -1928,8 +1936,9 @@ function updateEffects(dt) {
         }
     }
     // 用时累计（仅进行中且未暂停且成就墙未打开；rAF 后台暂停 + dt 封顶 + isPaused 门控，
-    // 手动暂停/失焦暂停/切后台/看成就墙均不会虚增用时——回合制的计时同样要求公平）
-    if (state === 'playing' && !isPaused && !Ach.isOpen()) {
+    // 手动暂停/失焦暂停/切后台/看成就墙均不会虚增用时——回合制的计时同样要求公平；
+    // 演示观演同样不计入：中断续玩从接管时刻起算，演示通关面板只显示非玩家成绩的零用时）
+    if (state === 'playing' && !isPaused && !demoActive && !Ach.isOpen()) {
         elapsed += dt;
         const sec = Math.floor(elapsed);
         if (sec !== lastShownSec) {
@@ -3306,6 +3315,86 @@ window.__ARCADE_TESTS__ = [
             }
             if (caoCount !== 1) throw new Error(layout.id + ' 曹操数量非 1');
         }
+    } },
+    // 快照校验 elapsed 字段（⑤修复回归）：合法数值放行、旧版缺字段兼容、负数/非有限数/非数值类型拒绝
+    { name: '快照校验 elapsed 字段', fn: () => {
+        const old = pieces;
+        const oldLi = layoutIndex;
+        pieces = LAYOUTS[0].pieces.map((p) => ({ n: p.n, t: p.t, x: p.x, y: p.y, w: p.w, h: p.h }));
+        layoutIndex = 0; // build 的 layout 字段取自运行态索引，须与棋子同布局，否则校验按错表被拒
+        try {
+            const base = buildKlotskiSnapshot();
+            if (!validateKlotskiSnapshot(base)) throw new Error('基线快照被拒');
+            const mk = (e) => Object.assign({}, base, { elapsed: e });
+            // undefined：字段整体缺失的旧版快照（assign 后值为 undefined），必须兼容
+            for (const good of [0, 123.45, undefined]) {
+                if (!validateKlotskiSnapshot(mk(good))) throw new Error('合法 elapsed=' + good + ' 被拒');
+            }
+            for (const bad of [-1, -0.001, NaN, Infinity, -Infinity, '12', null, {}]) {
+                if (validateKlotskiSnapshot(mk(bad))) throw new Error('非法 elapsed=' + String(bad) + ' 被放行');
+            }
+            if (validateKlotskiSnapshot(Object.assign({}, base, { moves: -1 }))) throw new Error('负步数基线校验失效');
+        } finally { pieces = old; layoutIndex = oldLi; }
+    } },
+    // 快照恢复 elapsed 字段（⑤修复回归）：带字段精确恢复并可回读一致；旧版缺字段归零兜底不产生 NaN
+    { name: '快照恢复 elapsed 字段', fn: () => {
+        const saved = { st: state, pa: isPaused, da: demoActive, el: elapsed, mv: moves, ls: lastShownSec, pcs: pieces };
+        const oldTime = timeElement.textContent;
+        try {
+            const snap = buildKlotskiSnapshot();
+            snap.moves = 17;
+            snap.elapsed = 321.5;
+            if (!validateKlotskiSnapshot(snap)) throw new Error('带 elapsed 快照被拒');
+            applyKlotskiSnapshot(snap); // 同局恢复（布局/难度不变）不触发存档写入
+            if (moves !== 17) throw new Error('步数未恢复: ' + moves);
+            if (elapsed !== 321.5) throw new Error('用时未恢复: ' + elapsed);
+            const re = buildKlotskiSnapshot();
+            if (re.moves !== 17 || re.elapsed !== 321.5) throw new Error('回读快照不一致');
+            // 旧版快照无 elapsed 字段：归零兜底，不产生 NaN 污染计时显示
+            delete snap.elapsed;
+            if (!validateKlotskiSnapshot(snap)) throw new Error('旧版缺 elapsed 快照被拒');
+            applyKlotskiSnapshot(snap);
+            if (elapsed !== 0) throw new Error('缺字段未归零: ' + elapsed);
+        } finally {
+            state = saved.st; isPaused = saved.pa; demoActive = saved.da;
+            elapsed = saved.el; moves = saved.mv; lastShownSec = saved.ls; pieces = saved.pcs;
+            timeElement.textContent = formatTime(saved.el);
+        }
+    } },
+    // 计时门（⑥修复回归）：仅 进行中+未暂停+非演示+成就墙未开 才累计——对照验证
+    // 进行中正常累计、暂停冻结、演示观演不虚增用时（评级与纪录的公平性）
+    { name: '计时门·演示与暂停不计入用时', fn: () => {
+        const saved = { st: state, pa: isPaused, da: demoActive, el: elapsed, ls: lastShownSec,
+                        cc: comboCount, ct: comboTimer, tt: trailTimer, sh: shake, wb: wallBlend };
+        const oldTime = timeElement.textContent;
+        try {
+            // 对照腿：进行中正常累计并按整秒刷新显示
+            state = 'playing'; isPaused = false; demoActive = false;
+            elapsed = 100.25; lastShownSec = 100; comboCount = 0; comboTimer = 0;
+            updateEffects(2.5);
+            if (elapsed !== 102.75) throw new Error('进行中未累计: ' + elapsed);
+            if (lastShownSec !== 102) throw new Error('整秒未刷新: ' + lastShownSec);
+            // 暂停腿：两种暂停均冻结计时
+            isPaused = true;
+            updateEffects(1);
+            if (elapsed !== 102.75) throw new Error('暂停仍累计: ' + elapsed);
+            // 演示腿：观演不计入用时，不污染评级与纪录
+            isPaused = false; demoActive = true;
+            updateEffects(1);
+            if (elapsed !== 102.75) throw new Error('演示观演虚增用时: ' + elapsed);
+        } finally {
+            state = saved.st; isPaused = saved.pa; demoActive = saved.da;
+            elapsed = saved.el; lastShownSec = saved.ls;
+            comboCount = saved.cc; comboTimer = saved.ct; trailTimer = saved.tt;
+            shake = saved.sh; wallBlend = saved.wb;
+            timeElement.textContent = oldTime;
+        }
+    } },
+    // klCombo 档位钳位（⑩修复回归）：越界档位被钳到 [0,2]，不取 undefined 频率产生 NaN/异常
+    { name: 'klCombo 档位钳位', fn: () => {
+        if (typeof SFX.klCombo !== 'function') throw new Error('SFX.klCombo 不存在');
+        // 音频锁定态 tone 内部短路：只验证档位钳位运算全档无异常
+        for (const lvl of [-9, -1, 0, 1, 2, 3, 99]) SFX.klCombo(lvl);
     } },
 ];
 FX.behavior('klotski', window.__ARCADE_TESTS__);

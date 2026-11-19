@@ -186,6 +186,7 @@ const GP = window.GP = { connected: false };
 
     // ---------- 主轮询：rAF 循环逐帧读取手柄状态并做边沿判定 ----------
     let hadPad = false; // 上一帧是否存在可用手柄（检测轮询侧的掉线兜底）
+    let activePadIndex = -1; // 当前轮询使用中手柄的 index（-1 = 无），供断连事件区分在玩手柄与备用手柄
 
     function poll() {
         requestAnimationFrame(poll);
@@ -194,7 +195,7 @@ const GP = window.GP = { connected: false };
         if (document.hidden) return;
         let pads;
         try { pads = navigator.getGamepads(); } catch (e) { pads = null; }
-        if (!pads) { if (hadPad) { hadPad = false; releaseAll(); GP.connected = false; } return; }
+        if (!pads) { if (hadPad) { hadPad = false; activePadIndex = -1; releaseAll(); GP.connected = false; } return; }
         // 取第一个已连接的手柄（多手柄场景取索引最小者，与「插第一个玩第一个」直觉一致）
         let pad = null;
         for (let i = 0; i < pads.length; i++) {
@@ -203,10 +204,11 @@ const GP = window.GP = { connected: false };
         if (!pad) {
             // 轮询侧掉线兜底（gamepaddisconnected 事件未触发的异常场景）：静默释放全部按键，
             // 并同步复位 connected 状态（与事件侧断开分支对齐，避免页面查询得到过期在线态）
-            if (hadPad) { hadPad = false; releaseAll(); GP.connected = false; }
+            if (hadPad) { hadPad = false; activePadIndex = -1; releaseAll(); GP.connected = false; }
             return;
         }
         hadPad = true;
+        activePadIndex = pad.index; // 记录在用手柄索引，断连事件据此校验
         GP.connected = true;
 
         // ----- 功能按钮边沿判定：pressed 或 value≥BUTTON_ON 视为按下，回落至 value≤BUTTON_OFF
@@ -265,9 +267,13 @@ const GP = window.GP = { connected: false };
         showToast('🎮 手柄已连接：' + padName(e.gamepad));
     });
     window.addEventListener('gamepaddisconnected', function (e) {
+        // 断开的是备用手柄（非当前轮询使用中的 index）时仅提示，不释放按键、不下线状态，
+        // 避免多手柄场景下在玩手柄的按住状态被误清
+        if (e.gamepad && e.gamepad.index !== activePadIndex) { showToast('🎮 手柄已断开'); return; }
         // 断开即清空提示并补发全部 keyup（该手柄的按住状态不能跨断开残留）
         releaseAll();
         GP.connected = false;
+        activePadIndex = -1;
         showToast('🎮 手柄已断开');
     });
     // 页面转后台：立即释放全部按键（后台期间轮询暂停，恢复后由下一帧重建状态）

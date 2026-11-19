@@ -564,15 +564,16 @@ const FS = (() => {
 
     // 全屏状态变化时同步按钮文本与缩放，并向子 iframe 广播（含按 ESC 退出）
     document.addEventListener('fullscreenchange', broadcastFsState);
-    // webkit 旧版路径沿用历史行为差异：仅应用本地状态，不向子 iframe 广播
-    document.addEventListener('webkitfullscreenchange', () => applyFsState(isFullscreen(), false));
+    // webkit 旧版（Safari < 16.4 等）同款广播：嵌入态子页据此同步缩放与按钮文本，
+    // 缺广播会导致子页不适配、全屏按钮失同步（与标准路径统一收口）
+    document.addEventListener('webkitfullscreenchange', broadcastFsState);
 
     // 全局 F 键切换全屏：与音效 M 键同模式——捕获阶段监听防止游戏侧 stopPropagation 拦截，
     // 排除输入场景避免打字误触；嵌入模式下 toggle 内部转发 arcade:fs 由父页统一处理
     if (!window.__arcadeFsKeyBound) {
         window.__arcadeFsKeyBound = true;
         window.addEventListener('keydown', (e) => {
-            if (e.code !== 'KeyF' || e.repeat) return;
+            if (e.code !== 'KeyF' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return; // 修饰键组合（Ctrl+F 页内查找等系统快捷键）不占用
             const tag = (e.target && e.target.tagName) || '';
             if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return; // 输入场景不拦截
             toggle(document.getElementById('fullscreenToggle')); // 按钮不存在时按压动画安全跳过，切换仍生效

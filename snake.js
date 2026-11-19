@@ -355,14 +355,18 @@ function initGame() {
 /**
  * 随机生成食物：枚举全部蛇身之外的空闲格子并随机取其一
  * （避免随机重试在蛇身极长时反复碰撞导致效率低下或递归栈溢出）
+ * @param {{x: number, y: number}} [extraCell] 额外需排除的格子（进食 tick 传入即将入列的新蛇头：
+ *        此刻蛇头尚未 unshift 入列，不排除会把食物生成在新头格下，满盘前一格误判空闲致通关不可达）
  * @returns {boolean} 是否成功放置；false 表示蛇已占满全场（无处可生成，通关）
  */
-function generateFood() {
+function generateFood(extraCell) {
     const cols = boardCols;
     const rows = boardRows;
 
     // 收集所有蛇身之外的空闲格子，随机取其一（避免递归重试导致的栈溢出）
     const occupied = new Set(snake.map(s => `${s.x},${s.y}`));
+    if (extraCell) occupied.add(`${extraCell.x},${extraCell.y}`); // 新头未入列时补排（进食 tick 专用）
+    if (goldApple) occupied.add(`${goldApple.x},${goldApple.y}`); // 金苹果占格：避免普通食物生成其下被遮挡
     const freeCells = [];
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
@@ -380,15 +384,18 @@ function generateFood() {
 
 /**
  * 随机生成限时金苹果：在蛇身与普通食物之外的空闲格随机取其一
+ * @param {{x: number, y: number}} [extraCell] 额外需排除的格子（进食 tick 传入即将入列的新蛇头：
+ *        此刻蛇头尚未 unshift 入列，不排除会把金苹果生成在新头格下，下一格即被蛇身遮挡）
  * @returns {boolean} 是否成功放置（棋盘几乎没有空格时可能失败，静默放弃即可）
  */
-function generateGoldApple() {
+function generateGoldApple(extraCell) {
     const cols = boardCols;
     const rows = boardRows;
 
-    // 空闲格 = 蛇身 + 普通食物之外的全部格子
+    // 空闲格 = 蛇身 + 普通食物 + 额外排除格之外的全部格子
     const occupied = new Set(snake.map(s => `${s.x},${s.y}`));
     occupied.add(`${food.x},${food.y}`);
+    if (extraCell) occupied.add(`${extraCell.x},${extraCell.y}`); // 新头未入列时补排（进食 tick 专用）
     const freeCells = [];
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
@@ -772,6 +779,7 @@ function moveSnake() {
     }
 
     // 检查是否吃到限时金苹果（与普通食物位置互斥，独立判定）
+    let ateThisTick = false; // 本 tick 是否进食（决定新头入列后是否刷新每日目标进度）
     if (goldApple && head.x === goldApple.x && head.y === goldApple.y) {
         // 先计入连击（决定加成倍率），再计算金苹果 5 倍高分 × 连击加成
         registerCombo(goldApple.x * gridSize + gridSize / 2, goldApple.y * gridSize + gridSize / 2);
@@ -792,7 +800,7 @@ function moveSnake() {
         goldApple = null;
         goldCountRun++; // 本局金苹果计数刷新（淘金高手成就进度）
         Ach.trackRunStat('gold', goldCountRun);
-        updateDailyGoal(); // 金苹果同样使蛇成长：同步刷新每日目标进度
+        ateThisTick = true; // 金苹果同样使蛇成长：待新头入列后统一刷新每日目标进度
         syncDangerLayer(); // 长身完成：同步 BGM 危险分层（≥15 节叠加鼓点层）
 
         // 分数超过历史最高时实时刷新最高分并持久化（首次触发破纪录庆祝）
@@ -828,7 +836,7 @@ function moveSnake() {
             SFX.snakeSpeedUp(); // 提速一档：提速里程碑六级琶音（速度里程碑达成）
         }
         speedLevelElement.textContent = `LV ${1 + Math.floor(eatenCount / SPEED_STEP)}`;
-        updateDailyGoal(); // 普通食物使蛇成长：同步刷新每日目标进度（达成时在此触发演出与落盘）
+        ateThisTick = true; // 普通食物使蛇成长：待新头入列后统一刷新每日目标进度
         syncDangerLayer(); // 长身完成：同步 BGM 危险分层（≥15 节叠加鼓点层）
 
         // 分数超过历史最高时实时刷新最高分并持久化（首次触发破纪录庆祝）
@@ -840,10 +848,10 @@ function moveSnake() {
         }
 
         // 概率刷新一枚限时金苹果（场上没有时才判定），提供抢分目标
-        if (!goldApple && Math.random() < GOLD_CHANCE) generateGoldApple();
+        if (!goldApple && Math.random() < GOLD_CHANCE) generateGoldApple(head);
 
-        // 蛇占满全场时无法生成食物，直接结算（通关，无演出）
-        if (!generateFood()) {
+        // 蛇占满全场时无法生成食物，直接结算（通关，无演出）；传入新头格补排（此刻尚未入列）
+        if (!generateFood(head)) {
             gameOver(true);
             return;
         }
@@ -859,6 +867,8 @@ function moveSnake() {
     }
 
     snake.unshift(head);
+    // 新头入列后再刷新每日目标：进食成长此刻才计入 snake.length，避免 HUD/判定进度差一
+    if (ateThisTick) updateDailyGoal(); // 达成时在此触发演出与落盘
     // 蛇头淡尾迹 + 本局成就检查（长蛇盘踞：蛇长 ≥ 30）
     spawnHeadTrail(head.x * gridSize, head.y * gridSize);
     checkRunAchievements();

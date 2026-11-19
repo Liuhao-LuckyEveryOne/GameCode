@@ -148,7 +148,7 @@ let state = 'start';
 let score = 0;
 /** 历史最高分（localStorage 持久化，键 pinballHighScore；存储不可用时兜底为 0） */
 let highScore = 0; // 存储不可用（隐私模式/禁用站点数据）时的兜底默认值
-highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10); // 存储不可用：静默保持兜底 0，不中断初始化
+highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10) || 0; // 存储不可用或脏数据解析出 NaN 时兜底 0，不中断初始化
 /** 最高分脏标记：破纪录时置位，由结算/既有存档钩子统一落盘（避免物理碰撞热路径每次得分同步写 localStorage） */
 let highScoreDirty = false;
 /** 剩余球数（含当前在场） */
@@ -501,6 +501,7 @@ function collideBumpers(b) {
         b.y = bp.y + ny * minD;
         if (bp.cool > 0) continue;
         const vn = b.vx * nx + b.vy * ny;
+        if (vn >= 0) continue; // 正在远离则跳过计分：与其他碰撞体守卫口径一致，防一次擦碰双计分（原为有意设计，本次统一收口）
         // 分解速度：切向保留 30%，法向替换为固定击出速度（弹柱"踢球"手感）
         const vtX = b.vx - vn * nx, vtY = b.vy - vn * ny;
         b.vx = vtX * 0.3 + nx * BUMPER_KICK;
@@ -1195,12 +1196,17 @@ function validatePinballSnapshot(s) {
  * @returns {boolean} 恒返回 true（应用成功；意外抛错由管线兜底弃档）
  */
 function applyPinballSnapshot(s) {
-    /* ---- 校验全部通过：覆盖游戏状态 ---- */
+    /* ---- 原子化恢复·阶段一：先完成可能抛错的准备工作（尚未触碰核心游戏状态），
+       中途失败也不会留下半恢复局面（外层管线照常弃档，游戏保持原状） ---- */
+    flipperLen = s.flipperLen; // 挡板长度先行赋值：重建几何依赖该难度参数
+    rebuildFlippers();         // 挡板恢复默认收拢角度，长度随快照难度重建
+    const newBalls = [];
+    for (const b of s.balls) newBalls.push(makeBall(b.x, b.y, b.vx, b.vy)); // 预构建各球（拖尾为空）
+    /* ---- 阶段二：直线赋值一次性提交核心状态（纯赋值，不再可能抛错） ---- */
     score = s.score;
     lives = s.lives;
     mult = s.mult;
     gravity = s.gravity;
-    flipperLen = s.flipperLen;
     invincibleMode = s.invincible;
     jackpotArmed = s.jackpotArmed;
     jackpotFxTimer = 0;      // JACKPOT 大字属纯视觉演出，不恢复
@@ -1219,31 +1225,34 @@ function applyPinballSnapshot(s) {
     for (const t of targets) { t.cool = 0; t.flash = 0; } // 碰撞冷却与闪光复位
     targets.forEach((t, i) => { t.lit = s.targetLit[i]; }); // 恢复目标灯点亮进度
     for (const f of flippers) { f.pressed = false; f.glow = 0; }
-    rebuildFlippers();       // 挡板恢复默认收拢角度，长度随快照难度重建
     balls.length = 0;
-    for (const b of s.balls) balls.push(makeBall(b.x, b.y, b.vx, b.vy)); // 重建各球（拖尾为空）
-    // 同步难度按钮高亮，使其与快照实际难度参数一致（视觉与玩法参数统一）
-    document.querySelectorAll('.difficulty-btn').forEach(btn => {
-        btn.classList.toggle('active',
-            parseFloat(btn.dataset.gravity) === gravity &&
-            parseFloat(btn.dataset.flip) === flipperLen &&
-            parseInt(btn.dataset.mult, 10) === mult &&
-            (btn.dataset.invincible === '1') === invincibleMode);
-    });
-    // 刷新 HUD 与画布一帧：侧栏分数 / 倍率 / 剩余球数 + 台面快照画面
-    FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡到续玩分数
-    multElement.textContent = '×' + mult;
-    drawAllBalls();
-    draw(performance.now());
-    // 停回暂停遮罩等待玩家输入（开始遮罩隐藏，不立即开跑），并亮出恢复提示
-    startScreen.style.display = 'none';
-    gameOverScreen.style.display = 'none';
-    pauseScreen.style.display = 'block';
-    pauseRestoreTip.style.display = 'block';
-    // 预置 BGM 曲目并保持暂停态：玩家按 P 继续时由 togglePause 的 resume 正常响起
-    //（音频尚未解锁时保持静默待命，待玩家按 P 恢复时随手势解锁照常响起）
-    SFX.bgm.start('pinball');
-    SFX.bgm.pause();
+    for (const b of newBalls) balls.push(b);
+    /* ---- 阶段三：HUD / 画布 / 遮罩 / BGM 收尾演出——即使音频或绘制异常，
+       核心状态已提交完毕，恢复仍然成立，不因收尾失败弃档丢进度 ---- */
+    try {
+        // 同步难度按钮高亮，使其与快照实际难度参数一致（视觉与玩法参数统一）
+        document.querySelectorAll('.difficulty-btn').forEach(btn => {
+            btn.classList.toggle('active',
+                parseFloat(btn.dataset.gravity) === gravity &&
+                parseFloat(btn.dataset.flip) === flipperLen &&
+                parseInt(btn.dataset.mult, 10) === mult &&
+                (btn.dataset.invincible === '1') === invincibleMode);
+        });
+        // 刷新 HUD 与画布一帧：侧栏分数 / 倍率 / 剩余球数 + 台面快照画面
+        FX.tweenNumber(scoreElement, score, 128); // 分数数字滚动过渡到续玩分数
+        multElement.textContent = '×' + mult;
+        drawAllBalls();
+        draw(performance.now());
+        // 停回暂停遮罩等待玩家输入（开始遮罩隐藏，不立即开跑），并亮出恢复提示
+        startScreen.style.display = 'none';
+        gameOverScreen.style.display = 'none';
+        pauseScreen.style.display = 'block';
+        pauseRestoreTip.style.display = 'block';
+        // 预置 BGM 曲目并保持暂停态：玩家按 P 继续时由 togglePause 的 resume 正常响起
+        //（音频尚未解锁时保持静默待命，待玩家按 P 恢复时随手势解锁照常响起）
+        SFX.bgm.start('pinball');
+        SFX.bgm.pause();
+    } catch (e) { /* 收尾演出失败静默：已提交的游戏状态不受影响 */ }
     return true;
 }
 

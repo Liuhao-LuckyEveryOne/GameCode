@@ -68,11 +68,23 @@ const FLOAT_DUR = 0.9;
 
 /* ---------- 每日挑战：日期种子开局（同一天所有新开局生成完全一致的谜题） ---------- */
 
-/** 每日挑战日期（本地时区 YYYYMMDD）：种子与存档键共用，跨天自然失效 */
-const DAILY_DATE = (() => {
+/**
+ * 取当日日期（本地时区 YYYYMMDD）：动态求值，页面跨午夜驻留后
+ * 种子与达成键自然切换到新一天，不再沿用启动时固化的旧日期
+ * @returns {string} 当日日期串（如 20261119）
+ */
+function todayDailyDate() {
     const d = new Date();
     return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-})();
+}
+
+/**
+ * 每日挑战达成存档键：按当日日期动态拼接（街机厅统一前缀 arcade_daily_）
+ * @returns {string} 当日达成键（如 arcade_daily_1024_20261119）
+ */
+function dailyKey() {
+    return 'arcade_daily_1024_' + todayDailyDate();
+}
 /** localStorage 键名单点定义（收敛文件内散落的键名常量，值与既有键完全一致，仅集中维护） */
 const KEYS = {
     /** 最高分键（新键，与全库 {game}HighScore 命名风格统一，如 pacHighScore / snakeHighScore） */
@@ -81,8 +93,7 @@ const KEYS = {
     legacyBest: '1024BestScore',
     /** 难度选择存档键，页面加载时恢复上一次选择（对齐其他游戏难度记忆） */
     difficulty: '1024Difficulty',
-    /** 每日挑战达成存档键（街机厅统一前缀 arcade_daily_）：当日已达成则新开局走普通模式，次日自动恢复挑战 */
-    daily: 'arcade_daily_1024_' + DAILY_DATE,
+    // 每日挑战达成键（arcade_daily_1024_YYYYMMDD）按当日动态拼接，见 dailyKey()：跨午夜驻留后自动指向新一天
     /** 对局进度镜像快照键（街机厅统一契约 arcade_save_1024，与 snake/tetris/pac/bee/pinball 同族）：
      *  收到 arcade:save 消息 / 页面卸载时保存，下次进入校验版本号与字段后恢复续玩；
      *  玩家主动重开、切换难度、达成胜利、棋盘死局结算时清除 */
@@ -138,9 +149,9 @@ function dailyRand() {
  * 已达成则保持普通模式；徽章可见性由 updateHud 统一刷新
  */
 function setupDailyChallenge() {
-    const done = !!Arcade.loadRaw(KEYS.daily); // 存储不可用时视为未达成
+    const done = !!Arcade.loadRaw(dailyKey()); // 存储不可用时视为未达成（键按当日动态取值）
     dailyMode = !done;
-    if (dailyMode) dailyRng = mulberry32(dateSeed(DAILY_DATE));
+    if (dailyMode) dailyRng = mulberry32(dateSeed(todayDailyDate()));
 }
 
 /**
@@ -149,7 +160,7 @@ function setupDailyChallenge() {
 function completeDailyChallenge() {
     if (!dailyMode) return;
     dailyMode = false; // 立即退出每日模式：胜利面板后续的继续挑战/重开走普通流程
-    Arcade.saveRaw(KEYS.daily, '1'); // 存储不可用时静默跳过
+    Arcade.saveRaw(dailyKey(), '1'); // 存储不可用时静默跳过（键按当日动态取值）
     addFloatText('每日挑战达成!', BOARD_W * 0.5, BOARD_H * 0.34, '#ffd23e', 22);
     SFX.n1024Milestone(); // 复用里程碑号角做达成音
 }
@@ -536,6 +547,7 @@ function move(dir, announceBlock = true) {
     const prevBoard = grid.map((row) => row.map((t) => (t ? t.value : 0)));
     const prevScore = score;
     const prevCombo = combo;
+    const prevIsNewRecord = isNewRecord; // 新纪录标记随快照入栈：撤销时同步回退，防"救回死局仍播报新纪录"
     const mergedIds = new Set();  // 本次已参与合并的新块 id，防止一拖二二次合并
     let moved = false;            // 是否发生任何位移/合并（决定是否补新块）
     let mergeIndex = 0;           // 多重合并的音效错峰序号
@@ -667,7 +679,8 @@ function move(dir, announceBlock = true) {
     else combo = 0;
     if (combo >= 2) SFX.n1024Combo(combo); // 连击音：音高随档位递升
     updateComboHud();
-    // 成就埋点：统一上报本局统计（分数/最大方块/合并次数），刷新历史最佳并判定解锁；
+    statMoves++; // 本局统计：有效滑动步数推进（须先于 checkRunAchievements 上报，否则步数成就少记一步）
+    // 成就埋点：统一上报本局统计（分数/最大方块/合并次数/步数），刷新历史最佳并判定解锁；
     // 必须置于下方胜负结算 return 分支之前——胜利合成 1024 的路径同样能触发判定
     checkRunAchievements();
     // 成就埋点：跨局累计合并数累加（merges1000 以 best.mergesTotal 持久化累计值）
@@ -685,12 +698,11 @@ function move(dir, announceBlock = true) {
         SFX.n1024Multi(mergesThisMove);
     }
     // 撤销快照入栈（保存本步之前的状态）并刷新撤销按钮可用态
-    history.push({ board: prevBoard, score: prevScore, combo: prevCombo });
+    history.push({ board: prevBoard, score: prevScore, combo: prevCombo, isNewRecord: prevIsNewRecord });
     if (history.length > HISTORY_MAX) history.shift(); // 超限从队头丢弃最旧快照：内存栈与存档镜像共用同一上限，长局内存不再无界累积
     updateUndoHud();
     updateGoalHud(); // 合并可能抬升最大方块，同步推进目标进度条
 
-    statMoves++; // 本局统计：有效滑动步数推进
     // 立体声定位：按滑动方向分配声道（左滑左响 / 右滑右响 / 上下居中）
     SFX.pan(dir === 'left' ? -0.4 : dir === 'right' ? 0.4 : 0);
     SFX.n1024Move();
@@ -1191,8 +1203,8 @@ function doUndo() {
     SFX.n1024Undo(); // 两段下滑回溯音，时光倒流质感
 }
 
-/** 依据快照重建棋盘（撤销专用）：按值矩阵重建方块并恢复分数与连击
- *  @param {{board: number[][], score: number, combo: number}} snap 撤销快照 */
+/** 依据快照重建棋盘（撤销/存档恢复共用）：按值矩阵重建方块并恢复分数、连击与新纪录标记
+ *  @param {{board: number[][], score: number, combo: number, isNewRecord?: boolean}} snap 撤销快照 */
 function restoreBoard(snap) {
     tiles.clear();
     ghosts.length = 0;
@@ -1224,6 +1236,7 @@ function restoreBoard(snap) {
     }
     score = snap.score;
     combo = snap.combo;
+    isNewRecord = snap.isNewRecord === true; // 新纪录标记随回退同步：旧格式快照缺字段时按 false 保守处理
     updateHud();
     updateComboHud();
     updateUndoHud();
@@ -1267,8 +1280,10 @@ function build1024Snapshot() {
         hasWon,                                                      // 是否已达成过 1024
         isNewRecord,                                                 // 本局是否刷新过最高分
         milestones: Array.from(milestones),                          // 已触发里程碑集合（Set 序列化为数组）
+        daily: dailyMode,                                            // 本局是否每日挑战（续玩时按日期校验，见 apply1024Snapshot）
+        dailyDate: dailyMode ? todayDailyDate() : null,              // 每日挑战开局日期（非每日局为 null）
         // 撤销栈镜像：只保留最近 HISTORY_MAX 步（slice 负索引从尾部截取），与内存栈及恢复端上限一致
-        history: history.slice(-HISTORY_MAX).map((h) => ({ board: h.board, score: h.score, combo: h.combo })),
+        history: history.slice(-HISTORY_MAX).map((h) => ({ board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true })),
     };
 }
 
@@ -1333,6 +1348,9 @@ function validate1024Snapshot(snap) {
     if (!Number.isInteger(snap.combo) || snap.combo < 0) return false;   // 连击须为非负整数
     if (!Number.isInteger(snap.undosLeft) || snap.undosLeft < 0 || snap.undosLeft > UNDO_LIMITS[currentDifficulty]) return false;
     if (typeof snap.hasWon !== 'boolean' || typeof snap.isNewRecord !== 'boolean') return false;
+    // 每日挑战标记宽容校验（旧格式快照可缺省）：存在时 daily 须为布尔、dailyDate 须为 8 位日期串或 null
+    if (snap.daily !== undefined && typeof snap.daily !== 'boolean') return false;
+    if (snap.dailyDate !== undefined && snap.dailyDate !== null && !/^\d{8}$/.test(snap.dailyDate)) return false;
     // 棋面上至少要有一个方块（空棋面必为损坏数据）
     let tileCount = 0;
     for (const row of snap.board) for (const v of row) if (v) tileCount++;
@@ -1343,6 +1361,7 @@ function validate1024Snapshot(snap) {
         if (!h || typeof h !== 'object' || !isValidBoard(h.board)) return false;
         if (!Number.isInteger(h.score) || h.score < 0) return false;
         if (!Number.isInteger(h.combo) || h.combo < 0) return false;
+        if (h.isNewRecord !== undefined && typeof h.isNewRecord !== 'boolean') return false; // 新纪录标记宽容缺省（旧格式）
     }
     return true;
 }
@@ -1361,13 +1380,18 @@ function apply1024Snapshot(snap) {
     const milestoneSaved = Array.isArray(snap.milestones)
         ? snap.milestones.filter((m) => MILESTONE_VALUES.indexOf(m) !== -1)
         : [];
-    // 复用撤销重建逻辑应用棋面/分数/连击，再补齐存档专属状态
-    restoreBoard({ board: snap.board, score: snap.score, combo: snap.combo });
+    // 每日挑战续玩校验（置于 restoreBoard 前：其内部 updateHud 按 dailyMode 刷新徽章）：
+    // 仅当日开局的每日挑战继续每日身份（且当日未达成时），昨日及更早的每日存档降级为
+    // 普通局续玩——完成不再计入当日达成（每日挑战当日有效，次日重新开局）
+    const dailySameDay = snap.daily === true && snap.dailyDate === todayDailyDate();
+    dailyMode = dailySameDay && !Arcade.loadRaw(dailyKey()); // 存储不可用时视为未达成
+    if (dailyMode) dailyRng = mulberry32(dateSeed(snap.dailyDate));
+    // 复用撤销重建逻辑应用棋面/分数/连击/新纪录标记，再补齐存档专属状态
+    restoreBoard({ board: snap.board, score: snap.score, combo: snap.combo, isNewRecord: snap.isNewRecord });
     history.length = 0;
-    for (const h of historySaved) history.push({ board: h.board, score: h.score, combo: h.combo });
+    for (const h of historySaved) history.push({ board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true });
     undosLeft = snap.undosLeft;
     hasWon = snap.hasWon;
-    isNewRecord = snap.isNewRecord;
     milestones = new Set(milestoneSaved);
     updateUndoHud(); // restoreBoard 执行时 undosLeft 尚未恢复，此处补刷撤销按钮态
     playing = true;
@@ -1534,6 +1558,9 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
     canPick: (btn, idx, key) => !!DIFFICULTIES[key] && key !== currentDifficulty,
     lockedDuringPlay: () => playing, // 对局进行中禁切难度（局中守卫统一收口）
     onChange: (btn, idx, key) => {
+        // 清掉上一局尚未到点的面板定时器：死亡渐暗(750ms)/胜利烟花(600ms)窗口内 playing 已置 false
+        // 可切难度，旧定时器若不清会在新局棋盘上弹出过期的"得分 0"结算面板
+        clearPanelTimers();
         currentDifficulty = key;
         SIZE = DIFFICULTIES[key].size;
         // 重算单元格边长，保证棋盘总尺寸仍为 BOARD_W×BOARD_H（CSS 锁定 500×500）
@@ -1663,6 +1690,16 @@ document.addEventListener('touchmove', (event) => {
     touchX = t.clientX; // 重置起点为当前触点，同一次拖动可连续触发多步
     touchY = t.clientY;
 }, { passive: false });
+// 双指按下抬走一指后重锚起点：touchstart 只在恰好单指时锚定，双指期间起点已过期，
+// 抬走一指若不重锚，touchmove 会以陈旧起点折算位移造成误出招（touchcancel 同因兜底）
+function reanchorTouchStart(event) {
+    if (event.touches.length === 1) {
+        touchX = event.touches[0].clientX;
+        touchY = event.touches[0].clientY;
+    }
+}
+document.addEventListener('touchend', reanchorTouchStart, { passive: true });
+document.addEventListener('touchcancel', reanchorTouchStart, { passive: true });
 
 // 桌面鼠标拖动滑动：与触屏完全同款的手势契约（左键按下起手 · 划过阈值出招 ·
 // 起点重置连滑）。仅接受主键（左键）在画布上发起，pointer capture 保证按住后

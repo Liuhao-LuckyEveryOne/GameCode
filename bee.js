@@ -505,6 +505,9 @@ Ach.init({
         // 开墙瞬间清空按键表并停火：防止关墙后残留的移动/开火输入"卡住"（关墙不清，与原实现一致）
         for (const k in keys) delete keys[k];
         mouseFire = false;
+        mouseDir = 0;
+        mouseDirTimer = 0;
+        mouseDx = 0; // 鼠标方向状态一并清零：与键鼠停火同因，防关墙后飞船漂移
     },
     migrate: migrateBeeStore
 });
@@ -1368,6 +1371,7 @@ function applyPowerup(p) {
             // 已满级则折算分数
             score += 200;
             addFloatText(p.x, p.y - 10, '+200', style.color, 0.9);
+            checkExtraLife(); // 折算加分同样计入里程碑，满足即场内补发 1UP
         }
         SFX.beePowerupWeapon();
     } else if (p.type === 'shield') {
@@ -1382,6 +1386,7 @@ function applyPowerup(p) {
             // 满命则折算分数
             score += 500;
             addFloatText(p.x, p.y - 10, '+500', style.color, 0.9);
+            checkExtraLife(); // 折算加分同样计入里程碑，满足即场内补发 1UP
         }
         SFX.beePowerupLife();
     } else if (p.type === 'bomb') {
@@ -1683,8 +1688,11 @@ function updateGame(dt) {
                 enemyBullets.splice(i, 1);
                 hitPlayer();
                 // hitPlayer 在碎盾/掉命时会清空整个敌弹数组，此时必须立即终止本帧遍历，
-                // 否则后续迭代读到 undefined 抛异常、打断 rAF 主循环导致游戏永久卡死
-                if (gameState !== 'playing' || enemyBullets.length === 0) return;
+                // 否则后续迭代读到 undefined 抛异常、打断 rAF 主循环导致游戏永久卡死；
+                // 掉命终局终止整帧，碎盾清弹仅终止本段遍历——同帧后续判定（道具拾取、
+                // 俯冲撞机结算等）照常进行，不再被整帧跳过
+                if (gameState !== 'playing') return;
+                if (enemyBullets.length === 0) break;
             }
         }
     }
@@ -2673,9 +2681,9 @@ function moveAxis() {
 // 跳变（|dx|>60）直接忽略。鼠标静止约 0.15s 后方向自动归零，飞船平滑停住，
 // 既不锁光标也不隐藏光标，按钮/链接等 UI 点击完全不受影响
 document.addEventListener('mousemove', e => {
-    // 暂停中（失焦或手动）不更新方向状态：主循环已冻结、0.15s 保持窗口不再衰减，
+    // 暂停中（失焦或手动）或成就墙展开时不更新方向状态：主循环已冻结、0.15s 保持窗口不再衰减，
     // 此时晃鼠标会把方向残留到恢复瞬间，导致飞船恢复后无故漂移
-    if (paused || blurPaused) return;
+    if (paused || blurPaused || Ach.isOpen()) return;
     const dx = e.movementX || 0;
     // 忽略异常跳变（如鼠标从窗口外快速划入、系统指针重置）
     if (Math.abs(dx) > 60) return;
@@ -2699,6 +2707,10 @@ const pausePipe = Pause.create({
         // 暂停与恢复瞬间都清空键鼠状态，防止切窗/暂停期间残留的移动/开火输入"卡住"
         for (const k in keys) delete keys[k];
         mouseFire = false;
+        touchFireIds.clear(); // 触屏开火追踪一并清空：暂停期间抬手不再残留待停火触点
+        mouseDir = 0;
+        mouseDirTimer = 0;
+        mouseDx = 0; // 鼠标方向脉冲一并清零：与失焦路径同因，防恢复后飞船残留漂移
         syncPauseOverlay(); // 同步暂停遮罩显隐与文案（手动/失焦提示区分）
     }
 });
@@ -2727,9 +2739,15 @@ document.addEventListener('mouseup', e => {
 // 改由画布 pointer 事件驱动——按下记录触点、拖动按帧间位移折算方向，复用鼠标通道
 // 同一套累计判定（≥2px 出方向 / >60px 跳变忽略 / 0.15s 保持窗）；pointerType 判界
 // 保证两通道互不叠加（桌面鼠标仍走上方 mousemove，触屏合成的 mousemove 无有效 movementX）
+// 触屏开火通道（与转向同用 pointer 事件）：按下即持续射击、抬手/系统接管结束——
+// 显式声明，不再依赖浏览器合成的 mousedown/up 兼容事件（部分环境会抑制合成事件
+// 导致触屏无法开火）；Set 追踪全部触点，"一指按住开火 + 另一指转向"仅全部抬起才停火
+const touchFireIds = new Set();
 canvas.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch') return; // 鼠标维持原通道，避免双输入叠加
     touchLastX = e.clientX;
+    // 开火准入与 mousedown 通道同口径：仅进行中且非暂停态（暂停按下交给遮罩恢复）
+    if (gameState === 'playing' && !blurPaused && !paused) touchFireIds.add(e.pointerId);
     // 捕获到画布：手指拖出画布区域仍能持续收到 move/up，转向不中断（守卫见 arcade-common.js）
     Arcade.capturePointer(canvas, e.pointerId);
 });
@@ -2737,8 +2755,8 @@ canvas.addEventListener('pointermove', e => {
     if (e.pointerType !== 'touch' || touchLastX === null) return;
     const dx = e.clientX - touchLastX;
     touchLastX = e.clientX; // 触点恒随行：暂停期间也刷新，避免恢复瞬间按陈旧坐标折算出跳变
-    // 暂停中（失焦或手动）不更新方向状态：与 mousemove 通道守卫一致，防止恢复后漂移
-    if (paused || blurPaused) return;
+    // 暂停中（失焦或手动）或成就墙展开时不更新方向状态：与 mousemove 通道守卫一致，防止恢复后漂移
+    if (paused || blurPaused || Ach.isOpen()) return;
     if (Math.abs(dx) > 60) return; // 忽略异常跳变（与鼠标通道同一阈值）
     mouseDx += dx;
     if (Math.abs(mouseDx) >= 2) {
@@ -2747,9 +2765,19 @@ canvas.addEventListener('pointermove', e => {
         mouseDx = 0;
     }
 });
-// 抬手/系统接管结束转向手势：清触点与未满阈值的位移残量，方向交给保持窗自然衰减
-canvas.addEventListener('pointerup', () => { touchLastX = null; mouseDx = 0; });
-canvas.addEventListener('pointercancel', () => { touchLastX = null; mouseDx = 0; });
+// 抬手/系统接管结束转向手势：清触点与未满阈值的位移残量，方向交给保持窗自然衰减；
+// 同时从开火追踪集合移除该触点——全部触点抬起才停火，且仅停由触屏开启的射击
+// （鼠标通道按下的射击不受触屏抬手影响）
+canvas.addEventListener('pointerup', e => {
+    touchLastX = null;
+    mouseDx = 0;
+    if (touchFireIds.delete(e.pointerId) && !touchFireIds.size) mouseFire = false;
+});
+canvas.addEventListener('pointercancel', e => {
+    touchLastX = null;
+    mouseDx = 0;
+    if (touchFireIds.delete(e.pointerId) && !touchFireIds.size) mouseFire = false;
+});
 // 窗口失焦：清空键鼠状态，防止切窗期间按键"卡住"、回来后自动漂移/自动开火；
 // 游戏进行中同时进入失焦暂停（静默不发声，与历史行为一致），由主循环挂起逻辑并绘制暂停遮罩。
 // blur 与 visibilitychange 双通道接线由共享库 snap-common.js 统一注册
@@ -2757,6 +2785,7 @@ canvas.addEventListener('pointercancel', () => { touchLastX = null; mouseDx = 0;
 function handleFocusLoss() {
     for (const k in keys) delete keys[k];
     mouseFire = false;
+    touchFireIds.clear(); // 触屏开火追踪一并清空，防止失焦前按住的触点回来后自动续射
     mouseDir = 0;
     mouseDirTimer = 0;
     mouseDx = 0;
@@ -2881,6 +2910,191 @@ window.__ARCADE_TESTS__ = [
             }
             if (got.join('') !== 'SABCS') throw new Error('段位序列不符: ' + got.join(''));
         } finally { score = oldScore; wave = oldWave; }
+    } },
+    // 受击免疫通道（②相关守卫）：无敌档完全免疫（不清弹不掉命）、无敌期免疫、冲刺无敌帧免疫
+    { name: 'hitPlayer 免疫通道（无敌档/无敌期/冲刺期）', fn: () => {
+        const saved = {
+            difficulty, invincibleTimer, dashTimer, lives, hasShield, comboCount, comboTimer, comboMult,
+            weaponLevel, hurtFlashTimer, freezeTimer, shakeTime, shakeMag, eb: enemyBullets.length
+        };
+        lives = 2;
+        enemyBullets.length = 1; // 布置一枚敌弹：免疫通道应原样保留不清弹
+        try {
+            // 无敌档难度：完全免疫，直调后命与弹均不动
+            difficulty = 'invincible'; invincibleTimer = 0; dashTimer = 0; hasShield = false;
+            hitPlayer();
+            if (lives !== 2) throw new Error('无敌档被扣命');
+            if (enemyBullets.length !== 1) throw new Error('无敌档意外清弹');
+            // 受击无敌期：免疫伤害
+            difficulty = 'normal'; invincibleTimer = 0.5; dashTimer = 0; hasShield = false;
+            hitPlayer();
+            if (lives !== 2) throw new Error('无敌期被扣命');
+            if (enemyBullets.length !== 1) throw new Error('无敌期意外清弹');
+            // 冲刺过程：dash 无敌帧免疫伤害
+            difficulty = 'normal'; invincibleTimer = 0; dashTimer = 0.4; hasShield = false;
+            hitPlayer();
+            if (lives !== 2) throw new Error('冲刺期被扣命');
+            if (enemyBullets.length !== 1) throw new Error('冲刺期意外清弹');
+        } finally {
+            difficulty = saved.difficulty; invincibleTimer = saved.invincibleTimer; dashTimer = saved.dashTimer;
+            lives = saved.lives; hasShield = saved.hasShield;
+            comboCount = saved.comboCount; comboTimer = saved.comboTimer; comboMult = saved.comboMult;
+            weaponLevel = saved.weaponLevel; hurtFlashTimer = saved.hurtFlashTimer;
+            freezeTimer = saved.freezeTimer; shakeTime = saved.shakeTime; shakeMag = saved.shakeMag;
+            enemyBullets.length = saved.eb;
+            updateHud();
+        }
+    } },
+    // 敌弹命中帧分流（②修复回归）：碎盾清弹立即终止本段遍历不崩帧、掉命终局立即终止整帧——
+    // 整帧直调 updateGame 而非直调 hitPlayer，验证真实遍历循环在清弹后的存活
+    { name: '敌弹命中帧分流（碎盾清弹不崩帧/末命终局止帧）', fn: () => {
+        const saved = {
+            gameState, difficulty, invincibleTimer, dashTimer, dashDir, facing, mouseDir, mouseDirTimer,
+            mouseFire, restoredNotice, hasShield, lives, weaponLevel, score, wave, waveEvent,
+            comboCount, comboTimer, comboMult, enemyFreezeTimer, magnetTimer, laserTimer, laserTickTimer,
+            dashCdTimer, diveTimer, enemyFireTimer, boss, deathFxShown, deathFxTimer, bombFlashTimer,
+            shakeTime, shakeMag, freezeTimer, hurtFlashTimer, fireCooldown, swarmOffsetX, swarmDir,
+            px: player.x, py: player.y,
+            bl: bullets.length, eb: enemyBullets.length, pu: powerups.length, dg: dashGhosts.length
+        };
+        const oldKeys = Object.assign({}, keys);
+        const oldBees = bees.slice(); // const 数组不可重赋值，拷贝元素后经 length 清空/重灌还原
+        for (const k in keys) delete keys[k];
+        try {
+            // 公共布景：进行中 + 普通难度 + 免疫计时归零 + 9999s 消除随机俯冲投弹 +
+            // 空蜂群（波次推进要求 bees.length>0，不触发）+ 玩家居中
+            gameState = 'playing';
+            difficulty = 'normal';
+            invincibleTimer = 0; dashTimer = 0;
+            diveTimer = 9999; enemyFireTimer = 9999;
+            boss = null; wave = 1; waveEvent = null;
+            enemyFreezeTimer = 0; magnetTimer = 0; laserTimer = 0; laserTickTimer = 0;
+            mouseFire = false; mouseDir = 0; mouseDirTimer = 0; score = 0;
+            enemyBullets.length = 0; bullets.length = 0; powerups.length = 0; dashGhosts.length = 0;
+            bees.length = 0;
+            player.x = (viewW - PLAYER_W) / 2; player.y = 420;
+            // 腿1 碎盾：两枚贴脸敌弹整帧直调两帧——首枚命中碎盾清空整个敌弹数组，
+            // 修复前循环继续迭代读到 undefined 抛 TypeError 打断 rAF 主循环
+            hasShield = true; lives = 3;
+            enemyBullets.push({ x: player.x + PLAYER_W / 2, y: player.y + PLAYER_H / 2, vx: 0, vy: 0 },
+                              { x: player.x + PLAYER_W / 2, y: player.y + PLAYER_H / 2, vx: 0, vy: 0 });
+            updateGame(0.016);
+            updateGame(0.016);
+            if (gameState !== 'playing') throw new Error('碎盾不应终局');
+            if (enemyBullets.length !== 0) throw new Error('碎盾未清空敌弹');
+            if (hasShield !== false) throw new Error('护盾未碎');
+            if (lives !== 3) throw new Error('碎盾不应掉命');
+            if (invincibleTimer <= 0) throw new Error('碎盾未进入无敌期');
+            // 腿2 末命：单枚贴脸敌弹——生命归零终局，修复前同帧循环继续读空数组
+            hasShield = false; invincibleTimer = 0; lives = 1;
+            enemyBullets.push({ x: player.x + PLAYER_W / 2, y: player.y + PLAYER_H / 2, vx: 0, vy: 0 });
+            updateGame(0.016);
+            if (lives !== 0) throw new Error('末命受击未归零');
+            if (gameState !== 'over') throw new Error('末命受击未终局');
+            if (enemyBullets.length !== 0) throw new Error('终局未清空敌弹');
+        } finally {
+            for (const k of Object.keys(keys)) delete keys[k];
+            Object.assign(keys, oldKeys);
+            gameState = saved.gameState; difficulty = saved.difficulty;
+            invincibleTimer = saved.invincibleTimer; dashTimer = saved.dashTimer; dashDir = saved.dashDir;
+            facing = saved.facing; mouseDir = saved.mouseDir; mouseDirTimer = saved.mouseDirTimer;
+            mouseFire = saved.mouseFire; restoredNotice = saved.restoredNotice;
+            hasShield = saved.hasShield; lives = saved.lives; weaponLevel = saved.weaponLevel;
+            score = saved.score; wave = saved.wave; waveEvent = saved.waveEvent;
+            comboCount = saved.comboCount; comboTimer = saved.comboTimer; comboMult = saved.comboMult;
+            enemyFreezeTimer = saved.enemyFreezeTimer; magnetTimer = saved.magnetTimer;
+            laserTimer = saved.laserTimer; laserTickTimer = saved.laserTickTimer;
+            dashCdTimer = saved.dashCdTimer; diveTimer = saved.diveTimer; enemyFireTimer = saved.enemyFireTimer;
+            boss = saved.boss; deathFxShown = saved.deathFxShown; deathFxTimer = saved.deathFxTimer;
+            bombFlashTimer = saved.bombFlashTimer; shakeTime = saved.shakeTime; shakeMag = saved.shakeMag;
+            freezeTimer = saved.freezeTimer; hurtFlashTimer = saved.hurtFlashTimer;
+            fireCooldown = saved.fireCooldown; swarmOffsetX = saved.swarmOffsetX; swarmDir = saved.swarmDir;
+            bees.length = 0; for (const b of oldBees) bees.push(b);
+            bullets.length = saved.bl; enemyBullets.length = saved.eb;
+            powerups.length = saved.pu; dashGhosts.length = saved.dg;
+            player.x = saved.px; player.y = saved.py;
+            updateHud();
+        }
+    } },
+    // 触屏开火追踪生命周期（③修复回归）：touch 按下入队 / 抬起逐个移出 / 全部抬起仅停
+    // 触屏开启的火（预置鼠标火不受误伤）/ pointercancel 系统接管兜底清出 / 鼠标 pointer 不入队
+    { name: '触屏开火追踪生命周期', fn: () => {
+        const saved = { gameState, paused, blurPaused, mouseFire, touchLastX, mouseDx };
+        const oldIds = Array.from(touchFireIds);
+        touchFireIds.clear();
+        try {
+            gameState = 'playing'; paused = false; blurPaused = false;
+            mouseFire = false; touchLastX = null; mouseDx = 0;
+            const ev = (type, id, ptype) => canvas.dispatchEvent(new PointerEvent(type, {
+                pointerType: ptype, pointerId: id, clientX: 240, clientY: 300, bubbles: true
+            }));
+            ev('pointerdown', 11, 'touch');
+            if (!touchFireIds.has(11)) throw new Error('触点按下未入队');
+            ev('pointerdown', 12, 'touch');
+            if (touchFireIds.size !== 2) throw new Error('双指并存集合大小非 2');
+            mouseFire = true; // 预置鼠标通道开火：验证抬起只停触屏火、不误伤鼠标火
+            ev('pointerup', 11, 'touch');
+            if (touchFireIds.has(11) || touchFireIds.size !== 1) throw new Error('抬起触点未移出集合');
+            if (mouseFire !== true) throw new Error('尚有触点在集合却被误停火');
+            ev('pointerup', 12, 'touch');
+            if (touchFireIds.size !== 0) throw new Error('全部抬起未清空集合');
+            if (mouseFire !== false) throw new Error('全部抬起未停火');
+            ev('pointerdown', 13, 'touch');
+            ev('pointercancel', 13, 'touch');
+            if (touchFireIds.size !== 0) throw new Error('系统接管未兜底清出');
+            ev('pointerdown', 14, 'mouse');
+            if (touchFireIds.size !== 0) throw new Error('鼠标 pointer 被误入队');
+        } finally {
+            gameState = saved.gameState; paused = saved.paused; blurPaused = saved.blurPaused;
+            mouseFire = saved.mouseFire; touchLastX = saved.touchLastX; mouseDx = saved.mouseDx;
+            touchFireIds.clear();
+            for (const id of oldIds) touchFireIds.add(id);
+        }
+    } },
+    // 触屏开火准入与暂停/失焦清理（③修复回归）：与 mousedown 通道同口径准入（仅进行中且
+    // 非暂停态），手动暂停 setPaused 钩子清空追踪集，失焦 handleFocusLoss 清空并进入失焦暂停
+    { name: '触屏开火准入与暂停清理', fn: () => {
+        const saved = { gameState, paused, blurPaused, mouseFire, touchLastX, mouseDx };
+        const oldIds = Array.from(touchFireIds);
+        touchFireIds.clear();
+        try {
+            gameState = 'playing'; paused = false; blurPaused = false;
+            mouseFire = false; touchLastX = null; mouseDx = 0;
+            const down = (id) => canvas.dispatchEvent(new PointerEvent('pointerdown', {
+                pointerType: 'touch', pointerId: id, clientX: 240, clientY: 300, bubbles: true
+            }));
+            // 准入矩阵：手动暂停 / 失焦暂停 / 非进行中一律不入队
+            paused = true; blurPaused = false;
+            down(22);
+            if (touchFireIds.size !== 0) throw new Error('手动暂停中触点被误入队');
+            paused = false; blurPaused = true;
+            down(23);
+            if (touchFireIds.size !== 0) throw new Error('失焦暂停中触点被误入队');
+            blurPaused = false; gameState = 'idle';
+            down(24);
+            if (touchFireIds.size !== 0) throw new Error('非进行中触点被误入队');
+            // 进行中入队后手动暂停：setPaused 钩子清空追踪集，恢复后归位
+            gameState = 'playing';
+            down(21);
+            if (touchFireIds.size !== 1) throw new Error('进行中触点未入队');
+            pausePipe.toggle();
+            if (touchFireIds.size !== 0) throw new Error('手动暂停未清空开火追踪');
+            pausePipe.resume();
+            if (paused !== false) throw new Error('手动恢复后 paused 未复位');
+            // 恢复后重入队 → 失焦：清集 + 停火 + 进入失焦暂停（autoPause 双标记落位）
+            down(25);
+            if (touchFireIds.size !== 1) throw new Error('恢复后触点未重新入队');
+            handleFocusLoss();
+            if (touchFireIds.size !== 0) throw new Error('失焦未清空开火追踪');
+            if (mouseFire !== false) throw new Error('失焦未停火');
+            if (paused !== true || blurPaused !== true) throw new Error('失焦未进入失焦暂停');
+            pausePipe.resume(); // 归还失焦暂停态，不把暂停带进后续用例
+        } finally {
+            gameState = saved.gameState; paused = saved.paused; blurPaused = saved.blurPaused;
+            mouseFire = saved.mouseFire; touchLastX = saved.touchLastX; mouseDx = saved.mouseDx;
+            touchFireIds.clear();
+            for (const id of oldIds) touchFireIds.add(id);
+        }
     } },
 ];
 FX.behavior('bee', window.__ARCADE_TESTS__);

@@ -931,6 +931,10 @@ function applyPacSnapshot(s) {
     updateHUD();
     drawLives();
     draw(performance.now());
+    // 预置 BGM 曲目并保持暂停态：玩家按 P 继续时由暂停管线的恢复路径正常响起，
+    // 修复快照续玩局从恢复到死亡/清版前全程无 BGM（与弹球快照恢复同款预装载模式）
+    SFX.bgm.start('pac');
+    SFX.bgm.pause();
     return true;
 }
 
@@ -1050,8 +1054,9 @@ function update(dt) {
         if (floatTexts[i].timer <= 0) floatTexts.splice(i, 1);
     }
 
-    // 水果计时：存活倒计时（play 状态之外由 resetPositions 清除，此处通用推进）
-    if (fruit) {
+    // 水果计时：存活倒计时（play 状态之外由 resetPositions 清除，此处通用推进）；
+    // ready 倒计时期间冻结——开局/重生演出与快照恢复的 ready 等待不应白损水果寿命
+    if (fruit && state !== 'ready') {
         fruit.timer -= dt;
         if (fruit.timer <= 0) fruit = null; // 超时消失
     }
@@ -1201,11 +1206,13 @@ function update(dt) {
     // ---- 幽灵移动 ----
     for (const g of ghosts) {
         if (g.mode === 'house') {
-            // 屋内等待：计满各自出屋延迟后转为 exit 模式、朝门上行出屋
+            // 屋内等待：计满各自出屋延迟后转为 exit 模式，按 AI 选路出屋
+            //（ghostTarget(exit) 目标为门口 EXIT：不在门正下方的 inky/clyde 会先横向汇至屋内中线再穿门；
+            //  不能硬编码 dir='up'——其正上方是墙格，stepEntity 不查通行性会直接穿墙出屋）
             g.releaseTimer += dt;
             if (g.releaseTimer >= g.releaseDelay) {
                 g.mode = 'exit';
-                g.dir = 'up';
+                ghostChooseDir(g);
             }
             continue;
         }

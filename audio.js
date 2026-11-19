@@ -250,6 +250,9 @@ const SFX = (() => {
     const warm = () => {
         if (muted || unlocked) return;
         unlocked = true; // 仅首次手势提示一次
+        // 首次激活即摘除热身监听，避免此后每次交互重复进入本函数
+        window.removeEventListener('pointerdown', warm);
+        window.removeEventListener('keydown', warm);
         // 浏览器自动播放策略下首次交互后才可出声，播放经典"投币"双音作为激活反馈
         if (ensure()) {
             tone(988, 0.07, 'square', 0.08);
@@ -440,15 +443,16 @@ const SFX = (() => {
     const bgm = {
         name: null,        // 当前曲目名（SONGS 键），null 表示未请求播放
         paused: false,     // 用户/游戏主动暂停（游戏暂停菜单时调用）
-        autoPaused: false, // 因页面隐藏自动暂停（回前台仅恢复此类暂停）
+        autoPaused: false, // 因页面隐藏自动挂起（独立于 paused 的闸门，由 sync() 参与状态收敛；回前台仅解除此类标记）
         step: 0,           // 已调度到的步数（循环游标）
         nextTime: 0,       // 下一步的 AudioContext 绝对时间
         timer: null,       // 调度器 interval 句柄（存在即视为实际播放中）
         intensity: false,  // 自适应分层（v3.0）：危险态标记——setIntensity 设置，true 时鼓点声部逐拍渐入
         drumLv: 0,         // 鼓点声部当前强度系数（0~1）：每拍向目标逼近，实现加层渐入与脱离衰减
 
-        /** 请求播放指定曲目（同名已在播则忽略；否则从头开始） @param {string} name 曲目名（SONGS 键） */
-        start(name) { if (this.name === name && this.timer) return; this.name = name; this.paused = false; this.autoPaused = false; this.step = 0; this.intensity = false; this.drumLv = 0; this.sync(); }, // 换曲/重启重置危险分层：新曲从常态编曲开始
+        /** 请求播放指定曲目（同名在实际播放或暂停挂起态下忽略——挂起态命中说明曲目仍被请求，
+         *  此时重置会丢掉暂停步进使恢复从头播；仅曲目未请求或换曲时才从头开始） @param {string} name 曲目名（SONGS 键） */
+        start(name) { if (this.name === name && (this.timer || this.paused)) return; this.name = name; this.paused = false; this.autoPaused = false; this.step = 0; this.intensity = false; this.drumLv = 0; this.sync(); }, // 换曲/重启重置危险分层：新曲从常态编曲开始
         /** 停止播放并清空曲目（游戏结束时调用，危险分层一并重置） */
         stop() { this.name = null; this.paused = false; this.autoPaused = false; this.intensity = false; this.drumLv = 0; this.sync(); },
         /** 主动暂停（保留曲目，恢复时从当前步继续） */
@@ -462,12 +466,12 @@ const SFX = (() => {
         setIntensity(on) { this.intensity = !!on; },
 
         /**
-         * 状态收敛单一入口：按 muted/name/paused 推导期望状态，
+         * 状态收敛单一入口：按 muted/name/paused/autoPaused 推导期望状态，
          * 启停调度器 interval，并对 music 分层增益做淡入/淡出
          */
         sync() {
-            // 静音或 BGM 音量档位为 0（关）时直接视为不播放，调度器整个挂起，恢复后从当前步继续
-            const want = !muted && this.name && !this.paused && VOL_STEPS[vol.b] > 0;
+            // 静音、BGM 音量档位为 0（关）、主动暂停或页面隐藏挂起时直接视为不播放，调度器整个挂起，恢复后从当前步继续
+            const want = !muted && this.name && !this.paused && !this.autoPaused && VOL_STEPS[vol.b] > 0;
             if (want) {
                 // 惰性建 ctx；无手势时可能仍为 suspended，届时 warm() 的手势回调会再次 sync 补启
                 if (!ensure()) return;
@@ -526,13 +530,16 @@ const SFX = (() => {
         osc.stop(t0 + 0.2);
     }
 
-    // 页面隐藏时自动暂停 BGM（避免后台空转与音频堆积），回前台仅恢复"自动暂停"这一类
+    // 页面隐藏时自动挂起 BGM（避免后台空转与音频堆积）——只立 autoPaused 闸门不动 paused，
+    // 游戏侧暂停态不被污染；回前台仅解除该闸门后经 sync() 按全量状态收敛：
+    // 若游戏自身的暂停遮罩仍在（如切页触发的失焦自动暂停），paused 仍为 true 保持静默，
+    // 待游戏恢复序列统一 resume 续播——避免"游戏还停着、BGM 先自响"的脱同步
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
-            if (bgm.playing()) { bgm.autoPaused = true; bgm.pause(); }
+            if (bgm.playing()) { bgm.autoPaused = true; bgm.sync(); }
         } else if (bgm.autoPaused) {
             bgm.autoPaused = false;
-            bgm.resume();
+            bgm.sync();
         }
     });
 
@@ -686,7 +693,7 @@ const SFX = (() => {
         if (!window.__arcadeAudioKeyBound) {
             window.__arcadeAudioKeyBound = true;
             window.addEventListener('keydown', (e) => {
-                if (e.code !== 'KeyM' || e.repeat) return;
+                if (e.code !== 'KeyM' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return; // 修饰键组合（Ctrl+M/Cmd+M 等）不占用
                 const tag = (e.target && e.target.tagName) || '';
                 if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return; // 输入场景不拦截
                 if (EMBED) window.parent.postMessage({ type: Arcade.MSG.AUDIO, act: 'toggle' }, POST_MSG_TARGET); // 目标 origin 取 POST_MSG_TARGET
@@ -876,7 +883,23 @@ const SFX = (() => {
         /** 华容道卡片：古风木质拨弦下滑双音（棋子叩击木盘的温润质感） */
         cardKlotski: () => { tone(520, 0.08, 'triangle', 0.11, 390); tone(390, 0.1, 'triangle', 0.09, 0, 0.09); },
         /** 1024卡片：数字方块滑动上滑音 + 合并确认双击（对应玩法核心动作） */
-        cardN1024: () => { tone(330, 0.09, 'triangle', 0.09, 540); tone(540, 0.06, 'square', 0.09, 0, 0.1); tone(660, 0.08, 'square', 0.07, 0, 0.16); }
+        cardN1024: () => { tone(330, 0.09, 'triangle', 0.09, 540); tone(540, 0.06, 'square', 0.09, 0, 0.1); tone(660, 0.08, 'square', 0.07, 0, 0.16); },
+
+        /* ---------- 卡片点击音效（进入对应游戏的"另一款代表音"） ---------- */
+        /** 俄罗斯方块升级：三连上行琶音 */
+        tLevelUp: () => { tone(523, 0.07, 'square', 0.1); tone(659, 0.07, 'square', 0.1, 0, 0.07); tone(784, 0.12, 'square', 0.1, 0, 0.14); },
+        /** 吃豆人开场：三音上行启程号角 */
+        pacReady: () => { tone(440, 0.1, 'square', 0.1); tone(660, 0.1, 'square', 0.1, 0, 0.12); tone(880, 0.16, 'square', 0.1, 0, 0.24); },
+        /** 弹球发射：弹射器蓄能低鸣 + 弹簧弹射上滑 */
+        pinLaunch: () => { tone(120, 0.14, 'sawtooth', 0.13, 920); tone(1800, 0.08, 'square', 0.06, 300, 0.1); },
+        /** 华容道选子：木质叩击下滑单音 */
+        klSelect: () => tone(340, 0.07, 'triangle', 0.11, 260),
+        /** 1024合并：合并音高随数值档位上行 + 上方确认双击 @param {number} n 合并出的目标数值 */
+        n1024Merge: (n = 32) => {
+            const f = 300 + Math.min(Math.log2(Math.max(n, 2)), 11) * 55; // 数值越大音越高，封顶防刺耳
+            tone(f, 0.07, 'triangle', 0.1);
+            tone(f * 1.5, 0.09, 'square', 0.08, 0, 0.07);
+        }
     };
 })();
 // 挂载到 window：与 fx.js / arcade-common.js / fullscreen.js 导出风格一致，供跨脚本引用

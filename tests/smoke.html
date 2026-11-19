@@ -9,7 +9,7 @@
      逻辑的数学与几何正确性（页内函数存在性由 check.py 检查项 14 静态守护）
      ——零依赖（无 node / playwright），与项目工具链一致。
 
-     覆盖场景（21 项）：
+     覆盖场景（22 项）：
        S1 投币基线        —— 未开面板时点击任意处 → 正常投币（pre-coin 摘除）
        S2 点外关闭豁免    —— 面板打开时点外关闭手势不投币（document→window 监听时序回归）
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
@@ -48,11 +48,15 @@
        S21 手柄合成链路  —— bootGamePage 装载 snake 页 + 桩替换 navigator.getGamepads：GP.connected 上浮/拔除复位、
                               合成 keydown/keyup 送达 document 且冒泡 window、key/code 与原生键盘同构（Space key=' '）、
                               按住边沿去重、拔除补发 keyup 防卡键，页面侧 preventDefault 消费即端到端落点证据
+       S22 成就统计项守护 —— 复用 S20 单例实例（init 幂等短路，二次 init 返回首例）：trackRunStat
+                              未注册统计名警告 + 拒写入 best 存档（守形状完整性）、已注册项入账
+                              只升不降、console.warn 用后还原
      注：S9~S16 与 S19 均以 ?embed=1 加载真实游戏页（S9~S15 为白盒面直调页内纯函数、
          S16/S19 黑盒），先断言公共库握手两条报到——
          改 audio.js / fx.js / fullscreen.js 后重跑本页即可完成全部七页行为级回归；
          S17/S18 经 bootGamePage 同源装载真实游戏页，黑盒断言演出门控的跨页覆盖半径；
-         S20 直引 ach-common.js 以受控 defs 合成实例，渲染契约断言零 iframe 开销；
+         S20 直引 ach-common.js 合成实例、S22 复用 S20 单例（init 幂等短路），渲染/统计守护契约
+         断言零 iframe 开销；
          S21 经 bootGamePage 同源装载并以 getGamepads 桩替代实体手柄（轮询式 API 黑盒替换数据源）
 
      运行方式：先起服（python server.py），浏览器访问
@@ -103,7 +107,7 @@
 <div id="stage"></div>
 <script src="../arcade-common.js?v=20261119-1"></script>
 <script src="../fx.js?v=20261119-1"></script>
-<script src="../ach-common.js?v=20261119-2"></script>
+<script src="../ach-common.js?v=20261119-4"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------
@@ -1193,6 +1197,43 @@ async function s21_gamepadSynth() {
 }
 
 /**
+ * S22 成就统计项守护（trackRunStat 未注册项）：ach-common.js 的 init 为模块级单例
+ * （重复调用短路返回首实例），故复用 S20 已就绪的实例 API 做三腿断言——
+ * 未注册统计名：console.warn 带中文告知 + 统计名、best 存档不产生幽灵键（守形状完整性：
+ * 进度读取按固定键名，任意统计名直写会让存档膨胀并给降级解析路径引入未知字段）；
+ * 已注册统计名：超越旧值立即入账、低值不回退。用后还原 console.warn 与存档键。
+ * @returns {Promise<string>} 通过明细
+ */
+async function s22_achTrackStatGuard() {
+    ok(window.Ach && typeof Ach.trackRunStat === 'function' && typeof Ach.getStore === 'function',
+       'Ach 共享层缺失（trackRunStat/getStore）——须先经 S20 完成 init');
+    const prev = Ach.getStore().best.score;
+    ok(typeof prev === 'number' && Number.isFinite(prev), 'best.score 非有限数值: ' + prev);
+    const origWarn = console.warn;
+    let warned = null;
+    console.warn = (...args) => { warned = args.map(String).join(' '); };
+    try {
+        // 腿1 未注册统计名：警告 + 拒绝写入 best 存档
+        Ach.trackRunStat('ghost', 999);
+        ok(warned !== null, '未注册统计项未警告');
+        ok(warned.includes('未注册统计项') && warned.includes('ghost'), '警告内容缺中文告知或统计名: ' + warned);
+        ok(!Object.prototype.hasOwnProperty.call(Ach.getStore().best, 'ghost'), '未注册统计项被误写入 best 存档');
+        // 腿2 已注册统计名：超越旧值立即入账
+        warned = null;
+        Ach.trackRunStat('score', prev + 5);
+        ok(warned === null, '已注册统计项被误警告');
+        ok(Ach.getStore().best.score === prev + 5, '合法统计项未入账（期望 best.score=' + (prev + 5) + '）');
+        // 腿3 只升不降：低值不回退历史最佳
+        Ach.trackRunStat('score', prev);
+        ok(Ach.getStore().best.score === prev + 5, '低值不应回退 best.score');
+    } finally {
+        console.warn = origWarn; // 还原全局 warn：后续场景/自动化日志通道不受污染
+        localStorage.removeItem('smoke_ach_s20'); // 本场景写入落在 S20 实例的存档键上
+    }
+    return '未注册项警告+拒入档 / 已注册项入账 / 低值只升不降 / console.warn 还原 全对';
+}
+
+/**
  * 串行运行一组场景：逐个执行 → 记录结果 → 清场（场景间 iframe 状态彻底隔离）
  * @param {Array<[string, Function]>} list [场景名, 场景异步函数] 数组
  */
@@ -1208,7 +1249,7 @@ async function runScenarios(list) {
     }
 }
 
-// ---------- 主流程：快照 → 串行执行二十一场景 → 恢复 ----------
+// ---------- 主流程：快照 → 串行执行二十二场景 → 恢复 ----------
 async function main() {
     if (running) return;
     running = true;
@@ -1254,6 +1295,7 @@ async function main() {
             ['S19 演出档位 mode 消费（自动档记忆/固定档兼容）', s19_fxLevelMode],
             ['S20 事件型成就渲染（NaN 兜底/cat 前缀/进度钳位）', s20_achEventRender],
             ['S21 手柄合成链路（GP 状态/键盘事件端到端）', s21_gamepadSynth],
+            ['S22 成就统计项守护（未注册项警告/拒入档）', s22_achTrackStatGuard],
         ]);
     } finally {
         clearStage();
