@@ -828,7 +828,7 @@ function addScore(pts, wx, wy) {
 
 /**
  * 落盘最高分（脏标记置位时才真正写 localStorage，键 pinballHighScore）：
- * 在既有落盘时机统一调用——结算（gameOver）与各存档钩子（saveSnapshot 的两个触发点：
+ * 在既有落盘时机统一调用——结算（gameOver）与各存档钩子（快照管线的两个触发点：
  * arcade:save 消息 / pagehide），碰撞热路径内不再同步写存储；
  * 存储写入失败（隐私模式 / 配额满）静默忽略，脏标记保留供下次时机重试
  */
@@ -838,7 +838,7 @@ function flushHighScore() {
         Arcade.saveRaw(KEYS.highScore, String(highScore));
         highScoreDirty = false; // 写入成功才清脏标记，失败则保留待下次重试
     } catch (err) {
-        // 存储不可用：静默忽略（与 saveSnapshot 同口径，不影响游戏）
+        // 存储不可用：静默忽略（与快照管线存取同口径，不影响游戏）
     }
 }
 
@@ -1133,7 +1133,7 @@ function buildPinballSnapshot() {
 
 // 存取管线由共享库 snap-common.js 驱动：进行中（ready/play）或暂停中写入镜像，
 // 处于开始界面 / 失球演出 / 结算界面时清除已有快照，避免下次进入恢复到过期进度；
-// canSave 顺带补写脏最高分——保持与原 saveSnapshot 相同的落盘时机
+// canSave 顺带补写脏最高分——保持与快照管线保存入口相同的落盘时机
 //（两个存档钩子 arcade:save / pagehide 都会先 flush 再按状态分流）。
 // 组装意外与存储异常（隐私模式 / 配额满）由管线整体 try/catch 静默，不影响游戏
 const snapPipe = Snap.create({
@@ -1146,14 +1146,6 @@ const snapPipe = Snap.create({
     validate: validatePinballSnapshot,
     apply: applyPinballSnapshot
 });
-
-/**
- * 保存当前局进度快照到 localStorage（键 arcade_save_pinball，薄壳）：
- * 进行中或暂停中写入 / 其余界面清除，读写管线与触发接线由 snap-common.js 统一实现
- */
-function saveSnapshot() {
-    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
-}
 
 /**
  * 校验快照版本号与逐字段类型 / 范围：球坐标与速度必须有限且在台面合理范围、

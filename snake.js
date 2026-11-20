@@ -87,6 +87,7 @@ let isNewRecord = false;
 /** 历史最高分（localStorage 持久化） */
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 回退默认 0），不中断初始化
 let highScore = parseInt(Arcade.loadRaw(KEYS.HIGH_SCORE) || '0', 10);
+if (Number.isNaN(highScore)) highScore = 0; // 脏数据兜底（与难度读取的 isNaN 防御同口径）：非数字串 parseInt 得 NaN，否则永不破纪录且 HUD 显示 HI NaN
 
 /* ===================== 特效状态 ===================== */
 

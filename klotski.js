@@ -1086,14 +1086,6 @@ const snapPipe = Snap.create({
 });
 
 /**
- * 将当前局进度镜像写入 localStorage（键 arcade_save_klotski，薄壳）：
- * 进行中保存 / 未开始或已通关清除，读写管线与触发接线由 snap-common.js 统一实现
- */
-function saveSnapshot() {
-    snapPipe.save(); // 管线内部自行分流：canSave 判定保存 / 清除
-}
-
-/**
  * 清除进度快照存档（键 arcade_save_klotski）：通关结算 / 手动重开 / 切换布局 /
  * 启动演示时调用，避免下次进入页面误续玩一局已被废弃的棋局；存储不可用时静默跳过
  */
@@ -1578,7 +1570,7 @@ function requestHint() {
         SFX.klHint();
         return;
     }
-    if (hintPath) { showHintStep(hintPath.shift(), diff); return; } // 缓存命中：同步取下一步
+    if (hintPath && hintPath.length > 0) { showHintStep(hintPath.shift(), diff); return; } // 缓存命中：同步取下一步（shift 耗尽后的空数组仍为真值，必须查长度，否则 step 为 undefined 抛 TypeError）
     if (hintPending) return; // 求解在途：重复按键静默等待回调
     const start = encodeBoard(); // 快照当前棋面：回调时比对是否已变动
     const gen = solveGen; // 捕获当前局代次：回调时已换局/重开则丢弃

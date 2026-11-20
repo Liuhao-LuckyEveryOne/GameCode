@@ -612,6 +612,9 @@
         }
         .stat-row .label { color: #8a8ab0; }
         .stat-row .value { font-family: 'Press Start 2P', monospace; }
+        /* 显式补回 hidden 属性的隐藏：上面的 display:flex 会反超 UA 样式表的 [hidden] 规则，
+           漏补会令「每日挑战」徽章在当日达成后仍常显 */
+        #dailyBadge[hidden] { display: none; }
         .keys p { margin: 4px 0; font-size: 12px; color: #b8b8d8; }
         .keys b { color: var(--neon-orange); font-weight: normal; }
         /* 触屏点击优化：按钮/链接启用 manipulation，消除双击缩放判定带来的点击延迟 */
@@ -727,7 +730,7 @@
     <script src="audio.js?v=20261120-2"></script>
     <script src="fx.js?v=20261120-2"></script>
     <script src="fullscreen.js?v=20261120-3"></script>
-    <script src="ach-common.js?v=20261120-1"></script>
+    <script src="ach-common.js?v=20261120-2"></script>
     <script src="snap-common.js?v=20261120-1"></script>
     <script src="pause-common.js?v=20261120-1"></script>
     <script src="audio-1024.js?v=20261118-1"></script>

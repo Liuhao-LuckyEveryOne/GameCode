@@ -751,17 +751,6 @@ const snapPipe = Snap.create({
 });
 
 /**
- * 保存当前局进度镜像快照到 localStorage（键 arcade_save_pac）。
- * 触发点：父页 arcade:save 消息 / window pagehide。
- * 仅"进行中(play)或就绪(ready，含恢复后暂停中)"可镜像；未开始(start)、
- * 死亡(dying)/清版(clear)过场、已结束(over)等状态一律清除残留快照，保证下次进入不会恢复到非法局面。
- * 组装纯数据快照（数值/字符串/布尔/数组，不含函数与 DOM 引用），整体 try/catch 异常静默。
- */
-function saveSnapshot() {
-    snapPipe.save(); // 管线内部自行分流：状态门槛判定保存 / 清除
-}
-
-/**
  * 校验快照数据合法性（管线弃档判定钩子）：v===1 且逐字段类型/范围合法
  * （坐标在迷宫范围内、生命/分数非负有限、幽灵数量与枚举合法、豆子压位串与
  * 迷宫规格逐格互验）。布尔校验风格：任一不合法立即返回 false 弃档，

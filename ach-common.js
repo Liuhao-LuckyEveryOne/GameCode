@@ -87,10 +87,24 @@
             }
             // 钩子未接手（返回 null/形状非法）：落入下方默认迁移
         }
-        if (raw && !Array.isArray(raw) && raw.unlocked && raw.best) {
-            // v2 现役格式：浅拷贝防御外部误改，并补齐新版定义新增的统计键
-            const best = Object.assign({}, opts.bestDefaults, raw.best);
-            return { unlocked: Object.assign({}, raw.unlocked), best: best };
+        if (raw && !Array.isArray(raw)) {
+            // 两表按"普通对象"校验（排除 null / 数组 / 原始类型）：仅真值判定会让半损坏档
+            // （如 unlocked 为 null）漏过 v2 分支误入下方迁移，把合法的另一半也一并清零
+            const unlockedOk = raw.unlocked !== null && typeof raw.unlocked === 'object' && !Array.isArray(raw.unlocked);
+            const bestOk = raw.best !== null && typeof raw.best === 'object' && !Array.isArray(raw.best);
+            if (unlockedOk && bestOk) {
+                // v2 现役格式：浅拷贝防御外部误改，并补齐新版定义新增的统计键
+                const best = Object.assign({}, opts.bestDefaults, raw.best);
+                return { unlocked: Object.assign({}, raw.unlocked), best: best };
+            }
+            if (unlockedOk || bestOk) {
+                // 半损坏档抢救：合法的一半照常采用（best 补齐新统计键），损坏的一半按空档重建，
+                // 不再整档清零；抢救结果立即落盘固化，避免每次装载重复抢救
+                const best = bestOk ? Object.assign({}, opts.bestDefaults, raw.best) : Object.assign({}, opts.bestDefaults);
+                const unlocked = unlockedOk ? Object.assign({}, raw.unlocked) : {};
+                Arcade.saveJSON(opts.storageKey, { unlocked: unlocked, best: best });
+                return { unlocked: unlocked, best: best };
+            }
         }
         // v1 数组 → v2：旧解锁无时间戳统一记 0（成就墙显示"已达成"而非具体日期）；
         // 只收编当前 defs 中存在的 id（与 unlock 的脏 ID 拒绝同口径），防脏 id 永驻存档
