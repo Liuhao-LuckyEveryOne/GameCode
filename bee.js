@@ -1563,7 +1563,7 @@ function updateGame(dt) {
 
     // ---- 射击冷却与开火 ----
     fireCooldown = Math.max(0, fireCooldown - dt);
-    // 空格或鼠标左键（游戏中按住左键）均可触发连发
+    // 空格或持续开火标志（鼠标左键 / 触屏按住）均可触发连发
     if (keys['Space'] || (mouseFire && gameState === 'playing')) playerFire();
 
     // ---- 无敌与连击窗口倒计时 ----
@@ -2740,14 +2740,18 @@ document.addEventListener('mouseup', e => {
 // 同一套累计判定（≥2px 出方向 / >60px 跳变忽略 / 0.15s 保持窗）；pointerType 判界
 // 保证两通道互不叠加（桌面鼠标仍走上方 mousemove，触屏合成的 mousemove 无有效 movementX）
 // 触屏开火通道（与转向同用 pointer 事件）：按下即持续射击、抬手/系统接管结束——
-// 显式声明，不再依赖浏览器合成的 mousedown/up 兼容事件（部分环境会抑制合成事件
-// 导致触屏无法开火）；Set 追踪全部触点，"一指按住开火 + 另一指转向"仅全部抬起才停火
+// 起止全程显式声明（按下置 mouseFire=true 开火、全部触点抬起置 false 停火），不依赖
+// 浏览器合成的 mousedown/up 兼容事件（部分环境会抑制合成事件导致触屏无法开火）；
+// Set 追踪全部触点，"一指按住开火 + 另一指转向"仅全部抬起才停火
 const touchFireIds = new Set();
 canvas.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch') return; // 鼠标维持原通道，避免双输入叠加
     touchLastX = e.clientX;
     // 开火准入与 mousedown 通道同口径：仅进行中且非暂停态（暂停按下交给遮罩恢复）
-    if (gameState === 'playing' && !blurPaused && !paused) touchFireIds.add(e.pointerId);
+    if (gameState === 'playing' && !blurPaused && !paused) {
+        touchFireIds.add(e.pointerId);
+        mouseFire = true; // 起点显式置位：开火门只认 mouseFire，不再依赖浏览器合成的 mousedown 兼容事件
+    }
     // 捕获到画布：手指拖出画布区域仍能持续收到 move/up，转向不中断（守卫见 arcade-common.js）
     Arcade.capturePointer(canvas, e.pointerId);
 });
@@ -3070,7 +3074,7 @@ window.__ARCADE_TESTS__ = [
             paused = false; blurPaused = true;
             down(23);
             if (touchFireIds.size !== 0) throw new Error('失焦暂停中触点被误入队');
-            blurPaused = false; gameState = 'idle';
+            blurPaused = false; gameState = 'start';
             down(24);
             if (touchFireIds.size !== 0) throw new Error('非进行中触点被误入队');
             // 进行中入队后手动暂停：setPaused 钩子清空追踪集，恢复后归位
@@ -3089,6 +3093,41 @@ window.__ARCADE_TESTS__ = [
             if (mouseFire !== false) throw new Error('失焦未停火');
             if (paused !== true || blurPaused !== true) throw new Error('失焦未进入失焦暂停');
             pausePipe.resume(); // 归还失焦暂停态，不把暂停带进后续用例
+        } finally {
+            gameState = saved.gameState; paused = saved.paused; blurPaused = saved.blurPaused;
+            mouseFire = saved.mouseFire; touchLastX = saved.touchLastX; mouseDx = saved.mouseDx;
+            touchFireIds.clear();
+            for (const id of oldIds) touchFireIds.add(id);
+        }
+    } },
+    // 触屏开火起点显式置位（②修复回归）：准入通过的 touch 按下即置 mouseFire=true，
+    // 开火门不再依赖浏览器合成的 mousedown 兼容事件；mouse 型 pointer 不置位（走原
+    // mousedown 通道）、暂停/非进行中等非准入态按下也不置位且不入队
+    { name: '触屏开火起点显式置位', fn: () => {
+        const saved = { gameState, paused, blurPaused, mouseFire, touchLastX, mouseDx };
+        const oldIds = Array.from(touchFireIds);
+        touchFireIds.clear();
+        try {
+            gameState = 'playing'; paused = false; blurPaused = false;
+            mouseFire = false; touchLastX = null; mouseDx = 0;
+            const ev = (type, id, ptype) => canvas.dispatchEvent(new PointerEvent(type, {
+                pointerType: ptype, pointerId: id, clientX: 240, clientY: 300, bubbles: true
+            }));
+            ev('pointerdown', 31, 'touch');
+            if (mouseFire !== true) throw new Error('触屏按下未显式置开火');
+            ev('pointerup', 31, 'touch');
+            if (mouseFire !== false) throw new Error('触屏抬起未停火');
+            ev('pointerdown', 32, 'mouse');
+            if (mouseFire !== false || touchFireIds.size !== 0) throw new Error('鼠标 pointer 误置触屏开火/入队');
+            paused = true;
+            ev('pointerdown', 33, 'touch');
+            if (mouseFire !== false || touchFireIds.size !== 0) throw new Error('暂停中触屏按下误置开火/入队');
+            paused = false; blurPaused = true;
+            ev('pointerdown', 34, 'touch');
+            if (mouseFire !== false || touchFireIds.size !== 0) throw new Error('失焦暂停中触屏按下误置开火/入队');
+            blurPaused = false; gameState = 'start';
+            ev('pointerdown', 35, 'touch');
+            if (mouseFire !== false || touchFireIds.size !== 0) throw new Error('非进行中触屏按下误置开火/入队');
         } finally {
             gameState = saved.gameState; paused = saved.paused; blurPaused = saved.blurPaused;
             mouseFire = saved.mouseFire; touchLastX = saved.touchLastX; mouseDx = saved.mouseDx;

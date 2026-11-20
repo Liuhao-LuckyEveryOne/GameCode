@@ -2,17 +2,18 @@
 # -*- coding: utf-8 -*-
 """像素街机厅 · 一键全量验证器（tools/verify_all.py）
 
-把「分享包重建 → 静态检查 → 无头冒烟 → 无头行为回归」四步验证串成单命令，
+把「分享包重建 → 静态检查 → 无头冒烟 → 无头行为回归 → 计数口径单测」五步验证串成单命令，
 纯 Python 3 标准库零依赖（无头浏览器按常见安装路径自动探测本机 Chrome / Edge）。
 
 用法（项目根目录或任意目录均可）：
     python tools/verify_all.py
 
-四步流水（任一步失败立即中止，非零码退出）：
+五步流水（任一步失败立即中止，非零码退出）：
   1. 分享包重建   —— tools/sync_packages.py（快照包与源文件逐条目一致）
-  2. 静态一致性   —— tests/check.py（十五项检查全绿）
+  2. 静态一致性   —— tests/check.py（十七项检查全绿）
   3. 无头冒烟     —— tests/smoke.html（document.title 输出「冒烟通过 p/t」）
   4. 无头行为回归 —— tests/behavior.html（document.title 输出「行为通过 p/t」）
+  5. 计数口径单测 —— tests/test_counter_text.py（unittest 三用例：锚定句口径 + 全仓旧计数反断言）
 
 无头运行要点：
   - CDP 实时驱动：--remote-debugging-port=0 启动无头浏览器，从临时 profile 内
@@ -31,7 +32,7 @@
   - 浏览器以一次性临时 user-data-dir 启动，不触碰用户默认配置文件；收尾整树
     杀进程（chrome 含多个子进程），杜绝孤儿进程与端口残留
 
-退出码：0 = 四步全绿；1 = 存在失败步（打印失败明细与修复提示）。
+退出码：0 = 五步全绿；1 = 存在失败步（打印失败明细与修复提示）。
 """
 import base64
 import json
@@ -392,18 +393,18 @@ def judge_title(title):
 
 
 def main():
-    """串行执行四步验证，任一步失败即中止并报告。
+    """串行执行五步验证，任一步失败即中止并报告。
 
     返回:
-        退出码（0 = 四步全绿；1 = 存在失败步）
+        退出码（0 = 五步全绿；1 = 存在失败步）
     """
     print("像素街机厅 · 一键全量验证")
     # 第 1 步：分享包重建
-    if run_py_step("第 1 步 / 共 4 步：分享包重建", "tools/sync_packages.py") != 0:
+    if run_py_step("第 1 步 / 共 5 步：分享包重建", "tools/sync_packages.py") != 0:
         print("\n[FAIL] 分享包重建失败，中止后续步骤")
         return 1
-    # 第 2 步：静态十五项检查
-    if run_py_step("第 2 步 / 共 4 步：静态一致性检查（十五项）", "tests/check.py") != 0:
+    # 第 2 步：静态十七项检查
+    if run_py_step("第 2 步 / 共 5 步：静态一致性检查（十七项）", "tests/check.py") != 0:
         print("\n[FAIL] 静态检查存在失败项，中止后续步骤")
         return 1
     # 无头浏览器前置探测（第 3/4 步共用）
@@ -417,8 +418,8 @@ def main():
         base = f"http://127.0.0.1:{server.server_address[1]}"
         # 第 3/4 步：无头冒烟 + 无头行为回归
         for label, path_name, prefix in (
-            ("第 3 步 / 共 4 步：无头冒烟", "/tests/smoke.html", "冒烟通过"),
-            ("第 4 步 / 共 4 步：无头行为回归", "/tests/behavior.html", "行为通过"),
+            ("第 3 步 / 共 5 步：无头冒烟", "/tests/smoke.html", "冒烟通过"),
+            ("第 4 步 / 共 5 步：无头行为回归", "/tests/behavior.html", "行为通过"),
         ):
             print(f"\n==== {label}（{path_name}，CDP 实时轮询 {POLL_INTERVAL_S}s / 超时 {REAL_TIMEOUT_S}s）====")
             title, err = run_headless(browser, base + path_name)
@@ -437,8 +438,12 @@ def main():
     finally:
         server.shutdown()
         server.server_close()
+    # 第 5 步：计数口径单测（纯文本扫描零浏览器依赖，置于无头步之后收尾）
+    if run_py_step("第 5 步 / 共 5 步：计数口径单测", "tests/test_counter_text.py") != 0:
+        print("\n[FAIL] 计数口径单测存在失败项")
+        return 1
     print("\n==============================================")
-    print("一键验证：4/4 步全绿")
+    print("一键验证：5/5 步全绿")
     return 0
 
 

@@ -5,8 +5,8 @@
 #     重建分享包（tools/sync_packages.py），若直接跑全量，"改了 js 忘了 sync"
 #     的仓库态漂移会被自动重建静默抹平、检查全绿照常通过；守护检查前置，
 #     让此类漂移在 CI 上显形为红（check.py 的分享包一致性项对陈旧 zip 报错）。
-#   阶段 2 全量验证 —— tools/verify_all.py 四步流水（sync → check → 无头冒烟
-#     → 无头行为回归），与本地一键验证完全同源，任一步失败非零码退出即红。
+#   阶段 2 全量验证 —— tools/verify_all.py 五步流水（sync → check → 无头冒烟
+#     → 无头行为回归 → 计数口径单测），与本地一键验证完全同源，任一步失败非零码退出即红。
 #
 # 无头浏览器：verify_all.py 的探测清单末尾按裸命令名 chromium 走 PATH 查找，
 #   故把 runner 预装的 google-chrome 以 chromium 命令名包装进 /usr/local/bin，
@@ -53,5 +53,5 @@ jobs:
       - name: 守护检查（仓库态静态一致性）
         run: python tests/check.py
 
-      - name: 全量四步验证（sync → check → 无头冒烟 → 无头行为回归）
+      - name: 全量五步验证（sync → check → 无头冒烟 → 无头行为回归 → 计数口径单测）
         run: python tools/verify_all.py

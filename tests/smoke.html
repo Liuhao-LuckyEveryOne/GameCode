@@ -68,8 +68,9 @@
      document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
      + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
      本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
-     一键全量验证：python tools/verify_all.py（重建分享包 → 十五项静态检查 →
-       无头冒烟 → 无头行为回归；自动起随机端口临时服 / 探测本机 Chrome 或 Edge）。
+     一键全量验证：python tools/verify_all.py（重建分享包 → 十七项静态检查 →
+       无头冒烟 → 无头行为回归 → 计数口径单测；自动起随机端口临时服 / 探测本机
+       Chrome 或 Edge）。
 
      数据安全：启动时快照 localStorage 全部键值，结束时（含 pagehide 兜底）
      清除并原样恢复——测试写入的种子数据与成就不会污染真实存档。
