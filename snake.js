@@ -64,19 +64,22 @@ let eatenCount = 0;
 let foodPoints = 10;
 /** 无敌模式开关（仅"无敌"难度开启）：撞墙不死亡改为环绕穿墙，撞自身直接穿过 */
 let invincibleMode = false;
-/** 当日日期串 YYYYMMDD（本地时区，跨日自动换新目标）：前置定义供 KEYS.DAILY 拼接 */
-const DAILY_DATE = (() => {
+/** 当日日期串 YYYYMMDD（本地时区）：每次调用即时求值，跨零点自然切换新日期，不在模块加载时固化 */
+function dailyDate() {
     const d = new Date();
     return d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-})();
+}
 /** localStorage 存档键单点定义（值不变，兼容历史存档）：全文件引用此表，禁止散落裸写键名字面量 */
 const KEYS = {
     DIFFICULTY: 'snakeDifficulty',             // 难度选择存档键（裸串序号），页面加载时恢复上一次选择
     HIGH_SCORE: 'snakeHighScore',              // 历史最高分存档键（裸串数值）
     SAVE: 'arcade_save_snake',                 // 进度镜像快照存档键：返回游戏厅/页面卸载时保存本局进度，下次进入校验恢复续玩
-    ACHIEVEMENT: 'arcade_ach_snake',           // 成就存档键（跨局累计）：v2 格式 { unlocked: { id: 解锁时间戳 }, best: { 各项历史最佳 } }
-    DAILY: 'arcade_daily_snake_' + DAILY_DATE  // 每日挑战达成落盘键（值 '1'；当日已达成则不再重复演出）
+    ACHIEVEMENT: 'arcade_ach_snake'            // 成就存档键（跨局累计）：v2 格式 { unlocked: { id: 解锁时间戳 }, best: { 各项历史最佳 } }
 };
+/** 每日挑战达成落盘键（值 '1'）：按当日日期即时拼接，键格式与历史一致，跨零点自然切到新一天的键 */
+function dailyKey() {
+    return 'arcade_daily_snake_' + dailyDate();
+}
 /** 是否处于暂停状态 */
 let isPaused = false;
 /** 本局是否刷新了历史最高分（结算面板据此显示"新纪录"提示） */
@@ -1367,18 +1370,27 @@ if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
 // 位置约束：必须位于下方 restoreSnapshot() 调用之前——续玩恢复成功路径会调用
 // updateDailyGoal()，若其依赖的 const/let（dailyGoalElement 等）尚未初始化将触发
 // TDZ ReferenceError，顶层脚本中断导致 rAF 与看门狗均未注册（无格无蛇无食物白屏）
-/** 当日目标长度（蛇总节数，含蛇头）：15 + 日期哈希 % 16 → 每日 15~30 节不等 */
-const DAILY_GOAL = (() => {
+/** 按日期串派生目标长度（蛇总节数，含蛇头）：15 + 日期哈希 % 16 → 每日 15~30 节不等 */
+function dailyGoalFor(dateStr) {
     let h = 0;
-    for (let i = 0; i < DAILY_DATE.length; i++) h = (h * 31 + DAILY_DATE.charCodeAt(i)) >>> 0; // 多项式整数哈希
+    for (let i = 0; i < dateStr.length; i++) h = (h * 31 + dateStr.charCodeAt(i)) >>> 0; // 多项式整数哈希
     return 15 + h % 16;
-})();
+}
 /** 每日目标 HUD 元素（STATS 面板「今日」行） */
 const dailyGoalElement = document.getElementById('dailyGoal');
-/** 当日是否已达成（读取失败按未达成处理，可重新达成） */
-let dailyGoalDone = (() => {
-    try { return Arcade.loadRaw(KEYS.DAILY) === '1'; } catch (e) { return false; }
-})();
+/** 当日目标长度缓存（由 syncDailyGoal 按当日换算）与当日是否已达成（读取失败按未达成处理，可重新达成） */
+let dailyGoalLen = 15;
+let dailyGoalDone = false;
+/** 当日缓存归属的日期串：同日复用缓存不重读存档，跨零点才换算新目标 */
+let dailyGoalDate = '';
+/** 每日目标状态同步到当日：判定/落盘入口处调用，跨零点首次入口换算新目标并读新键（同日内仅首调一次） */
+function syncDailyGoal() {
+    const today = dailyDate();
+    if (dailyGoalDate === today) return;
+    dailyGoalDate = today;
+    dailyGoalLen = dailyGoalFor(today);
+    try { dailyGoalDone = Arcade.loadRaw(dailyKey()) === '1'; } catch (e) { dailyGoalDone = false; }
+}
 
 /**
  * 刷新「今日」HUD 行并处理达成演出：显示 当前长度/目标，当日已达成则显示「达成 N」；
@@ -1386,13 +1398,14 @@ let dailyGoalDone = (() => {
  */
 function updateDailyGoal() {
     if (!dailyGoalElement) return; // HUD 行缺失时静默跳过
-    if (dailyGoalDone) { dailyGoalElement.textContent = '达成 ' + DAILY_GOAL; return; }
+    syncDailyGoal(); // 判定/落盘入口取当日：跨零点后按新目标与新键判定（同日内仅首个入口重读一次存档）
+    if (dailyGoalDone) { dailyGoalElement.textContent = '达成 ' + dailyGoalLen; return; }
     const len = snake.length;
-    dailyGoalElement.textContent = len + '/' + DAILY_GOAL;
-    if (len >= DAILY_GOAL) {
+    dailyGoalElement.textContent = len + '/' + dailyGoalLen;
+    if (len >= dailyGoalLen) {
         dailyGoalDone = true;
-        dailyGoalElement.textContent = '达成 ' + DAILY_GOAL;
-        Arcade.saveRaw(KEYS.DAILY, '1'); // 存储不可用时静默放弃
+        dailyGoalElement.textContent = '达成 ' + dailyGoalLen;
+        Arcade.saveRaw(dailyKey(), '1'); // 存储不可用时静默放弃
         SFX.newRecord(); // 复用破纪录号角：达成演出更醒目
         const headSeg = snake[0];
         if (headSeg) {

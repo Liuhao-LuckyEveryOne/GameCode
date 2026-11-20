@@ -30,9 +30,9 @@ ENTRY_RE = re.compile(rb'([\w./-]+\.html)\?v=([\w-]+)')
 
 
 def parse_ver(v):
-    """把 YYYYMMDD-N 版本号解析为可比较的元组；不可解析按 (0, 0) 视为最旧"""
+    """把 YYYYMMDD-N 版本号解析为可比较的元组；不可解析返回 None（调用方须跳过不强升，防覆盖手写版本）"""
     m = re.match(r'(\d{8})-(\d+)$', v)
-    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def sha1(path):
@@ -122,50 +122,91 @@ def main():
             n = 1
         new_v = '%s-%d' % (today, n)
 
-        # 全量替换所有 html 中的引用（按字节操作，避免换行符被改写）
-        old_ref = ('%s?v=%s' % (name, old_v)).encode('utf-8')
-        new_ref = ('%s?v=%s' % (name, new_v)).encode('utf-8')
+        # 全量替换所有 html 中的引用（按字节操作，避免换行符被改写）：对每个引用
+        # 独立解析版本，凡低于新版本的统一升到新版本——不再依赖首引用逐字匹配，
+        # 避免同 js 多页引用版本不一致时仅精确匹配旧值的页面被更新而残留旧版
+        new_ver = parse_ver(new_v)
+        js_abs = path.resolve()
         count = 0
+        manual = []
         for html, data in html_bytes.items():
-            if old_ref in data:
-                html_bytes[html] = data.replace(old_ref, new_ref)
+            hits = []
+
+            def upgrade(m, owner=html.parent, hits=hits):
+                rname, rver = m.group(1).decode('utf-8'), m.group(2).decode('utf-8')
+                if (owner / rname).resolve() != js_abs:
+                    return m.group(0)  # 其它 js 的引用不动
+                r_parsed = parse_ver(rver)
+                if r_parsed is None:
+                    # 手写非标版本（非 YYYYMMDD-N）：不覆盖，收集后统一提示
+                    manual.append('%s（%s?v=%s）' % (html.relative_to(ROOT), rname, rver))
+                    return m.group(0)
+                if r_parsed < new_ver:
+                    hits.append(1)
+                    return ('%s?v=%s' % (rname, new_v)).encode('utf-8')
+                return m.group(0)
+
+            upgraded = REF_RE.sub(upgrade, data)
+            if hits:
+                html_bytes[html] = upgraded
                 count += 1
         cache[name] = h
         bumped.append('%s  %s -> %s （%d 个 html）' % (name, old_v, new_v, count))
-        cur_v[(ref_owner[name] / name).resolve()] = new_v
+        if manual:
+            print('提示：%s 存在手写非标版本引用，未自动覆盖：%s' % (name, '、'.join(manual)))
+        cur_v[js_abs] = new_v
 
     # ---------- 卡片入口同步：入口 html 引用版本不得落后于同名业务 js ----------
     # 扫描全部 html 中的 X.html?v= 入口引用（如大厅卡片 <a href="snake.html?v=...">），
     # 同一入口多路径引用按解析后路径去重；仅当入口页存在且同目录同名 stem.js 有版本
-    # 记录时参与同步——入口落后即字节替换升至 js 同值，入口领先合法不回退（只升不降）
-    entry_refs = {}     # {入口 html 引用名: (版本号, 首次引用它的 html 所在目录)}
+    # 记录时参与同步——与上方 js 引用升级同法：对每处引用独立解析版本，凡低于 js
+    # 当前版本的统一升到同值，入口持平或领先合法不回退（只升不降），
+    # 不再依赖首引用逐字匹配；手写非标版本不覆盖，由 check.py 检查项 12 报红兜底
+    entry_seen = {}     # {入口 html 解析后绝对路径: (引用名, 首次引用它的 html 所在目录)}
     for html, data in html_bytes.items():
-        for name, ver in ENTRY_RE.findall(data):
-            key = name.decode('utf-8')
-            if key not in entry_refs:
-                entry_refs[key] = (ver.decode('utf-8'), html.parent)
-    entry_seen = {}
-    for name, (ver, owner) in entry_refs.items():
-        entry_seen.setdefault((owner / name).resolve(), (name, ver, owner))
+        for ename, _ver in ENTRY_RE.findall(data):
+            key = ename.decode('utf-8')
+            entry_seen.setdefault((html.parent / key).resolve(), (key, html.parent))
 
     entry_synced = []
-    for epath, (name, ver, owner) in entry_seen.items():
-        page = owner / name
+    for epath, (ename, owner) in entry_seen.items():
+        page = owner / ename
         jsname = page.stem + '.js'
         js_key = (owner / jsname).resolve()
         if not page.is_file() or js_key not in cur_v:
             continue  # 非卡片入口形态（同名业务 js 不存在）或该 js 无版本记录，跳过
         js_v = cur_v[js_key]
-        if parse_ver(ver) >= parse_ver(js_v):
-            continue  # 入口持平或领先，合法
-        old_ref = ('%s?v=%s' % (name, ver)).encode('utf-8')
-        new_ref = ('%s?v=%s' % (name, js_v)).encode('utf-8')
+        jv = parse_ver(js_v)
+        if jv is None:
+            continue  # js 侧版本非标（理论不可能，防御跳过）
+        new_ref = ('%s?v=%s' % (ename, js_v)).encode('utf-8')
+        manual = []
         count = 0
         for html, data in html_bytes.items():
-            if old_ref in data:
-                html_bytes[html] = data.replace(old_ref, new_ref)
+            hits = []
+
+            def upgrade_entry(m, epath=epath, owner=html.parent, hits=hits):
+                rname, rver = m.group(1).decode('utf-8'), m.group(2).decode('utf-8')
+                if (owner / rname).resolve() != epath:
+                    return m.group(0)  # 其它入口的引用不动
+                ev = parse_ver(rver)
+                if ev is None:
+                    # 手写非标版本（非 YYYYMMDD-N）：不覆盖，收集后统一提示
+                    manual.append('%s（%s?v=%s）' % (html.relative_to(ROOT), rname, rver))
+                    return m.group(0)
+                if ev < jv:
+                    hits.append(1)
+                    return new_ref
+                return m.group(0)
+
+            upgraded = ENTRY_RE.sub(upgrade_entry, data)
+            if hits:
+                html_bytes[html] = upgraded
                 count += 1
-        entry_synced.append('%s?v=%s -> %s （对齐 %s，%d 个 html）' % (name, ver, js_v, jsname, count))
+        if count:
+            entry_synced.append('%s -> %s （对齐 %s，%d 个 html）' % (ename, js_v, jsname, count))
+        if manual:
+            print('提示：入口 %s 存在手写非标版本引用，未自动覆盖：%s' % (ename, '、'.join(manual)))
 
     # 写回 html（仅写入内容有变化的文件，按字节写避免换行符被改写）
     for html, data in html_bytes.items():

@@ -59,6 +59,8 @@
             // 合成键与真实按键同构：code/key 取 V 键值，bubbles 冒泡至 window，
             // 使监听在 document 或 window 上的游戏均能响应
             document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'v', bubbles: true }));
+            // 立即补发同 code 的 keyup：只发 keydown 会使键帽高亮 .pressed 永久残留
+            document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyV', key: 'v', bubbles: true }));
         });
     });
 }());

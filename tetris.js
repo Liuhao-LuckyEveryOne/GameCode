@@ -1292,8 +1292,12 @@ function loop(t) {
                 } else {
                     lockTimer = 0;
                 }
-                updateDAS(deltaMs);       // 推进 DAS/ARR 自动重复
-                updateSoftDrop(deltaMs);  // 推进软降连发（与左右 DAS 同守卫块，piece 必然存在）
+                // lockPiece 触发消行演出时死块已并入棋盘（spawnPiece 要到 finishClear 才替换）：
+                // 跳过 DAS/软降推进，防止死块滑动与软降空刷加分（下一帧起走 clearing 分支）
+                if (!clearing) {
+                    updateDAS(deltaMs);       // 推进 DAS/ARR 自动重复
+                    updateSoftDrop(deltaMs);  // 推进软降连发（与左右 DAS 同守卫块，piece 必然存在）
+                }
                 checkDangerAlarm(t); // 危险分级警报检查（含冷却）
             }
         }

@@ -244,6 +244,10 @@ const LAYOUTS = [
 let pieces = [];
 /** 当前布局序号（localStorage 持久化，页面加载时恢复） */
 let layoutIndex = 0;
+/** 本局归属的每日一题日期串：开局（装载布局）时缓存，通关判定与落盘以开局时刻为准（跨零点不误记新一天） */
+let dailySessionKey = '';
+/** 本局归属的每日一题布局序号（由 dailySessionKey 哈希派生，与通关判定比对用） */
+let dailySessionIndex = -1;
 /** 当前难度序号（localStorage 持久化，页面加载时恢复；默认进阶，下标 1） */
 let diffIndex = 1;
 /** 本局剩余提示次数（新手=Infinity / 进阶=NORMAL_HINT_QUOTA / 大师=0），随难度即时切换 */
@@ -697,11 +701,12 @@ function win() {
         // 成就检查：首次通关 / S 级评级 / 十八连破（须在纪录与评级落盘后判定，
         // 全通判定才能读到含本次通关的最新纪录）
         freshAchievements = checkAchievements(currentRank);
-        // 每日一题：当日布局的玩家通关即记入当日成绩（重复通关取更优步数）
-        if (layoutIndex === dailyIndex()) {
-            const prevDaily = readDailyDone();
+        // 每日一题：当日布局的玩家通关即记入当日成绩（重复通关取更优步数）；
+        // 判定与落盘均用开局缓存的归属键（快照跨天续玩昨日局落昨日键），不在 win 时刻现取当日
+        if (layoutIndex === dailySessionIndex) {
+            const prevDaily = readDailyDone(dailySessionKey);
             if (!prevDaily || moves < prevDaily) {
-                Arcade.saveRaw(DAILY_KEY + '_' + dailyKey(), String(moves)); // 隐私模式写失败静默
+                Arcade.saveRaw(DAILY_KEY + '_' + dailySessionKey, String(moves)); // 隐私模式写失败静默
             }
         }
     }
@@ -879,11 +884,12 @@ function dailyIndex() {
 }
 
 /**
- * 读取今日一题的完成步数
- * @returns {number} 当日已完成的最少步数（0 表示今日尚未完成）
+ * 读取指定归属日的每日一题完成步数
+ * @param {string} dateKey 每日一题归属日期串（YYYY-MM-DD，本局归属日或当日）
+ * @returns {number} 该日已完成的最少步数（0 表示该日尚未完成）
  */
-function readDailyDone() {
-    const v = parseInt(Arcade.loadRaw(DAILY_KEY + '_' + dailyKey()) || '0', 10);
+function readDailyDone(dateKey) {
+    const v = parseInt(Arcade.loadRaw(DAILY_KEY + '_' + dateKey) || '0', 10);
     return Number.isNaN(v) ? 0 : v;
 }
 
@@ -892,7 +898,7 @@ function readDailyDone() {
  * （开始遮罩仅在进页/重开时可见，静态刷新一次即可）
  */
 function updateDailyLine() {
-    const done = readDailyDone();
+    const done = readDailyDone(dailyKey()); // 遮罩信息行固定展示当日一题状态
     dailyLineElement.textContent = done > 0
         ? `今日一题 · ${LAYOUTS[dailyIndex()].name} · 已完成 ${done} 步`
         : `今日一题 · ${LAYOUTS[dailyIndex()].name}`;
@@ -970,6 +976,9 @@ function updateHud() {
  */
 function loadLayout(index) {
     layoutIndex = index;
+    // 本局每日一题归属按开局时刻缓存：23:59 开局 00:00 后通关仍落昨日键（快照恢复会在其后按快照归属覆写）
+    dailySessionKey = dailyKey();
+    dailySessionIndex = dailyIndex();
     const layout = LAYOUTS[index];
     // 深拷贝棋子并补齐运行时字段（拖拽偏移 / 补间 / 挤压 / 回弹 / 入场），
     // 入场按棋子序号负延迟，实现错峰依次浮现
@@ -1050,7 +1059,8 @@ function buildKlotskiSnapshot() {
         diff: currentDiffId(), // 难度标识：辅助规则不同，存档与难度绑定
         pieces: pieces.map(p => [p.x, p.y]), // 全部棋子当前位置（按布局棋子表顺序对应）
         moves: moves, // 当前步数
-        elapsed: elapsed // 本局已用时：续玩接续计时，防止分段游玩把长局刷成"5 分钟内通关"
+        elapsed: elapsed, // 本局已用时：续玩接续计时，防止分段游玩把长局刷成"5 分钟内通关"
+        daily: dailySessionKey // 本局每日一题归属日：跨天恢复续玩昨日局完成仍落昨日键（旧版快照无此键时仅同题才按当日续，口径见恢复侧）
     };
 }
 
@@ -1164,6 +1174,17 @@ function applyKlotskiSnapshot(snap) {
     // 恢复本局已用时（旧版快照无此键按 0 起算）：计时接续而非归零，堵住
     // "分段游玩把长局刷成 5 分钟内通关"的成就漏洞
     elapsed = Number.isFinite(snap.elapsed) && snap.elapsed >= 0 ? snap.elapsed : 0;
+    // 本局每日一题归属覆写：新快照携带开局日，跨天恢复续玩昨日局完成落昨日键；
+    // 旧版快照无此键（或脏数据）时不再笼统按当日归属——仅当恢复布局恰为今日
+    // 每日一题布局（同题同局，通关落盘语义与当日直开一致）才保留 loadLayout 的
+    // 当日身份，否则不按每日身份续：昨日每日局今日恢复不得误记为今日已完成
+    if (typeof snap.daily === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(snap.daily)) {
+        dailySessionKey = snap.daily;
+        dailySessionIndex = hashStr(snap.daily) % LAYOUTS.length;
+    } else if (layoutIndex !== dailyIndex()) {
+        dailySessionKey = '';
+        dailySessionIndex = -1; // -1 使通关落盘与结算每日标记的 layoutIndex 比对恒不命中
+    }
     undoStack.length = 0;
     invalidateHint(); // 恢复的棋面与任何旧缓存无关：提示展示与解路径缓存作废
     // 按恢复后的棋面重新求解最优步数作为评级基准（loadLayout 请求的是初始棋面的解，
@@ -1251,7 +1272,7 @@ function restartLayout() {
  * 清理与拖拽中暂停的手势终止回弹 */
 const pausePipe = Pause.create({
     isPaused: () => isPaused,
-    canToggle: () => state === 'playing', // ready/won 阶段无计时需求，不响应暂停
+    canToggle: () => state === 'playing' && !Ach.isOpen(), // ready/won 阶段无计时需求不响应暂停；成就墙打开中不生效，避免失焦自动暂停/遮罩点击与墙面叠加（键盘路径已有同款守卫）
     setPaused: (paused) => {
         isPaused = paused;
         hoverPiece = null; // 暂停时清除悬停高亮，避免遮罩下仍显示可动棋子提示
@@ -1963,8 +1984,8 @@ function updateEffects(dt) {
                 winRankDescElement.textContent = `最佳解复现 · ${moves} 步（BFS 最优 ${optimalMoves} 步）`;
             } else {
                 newRecordElement.style.display = isNewRecord ? 'block' : 'none';
-                // 每日一题完成标记：当日布局的玩家通关在结算面板点亮
-                dailyDoneElement.style.display = layoutIndex === dailyIndex() ? 'block' : 'none';
+                // 每日一题完成标记：本局归属日布局的玩家通关在结算面板点亮（与落盘判定同一归属）
+                dailyDoneElement.style.display = layoutIndex === dailySessionIndex ? 'block' : 'none';
                 // 成就解锁提示：本次通关有新成就时绿色展示成就名（顿号连接多个）
                 if (freshAchievements.length > 0) {
                     const names = freshAchievements.map(id => {
@@ -3181,7 +3202,7 @@ if (!Number.isNaN(savedLayoutIndex) && savedLayoutIndex >= 0 && savedLayoutIndex
     layoutIndex = savedLayoutIndex;
 }
 // 每日一题：今日尚未完成时进页自动选中今日布局（已完成则尊重上次选择）
-if (readDailyDone() === 0) {
+if (readDailyDone(dailyKey()) === 0) {
     layoutIndex = dailyIndex();
 }
 // 今日布局按钮打上「今」角标（日期→布局映射会话内恒定，标记一次即可）

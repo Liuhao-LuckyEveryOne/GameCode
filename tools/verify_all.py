@@ -246,8 +246,19 @@ def _ws_recv(sock):
         if opcode == 8:
             return None  # close 帧：通道关闭
         if opcode == 9:
-            # ping → 原样回 pong（无掩码，服务端帧不掩码；载荷 <126 字节足够）
-            pong = bytearray([0x8A, len(data)]) + data
+            # ping → 原样回 pong（无掩码，服务端帧不掩码）；长度字段按 RFC 6455
+            # 三档编码修正（7 位标记 126/127 是扩长转义符，直接写 len 会编码错误）
+            pong = bytearray([0x8A])
+            n = len(data)
+            if n < 126:
+                pong.append(n)
+            elif n < 65536:
+                pong.append(126)
+                pong += struct.pack(">H", n)
+            else:
+                pong.append(127)
+                pong += struct.pack(">Q", n)
+            pong += data
             sock.sendall(bytes(pong))
             continue
         # 文本/二进制/续帧：累积到 FIN 置位合为完整消息
@@ -292,8 +303,8 @@ def run_headless(browser, url):
                 try:
                     port = int(port_file.read_text(encoding="ascii").splitlines()[0].strip())
                     break
-                except (ValueError, IndexError):
-                    pass  # 文件尚在写入中，下轮重读
+                except (ValueError, IndexError, OSError):
+                    pass  # 文件尚在写入中（Windows 写锁窗口会抛 PermissionError 属 OSError），下轮重读
             time.sleep(0.2)
         if port is None:
             return None, f"等待 DevToolsActivePort 超时（{DEVTOOLS_WAIT_S}s），CDP 调试通道未就绪"
@@ -338,10 +349,14 @@ def run_headless(browser, url):
                 return None, (f"真实时钟超 {REAL_TIMEOUT_S}s 未出现结论标题"
                               "（测试页 9s 看门狗本应先到期，疑似页面异常）")
             if now >= next_poll:
-                _ws_send(sock, json.dumps({
-                    "id": probe_id, "method": "Runtime.evaluate",
-                    "params": {"expression": "document.title", "returnByValue": True},
-                }))
+                try:
+                    _ws_send(sock, json.dumps({
+                        "id": probe_id, "method": "Runtime.evaluate",
+                        "params": {"expression": "document.title", "returnByValue": True},
+                    }))
+                except OSError:
+                    # 连接已断（浏览器退出/通道关闭）：转明确的失败报告，不裸抛 traceback
+                    return None, "CDP 通道断开（浏览器退出或连接被关闭）"
                 next_poll = now + POLL_INTERVAL_S
             # 阻塞等下一帧，但不超过下一次轮询时刻（保证轮询节拍不被慢帧拖住）
             remain = min(next_poll, deadline) - time.monotonic()

@@ -246,19 +246,21 @@ const SFX = (() => {
     }
 
     // 任意按下/按键手势即时预热，保证卡片悬停音在首次交互后即可播放
-    let unlocked = false; // 是否已播放过首次交互激活提示音
+    let unlocked = false; // 是否已完成首次手势解锁记账（存档静音启动的首次手势同样记账，只是不出声）
     const warm = () => {
-        if (muted || unlocked) return;
+        if (unlocked) return;
         unlocked = true; // 仅首次手势提示一次
         // 首次激活即摘除热身监听，避免此后每次交互重复进入本函数
         window.removeEventListener('pointerdown', warm);
         window.removeEventListener('keydown', warm);
-        // 浏览器自动播放策略下首次交互后才可出声，播放经典"投币"双音作为激活反馈
+        // 浏览器自动播放策略下首次交互后才可出声，播放经典"投币"双音作为激活反馈；
+        // 静音态下 ensure 返回 null 自然跳过播音——仅完成解锁与摘监听，
+        // 否则静音启动解除静音后，下次点击会突兀补播双音
         if (ensure()) {
             tone(988, 0.07, 'square', 0.08);
             tone(1319, 0.18, 'square', 0.08, 0, 0.08);
         }
-        bgm.sync(); // 首次手势解锁音频后，补启等待中的 BGM
+        bgm.sync(); // 首次手势解锁音频后，补启等待中的 BGM（静音态下 sync 安全空转）
     };
     window.addEventListener('pointerdown', warm);
     window.addEventListener('keydown', warm);

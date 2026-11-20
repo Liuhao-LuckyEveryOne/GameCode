@@ -499,13 +499,14 @@ function collideBumpers(b) {
         nx /= dist; ny /= dist;
         b.x = bp.x + nx * minD;
         b.y = bp.y + ny * minD;
-        if (bp.cool > 0) continue;
         const vn = b.vx * nx + b.vy * ny;
-        if (vn >= 0) continue; // 正在远离则跳过计分：与其他碰撞体守卫口径一致，防一次擦碰双计分（原为有意设计，本次统一收口）
-        // 分解速度：切向保留 30%，法向替换为固定击出速度（弹柱"踢球"手感）
+        if (vn >= 0) continue; // 正在远离则跳过反弹与计分：防一次擦碰双计分
+        // 分解速度：切向保留 30%，法向替换为固定击出速度（弹柱"踢球"手感）；
+        // 反弹不受冷却限制：多球时冷却窗内撞入的第二颗球若只做位置修正会相位穿透
         const vtX = b.vx - vn * nx, vtY = b.vy - vn * ny;
         b.vx = vtX * 0.3 + nx * BUMPER_KICK;
         b.vy = vtY * 0.3 + ny * BUMPER_KICK;
+        if (bp.cool > 0) continue; // 冷却只跳计分与演出，不跳反弹：防同一弹柱连续刷分
         bp.cool = 0.08;
         bp.flash = 0.18;
         spawnSparks(bp.x, bp.y, '#ff8ac2', 10); // 粉色火花强化弹柱命中
@@ -535,13 +536,14 @@ function collideTargets(b) {
         // 位置修正：把球推出目标灯表面
         b.x = t.x + nx * minD;
         b.y = t.y + ny * minD;
-        if (t.cool > 0) continue;
         const vn = b.vx * nx + b.vy * ny;
         if (vn >= 0) continue; // 正在远离，无需反弹
-        // 分解速度：切向保留 40% + 法向替换为固定击出力度
+        // 分解速度：切向保留 40% + 法向替换为固定击出力度；反弹不受冷却限制，
+        // 多球时冷却窗内撞入的第二颗球若只做位置修正会相位穿透
         const vtX = b.vx - vn * nx, vtY = b.vy - vn * ny;
         b.vx = vtX * 0.4 + nx * TARGET_KICK;
         b.vy = vtY * 0.4 + ny * TARGET_KICK;
+        if (t.cool > 0) continue; // 冷却只跳点灯计分与演出，不跳反弹：防同一目标连续刷分
         t.cool = TARGET_COOL;
         t.flash = TARGET_FLASH;
         if (!t.lit) {

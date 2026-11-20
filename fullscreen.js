@@ -477,7 +477,11 @@ const FS = (() => {
      * （fullscreenchange 不会穿越文档边界，需手动转发给子页同步按钮与缩放）
      */
     function broadcastFsState() {
-        applyFsState(isFullscreen(), false);
+        const fs = isFullscreen();
+        // 状态去重：Safari ≥ 16.4 标准/webkit 事件同发，第二遍与上次处理后的状态一致时
+        // 早退——否则会走非动画路径清掉内联 transition，截断进行中的过渡并绕过 fsBusy
+        if (fs === lastFs) return;
+        applyFsState(fs, false);
         broadcast();
     }
 

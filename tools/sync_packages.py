@@ -73,6 +73,8 @@ def build_zip(zip_path, items):
         zip_path: 目标 zip 路径
         items: (zip 内相对路径, 源文件 Path) 列表
     """
+    # 写包前确保目标父目录存在（首次运行只建了分享包根目录，tests 子目录缺失会写 .tmp 崩溃）
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = zip_path.parent / (zip_path.name + ".tmp")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for arc, src in items:

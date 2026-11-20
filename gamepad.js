@@ -82,8 +82,13 @@ const GP = window.GP = { connected: false };
     const DPAD_OFF = 0.4;
 
     // ---------- 按下状态表：code → 本库是否处于「按下中」（用于边沿判定与卡键兜底释放） ----------
-    // 方向键按 code 去重：十字键与左摇杆推同一方向共用一条状态，天然合并互不重复
+    // 功能按钮走 held；摇杆与十字键分表（heldStick / heldDpad）独立记账——同一方向键
+    // 两条来源各自登记 claim，合成键的 keydown/keyup 仅在「无任何来源按住」时派发：
+    // 否则同向同按时摇杆先回中会发出 keyup，把十字键仍按住的键误放掉，下一帧十字键
+    // 又重发 keydown，按键对被中断（tetris DAS 计时被重置、连续移动卡顿）
     const held = Object.create(null);
+    const heldStick = Object.create(null);
+    const heldDpad = Object.create(null);
     // 左摇杆四向的滞回状态（true=该方向处于按下中），与十字键分开记录便于独立判定
     const stick = { up: false, down: false, left: false, right: false };
     // 功能按钮的滞回状态（按钮索引 → true=按下中）：held 表以 code 为键存合成键名并
@@ -109,26 +114,38 @@ const GP = window.GP = { connected: false };
         }));
     }
 
+    /** 查询合成键在任意来源表（功能按钮 / 摇杆 / 十字键）中是否仍处于按下中 @param {string} code 物理键码 */
+    function isKeyHeld(code) {
+        return !!(held[code] || heldStick[code] || heldDpad[code]);
+    }
+
     /**
-     * 模拟某键按下（边沿触发：已处于按下中则忽略，不模拟连发）
+     * 模拟某键按下（边沿触发：来源表内已按下则忽略，不模拟连发）；
+     * 他源已按住同一合成键时不重复派发 keydown，键盘层面仅保持一份按下态
      * @param {string} key 合成的 e.key 值
      * @param {string} code 合成的 e.code 值
+     * @param {Object} table 来源按下状态表（held / heldStick / heldDpad 之一）
      */
-    function press(key, code) {
-        if (held[code]) return;
-        held[code] = key; // 同时记录 e.key，供 release 还原一致的键名
+    function press(key, code, table) {
+        if (table[code]) return;
+        const first = !isKeyHeld(code); // 先查三表：本表未登记，查到的均为他源按下态
+        table[code] = key; // 无条件登记 claim，保证他源先松时本源按住态可被 release 正确感知
+        if (!first) return; // 他源已按住同一合成键：键盘层面仅保持一份按下态，不重发 keydown
         synth('keydown', key, code);
     }
 
     /**
-     * 模拟某键松开（未按下则忽略）；回放 press 时记录的原 key，
+     * 模拟某键松开（来源表内未按下则忽略）；keyup 按来源表查 claim——他源仍按住
+     * 同一合成键时不派发 keyup，避免中断他源的按键对；回放 press 时记录的原 key，
      * 保证 Space(' ')/KeyP/KeyM/KeyV 等 key≠code 的按键在 keyup 侧同样可被 e.key 命中
      * @param {string} code 目标键 code
+     * @param {Object} table 来源按下状态表（held / heldStick / heldDpad 之一）
      */
-    function release(code) {
-        const key = held[code];
+    function release(code, table) {
+        const key = table[code];
         if (!key) return;
-        held[code] = false;
+        table[code] = false;
+        if (isKeyHeld(code)) return;
         synth('keyup', key, code);
     }
 
@@ -137,7 +154,9 @@ const GP = window.GP = { connected: false };
      * 防止 tetris DAS 左右移动等「按住状态」跨场景卡死）
      */
     function releaseAll() {
-        for (const code in held) release(code);
+        for (const code in held) release(code, held);
+        for (const code in heldStick) release(code, heldStick);
+        for (const code in heldDpad) release(code, heldDpad);
         stick.up = stick.down = stick.left = stick.right = false;
         for (const k in btnHeld) btnHeld[k] = false;
         for (const k in dpadHeld) dpadHeld[k] = false;
@@ -224,8 +243,8 @@ const GP = window.GP = { connected: false };
                 isDown = !!(btn && (btn.pressed || v >= BUTTON_ON));
             }
             const map = BUTTON_MAP[idx];
-            if (isDown) { btnHeld[idx] = true; press(map[0], map[1]); }
-            else { btnHeld[idx] = false; release(map[1]); }
+            if (isDown) { btnHeld[idx] = true; press(map[0], map[1], held); }
+            else { btnHeld[idx] = false; release(map[1], held); }
         }
 
         // ----- 十字键滞回判定：双阈值 DPAD_ON/DPAD_OFF，防模拟量十字键停在临界值附近
@@ -240,8 +259,8 @@ const GP = window.GP = { connected: false };
             } else {
                 dDown = !!(dpad && (dpad.pressed || v >= DPAD_ON));
             }
-            if (dDown) { dpadHeld[d] = true; press(DPAD_MAP[d], DPAD_MAP[d]); }
-            else { dpadHeld[d] = false; release(DPAD_MAP[d]); }
+            if (dDown) { dpadHeld[d] = true; press(DPAD_MAP[d], DPAD_MAP[d], heldDpad); }
+            else { dpadHeld[d] = false; release(DPAD_MAP[d], heldDpad); }
         }
 
         // ----- 左摇杆滞回判定：axes[0] 水平（右正）axes[1] 垂直（下正），触发/释放双阈值 -----
@@ -250,14 +269,14 @@ const GP = window.GP = { connected: false };
             const x = ax[0] || 0;
             const y = ax[1] || 0;
             // 右推：越过 +0.4 按下，回落到 +0.25 以内松开（其余三向对称）
-            if (!stick.right && x > AXIS_ON) { stick.right = true; press('ArrowRight', 'ArrowRight'); }
-            else if (stick.right && x < AXIS_OFF) { stick.right = false; release('ArrowRight'); }
-            if (!stick.left && x < -AXIS_ON) { stick.left = true; press('ArrowLeft', 'ArrowLeft'); }
-            else if (stick.left && x > -AXIS_OFF) { stick.left = false; release('ArrowLeft'); }
-            if (!stick.down && y > AXIS_ON) { stick.down = true; press('ArrowDown', 'ArrowDown'); }
-            else if (stick.down && y < AXIS_OFF) { stick.down = false; release('ArrowDown'); }
-            if (!stick.up && y < -AXIS_ON) { stick.up = true; press('ArrowUp', 'ArrowUp'); }
-            else if (stick.up && y > -AXIS_OFF) { stick.up = false; release('ArrowUp'); }
+            if (!stick.right && x > AXIS_ON) { stick.right = true; press('ArrowRight', 'ArrowRight', heldStick); }
+            else if (stick.right && x < AXIS_OFF) { stick.right = false; release('ArrowRight', heldStick); }
+            if (!stick.left && x < -AXIS_ON) { stick.left = true; press('ArrowLeft', 'ArrowLeft', heldStick); }
+            else if (stick.left && x > -AXIS_OFF) { stick.left = false; release('ArrowLeft', heldStick); }
+            if (!stick.down && y > AXIS_ON) { stick.down = true; press('ArrowDown', 'ArrowDown', heldStick); }
+            else if (stick.down && y < AXIS_OFF) { stick.down = false; release('ArrowDown', heldStick); }
+            if (!stick.up && y < -AXIS_ON) { stick.up = true; press('ArrowUp', 'ArrowUp', heldStick); }
+            else if (stick.up && y > -AXIS_OFF) { stick.up = false; release('ArrowUp', heldStick); }
         }
     }
 

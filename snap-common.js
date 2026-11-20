@@ -54,6 +54,8 @@
          * 保存当前局进度镜像：进行中写入，非进行中清除（游戏结束/未开始不留快照）。
          * 整体 try/catch 静默容错：快照组装意外（脏状态）与存储异常（隐私模式 /
          * 配额满）都不中断游戏流程，与原各游戏内联实现的兜底语义一致
+         * @returns {boolean} 写入/清除是否完成：正常完成 true；canSave/build 抛错
+         *   （脏状态，实际未写盘）false——SAVE 消息接线据此不发 ACK
          */
         function save() {
             try {
@@ -62,7 +64,13 @@
                 } else {
                     Arcade.removeRaw(opts.key); // 存储不可用时静默
                 }
-            } catch (e) { /* 快照组装异常：静默跳过，不影响游戏 */ }
+                return true;
+            } catch (e) {
+                // 快照组装异常：静默跳过不中断游戏，但回报 false（ACK 不发，父页走超时兜底；
+                // pagehide 等直接调用方忽略返回值，行为不变）
+                console.warn('[Snap] 快照保存失败（本次不发 ACK）:', e);
+                return false;
+            }
         }
 
         /**
@@ -137,8 +145,10 @@
         Arcade.onTrustedMessage((e) => {
             if (dead) return; // 已解绑：短路空转，不再保存/回执
             if (e.data && e.data.type === Arcade.MSG.SAVE) {
-                pipe.save();
-                // 存档回执（ACK）：快照已落盘（保存/清除分支均算），父页收到后才摘除 iframe
+                // 存档回执（ACK）：快照已落盘（保存/清除分支均算），父页收到后才摘除 iframe；
+                // save 回报 false（canSave/build 抛错，实际未写盘）时静默不发，父页走既有超时兜底
+                // （=== false 而非假值判断：兼容 tetris 等自定义包装 pipe 的 save 无返回值，ACK 照常回发）
+                if (pipe.save() === false) return;
                 try {
                     if (window.parent && window.parent !== window) {
                         window.parent.postMessage({ type: Arcade.MSG.SAVED }, Arcade.MSG_TARGET);

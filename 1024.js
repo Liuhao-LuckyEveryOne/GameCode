@@ -79,11 +79,12 @@ function todayDailyDate() {
 }
 
 /**
- * 每日挑战达成存档键：按当日日期动态拼接（街机厅统一前缀 arcade_daily_）
- * @returns {string} 当日达成键（如 arcade_daily_1024_20261119）
+ * 每日挑战达成存档键：按日期动态拼接（街机厅统一前缀 arcade_daily_），缺省取当日
+ * @param {string} [dateStr] 归属日期串（YYYYMMDD，缺省为当日）
+ * @returns {string} 达成键（如 arcade_daily_1024_20261119）
  */
-function dailyKey() {
-    return 'arcade_daily_1024_' + todayDailyDate();
+function dailyKey(dateStr) {
+    return 'arcade_daily_1024_' + (dateStr || todayDailyDate());
 }
 /** localStorage 键名单点定义（收敛文件内散落的键名常量，值与既有键完全一致，仅集中维护） */
 const KEYS = {
@@ -103,6 +104,8 @@ const KEYS = {
 };
 /** 是否处于每日挑战模式：当日未达成的新开局置位；续玩快照恢复与普通局均为 false */
 let dailyMode = false;
+/** 每日挑战归属日期串（YYYYMMDD）：进入每日模式时缓存，达成落盘与快照开局日期均用缓存值（跨午夜通关不误标新一天） */
+let dailyDateKey = '';
 /** 每日挑战种子随机源（mulberry32 闭包）：dailyMode 下供 spawnTile 使用，保证同日开局方块序列一致 */
 let dailyRng = null;
 
@@ -151,7 +154,10 @@ function dailyRand() {
 function setupDailyChallenge() {
     const done = !!Arcade.loadRaw(dailyKey()); // 存储不可用时视为未达成（键按当日动态取值）
     dailyMode = !done;
-    if (dailyMode) dailyRng = mulberry32(dateSeed(todayDailyDate()));
+    if (dailyMode) {
+        dailyDateKey = todayDailyDate(); // 进入时缓存归属日：达成落盘以开局日为准（跨午夜不漂移）
+        dailyRng = mulberry32(dateSeed(dailyDateKey));
+    }
 }
 
 /**
@@ -160,7 +166,7 @@ function setupDailyChallenge() {
 function completeDailyChallenge() {
     if (!dailyMode) return;
     dailyMode = false; // 立即退出每日模式：胜利面板后续的继续挑战/重开走普通流程
-    Arcade.saveRaw(dailyKey(), '1'); // 存储不可用时静默跳过（键按当日动态取值）
+    Arcade.saveRaw(dailyKey(dailyDateKey), '1'); // 落盘按开局缓存的归属日键：午夜后合成不误标新一天（存储不可用时静默跳过）
     addFloatText('每日挑战达成!', BOARD_W * 0.5, BOARD_H * 0.34, '#ffd23e', 22);
     SFX.n1024Milestone(); // 复用里程碑号角做达成音
 }
@@ -1281,7 +1287,7 @@ function build1024Snapshot() {
         isNewRecord,                                                 // 本局是否刷新过最高分
         milestones: Array.from(milestones),                          // 已触发里程碑集合（Set 序列化为数组）
         daily: dailyMode,                                            // 本局是否每日挑战（续玩时按日期校验，见 apply1024Snapshot）
-        dailyDate: dailyMode ? todayDailyDate() : null,              // 每日挑战开局日期（非每日局为 null）
+        dailyDate: dailyMode ? dailyDateKey : null,                  // 每日挑战开局归属日期（进入每日模式时缓存，非每日局为 null）
         // 撤销栈镜像：只保留最近 HISTORY_MAX 步（slice 负索引从尾部截取），与内存栈及恢复端上限一致
         history: history.slice(-HISTORY_MAX).map((h) => ({ board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true })),
     };
@@ -1385,7 +1391,10 @@ function apply1024Snapshot(snap) {
     // 普通局续玩——完成不再计入当日达成（每日挑战当日有效，次日重新开局）
     const dailySameDay = snap.daily === true && snap.dailyDate === todayDailyDate();
     dailyMode = dailySameDay && !Arcade.loadRaw(dailyKey()); // 存储不可用时视为未达成
-    if (dailyMode) dailyRng = mulberry32(dateSeed(snap.dailyDate));
+    if (dailyMode) {
+        dailyDateKey = snap.dailyDate; // 同步归属日缓存：达成落盘与续存快照保持开局日口径
+        dailyRng = mulberry32(dateSeed(snap.dailyDate));
+    }
     // 复用撤销重建逻辑应用棋面/分数/连击/新纪录标记，再补齐存档专属状态
     restoreBoard({ board: snap.board, score: snap.score, combo: snap.combo, isNewRecord: snap.isNewRecord });
     history.length = 0;

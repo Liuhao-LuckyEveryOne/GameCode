@@ -116,6 +116,9 @@ const FX = (() => {
      * @param {number} [remoteMode] 父页广播携带的模式值（3=自动档，引擎裁决时随实际档位下发）
      */
     function setFxLevel(idx, fromRemote, remoteMode) {
+        // 幂等短路：请求档与当前模式一致时早退，不重开 200ms 粒子宽限期（子页广播
+        // 路径需按报文目标态比对，在下方应用分支内短路）
+        if (!(EMBED && fromRemote) && idx === fxMode) return;
         graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
         // 子页角色：状态权威在大厅，不持久化、不本地广播
         if (EMBED) {
@@ -126,10 +129,22 @@ const FX = (() => {
             }
             // 广播静默应用：新版报文带 mode 字段——mode=3 表示父页自动档引擎裁决的实际档位，
             // 子页保持自动档记忆（fxMode=3）只跟随实际档位，面板「自动」高亮不失真；
-            // 旧版仅 idx 无 mode 字段，按固定档应用，两版兼容
-            if (remoteMode === 3) { fxMode = 3; fxLevel = (idx === 0 || idx === 1) ? idx : 2; }
-            else if (idx === 3) { fxMode = 3; fxLevel = 2; }
-            else { fxMode = fxLevel = (idx === 0 || idx === 1) ? idx : 2; }
+            // 旧版仅 idx 无 mode 字段，按固定档应用，两版兼容；
+            // 应用前对报文目标态幂等短路：与当前 (fxMode, fxLevel) 全等即早退，不重开宽限期
+            if (remoteMode === 3) {
+                const lvl = (idx === 0 || idx === 1) ? idx : 2;
+                if (fxMode === 3 && fxLevel === lvl) return;
+                fxMode = 3; fxLevel = lvl;
+            }
+            else if (idx === 3) {
+                if (fxMode === 3 && fxLevel === 2) return;
+                fxMode = 3; fxLevel = 2;
+            }
+            else {
+                const lvl = (idx === 0 || idx === 1) ? idx : 2;
+                if (fxMode === lvl && fxLevel === lvl) return;
+                fxMode = fxLevel = lvl;
+            }
             return;
         }
         // 父页/独立运行角色：本地持久化 + 向页面内全部游戏 iframe 广播最新档位
@@ -195,6 +210,15 @@ const FX = (() => {
         };
         autoRaf = requestAnimationFrame(tick);
     }
+
+    // 回前台重锚统计窗口：页面隐藏期间 rAF 暂停，隐藏时长若计入分母会让回前台首拍
+    // fps 虚低误降档并广播；回到可见时清账从零起算（引擎未运转时不做任何事）
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && autoRaf) {
+            autoWinStart = performance.now();
+            autoWinFrames = 0;
+        }
+    });
 
     // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页收父页广播静默应用；父页收子页设档请求后经 setFxLevel 持久化并广播
     if (EMBED) {
@@ -542,7 +566,8 @@ const FX = (() => {
         let id = null;      // 游戏 id（init 时写入）
         let acc = 0;        // 未冲账的累计毫秒数
         let last = 0;       // 上一帧 rAF 时间戳
-        let lastVisible = true; // 上一帧是否可见：仅连续可见帧才累计，切后台回来的首帧不计入
+        let lastVisible = false; // 上一帧是否可见：仅连续可见帧才累计，切后台回来的首帧不计入
+        // （初值 false：首帧前页面可能已切后台，首帧只作基准校正，避免回前台白送最多 5 秒）
         let inited = false; // 幂等保护
         /** 冲账阈值：累计满 15 秒落盘一次，控制写入频率；离页时不足额由 pagehide 兜底 */
         const FLUSH_MS = 15000;

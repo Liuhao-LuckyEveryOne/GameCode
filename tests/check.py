@@ -798,7 +798,8 @@ def check_entry_version_problems():
     大厅卡片入口 href="X.html?v=V1" 与游戏页内业务脚本 src="X.js?v=V2" 的版本
     遵循「只升不降」不变量：入口落后于业务 js 视为同步遗漏（入口先命中旧 html
     缓存，与已更新的 js 版本脱节）。tools/bump-versions.py 已实现自动同步，本项
-    兜底守护该不变量。版本按 (日期, 当日序号) 元组比较；入口领先合法不回退。
+    兜底守护该不变量。版本按 (日期, 当日序号) 元组比较；入口领先合法不回退；
+    版本号非 YYYYMMDD-N 格式视为不变量失守，直接报红不静默跳过。
 
     返回:
         失败明细列表（空列表 = 通过）
@@ -818,7 +819,13 @@ def check_entry_version_problems():
         if not js_m:
             continue  # 业务 js 引用带版本规范由检查项 2 把关
         ev, jv = VER_NUM_RE.fullmatch(entry_v), VER_NUM_RE.fullmatch(js_m.group(1))
-        if ev and jv and (int(ev.group(1)), int(ev.group(2))) < (int(jv.group(1)), int(jv.group(2))):
+        if not ev or not jv:
+            problems.append(
+                f"index.html 入口 {name}?v={entry_v} 或 {js_path.name}?v={js_m.group(1)}"
+                f" 版本号非 YYYYMMDD-N 格式（不变量失守，请改为规范版本号）"
+            )
+            continue
+        if (int(ev.group(1)), int(ev.group(2))) < (int(jv.group(1)), int(jv.group(2))):
             problems.append(
                 f"index.html 入口 {name}?v={entry_v} 落后于 {js_path.name}?v={js_m.group(1)}"
                 f"（重跑 tools/bump-versions.py 可自动同步）"

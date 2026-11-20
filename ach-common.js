@@ -3,7 +3,7 @@
  * ----------------------------------------------------------------------------
  * 全站七游戏成就逻辑的唯一实现（v3.0 起由各游戏 js 内的七份同构实现下沉而来）：
  *   存档装载与三代格式迁移（v1 数组 → v2 { unlocked, best }）
- *   → trackRunStat 历史最佳追踪（只增不减，超越即落盘并连带扫描挂靠成就）
+ *   → trackRunStat 历史最佳追踪（只增不减，超越即落盘；每次上报均扫描挂靠成就）
  *   → unlockAchievement 幂等解锁（toast + 解锁音 + 史诗/传说金色烟花）
  *   → 成就墙渲染（卡片网格 canonical 标记 + 完成度补间）
  *   → 开合控制（V 开 / Esc 关 / 遮罩与关闭按钮 / 主循环查询 isOpen）
@@ -92,10 +92,13 @@
             const best = Object.assign({}, opts.bestDefaults, raw.best);
             return { unlocked: Object.assign({}, raw.unlocked), best: best };
         }
-        // v1 数组 → v2：旧解锁无时间戳统一记 0（成就墙显示"已达成"而非具体日期）
+        // v1 数组 → v2：旧解锁无时间戳统一记 0（成就墙显示"已达成"而非具体日期）；
+        // 只收编当前 defs 中存在的 id（与 unlock 的脏 ID 拒绝同口径），防脏 id 永驻存档
         const unlocked = {};
         if (Array.isArray(raw)) {
-            for (const id of raw) unlocked[id] = 0;
+            for (const id of raw) {
+                if (opts.defs.some((a) => a.id === id)) unlocked[id] = 0;
+            }
         }
         Arcade.saveJSON(opts.storageKey, { unlocked: unlocked, best: Object.assign({}, opts.bestDefaults) });
         return { unlocked: unlocked, best: Object.assign({}, opts.bestDefaults) };
@@ -294,8 +297,10 @@
 
         /* ---- 历史最佳追踪 ---- */
         /**
-         * 追踪一项历史最佳（只增不减）：超越旧值时立即落盘，并连带检查挂靠在该
-         * 统计项上的全部成就（如 score 同时驱动百分俱乐部/得分大师两档）
+         * 追踪一项历史最佳（只增不减）：超越旧值时立即落盘；每次上报均扫描挂靠在
+         * 该统计项上的全部成就（如 score 同时驱动百分俱乐部/得分大师两档）——
+         * 解锁扫描不做 best-guard，成就 target 下调或新增成就 target 低于现有 best
+         * 时也能按本局值补解锁（unlock 幂等，重复扫描代价可接受）
          * @param {string} stat 统计项键（见游戏 bestDefaults）
          * @param {number} value 本局当前值
          */
@@ -305,10 +310,11 @@
                 console.warn('[Ach] trackRunStat 未注册统计项：' + stat);
                 return;
             }
-            if (!(value > store.best[stat])) return;
-            store.best[stat] = value;
-            saveStore();
-            // 最佳值更新后扫描定义表：目标达成者逐个解锁（unlock 幂等，跨档重扫安全）
+            if (value > store.best[stat]) { // 只增不减：超越旧 best 才落盘
+                store.best[stat] = value;
+                saveStore();
+            }
+            // 解锁扫描位于 best-guard 之外：目标达成的成就逐个解锁（unlock 幂等，跨档重扫安全）
             for (const a of defs) {
                 if (a.stat === stat && value >= a.target) unlock(a.id);
             }

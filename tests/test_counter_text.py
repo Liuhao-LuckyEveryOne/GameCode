@@ -50,6 +50,23 @@ SKIP_DIRS = {".trae-html-share-packages", ".git"}
 SKIP_FILES = {"tests/test_counter_text.py"}
 
 
+def in_cn_quote(text, pos):
+    """判定 pos 处命中是否处于中文引号「…」上下文内。
+
+    「十五项」完整引用形式是修改记录里的历史记载，扫描时豁免；正则负向断言
+    只覆盖同行相邻引号，跨行引号「…\\n十五项…」看不到相邻引号，按此函数自然豁免。
+    两个反断言用例共用本函数，保证豁免口径一致。
+
+    参数:
+        text: 被扫描的全文
+        pos: 匹配起始偏移
+
+    返回:
+        True 表示处于引号上下文内（应豁免）；False 表示裸写
+    """
+    return text.rfind("「", 0, pos) > text.rfind("」", 0, pos)
+
+
 def iter_repo_sources():
     """按类型遍历仓库源文件（跳过分享包等快照目录）。
 
@@ -86,21 +103,32 @@ class CounterTextTest(unittest.TestCase):
 
     def test_fixed_files_have_no_stale_counter(self):
         """6 处修复点所在文件全文不含旧计数「十五项」裸写。"""
+        problems = []
         for rel in EXPECTED_ANCHORS:
             text = (ROOT / rel).read_text(encoding="utf-8")
-            hit = STALE_PATTERN.search(text)
-            self.assertIsNone(
-                hit,
-                f"{rel} 出现旧计数裸写「十五项」（偏移 {hit.start() if hit else -1}）")
+            for m in STALE_PATTERN.finditer(text):
+                # 与全仓扫描共用引号上下文豁免（in_cn_quote），杜绝跨行引号误报
+                if in_cn_quote(text, m.start()):
+                    continue
+                line_no = text.count("\n", 0, m.start()) + 1
+                problems.append(f"{rel}:{line_no} 裸写旧计数「十五项」")
+        self.assertEqual(problems, [], "\n".join(problems))
 
     def test_repo_has_no_stale_counter(self):
         """全仓库源文件无旧计数「十五项」裸写（「十五项」引用形式豁免）。"""
         problems = []
         for rel, text in iter_repo_sources():
-            # 逐行扫描报行号，便于直接定位残留位置
-            for i, line in enumerate(text.splitlines(), 1):
-                if STALE_PATTERN.search(line):
-                    problems.append(f"{rel}:{i} 裸写旧计数「十五项」: {line.strip()[:60]}")
+            # 全文扫描报行号：命中后按匹配偏移换算行号并截取所在行，便于直接定位
+            for m in STALE_PATTERN.finditer(text):
+                # 引号上下文豁免（共用 in_cn_quote，口径与固定文件用例一致）
+                if in_cn_quote(text, m.start()):
+                    continue
+                line_no = text.count("\n", 0, m.start()) + 1
+                line_start = text.rfind("\n", 0, m.start()) + 1
+                line_end = text.find("\n", m.start())
+                if line_end == -1:
+                    line_end = len(text)
+                problems.append(f"{rel}:{line_no} 裸写旧计数「十五项」: {text[line_start:line_end].strip()[:60]}")
         self.assertEqual(problems, [], "\n".join(problems))
 
 

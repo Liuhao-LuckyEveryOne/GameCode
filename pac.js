@@ -833,8 +833,9 @@ function validatePacSnapshot(s) {
     }
 
     /* ---- 豆子集合与迷宫逐格互验：快照豆位必须落在原迷宫豆位上（墙/门格不允许出现豆） ---- */
-    buildGrid(); // 以原迷宫重建基准网格（与初始化等价，校验失败时由新开局流程重建，无残留影响）
+    buildGrid(); // 以原迷宫重建基准网格（两阶段校验全程只读，中途失败不残留半清除状态）
     let dotsLeft = 0;
+    // 第一阶段纯校验：只判合法性不修改网格，任一格非法即整体弃档（网格保持基准迷宫原样）
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             const ch = s.dots[r * COLS + c];
@@ -845,13 +846,20 @@ function validatePacSnapshot(s) {
             } else if (ch === '2') {
                 if (orig !== T_POWER) return false; // 能量豆同理
                 dotsLeft++;
-            } else {
-                if (ch !== '0') return false; // 其余字符一律非法
-                if (orig === T_DOT || orig === T_POWER) grid[r][c] = T_EMPTY; // 已吃掉的豆格清空
+            } else if (ch !== '0') {
+                return false; // 其余字符一律非法
             }
         }
     }
     if (dotsLeft !== s.dotCount) return false; // 压位串统计与 dotCount 双保险互验
+    // 第二阶段统一应用清除：全部条件通过后把快照标记已吃的豆格置空（失败路径不再走到这里）
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (s.dots[r * COLS + c] === '0' && (grid[r][c] === T_DOT || grid[r][c] === T_POWER)) {
+                grid[r][c] = T_EMPTY;
+            }
+        }
+    }
     return true;
 }
 
@@ -872,6 +880,7 @@ function applyPacSnapshot(s) {
     dotCount = dotsLeft;
     score = s.score;
     level = s.level;
+    Ach.trackRunStat('level', level); // 恢复高关卡时同步成就运行统计（max 语义不回退），否则续玩打光生命 level 成就不解锁
     lives = s.lives;
     recordBase = s.recordBase;
     oneUpGiven = s.oneUpGiven;

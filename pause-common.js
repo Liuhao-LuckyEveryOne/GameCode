@@ -44,7 +44,7 @@
      *   resumeSfx: (Function)=,
      *   resumeBgmStart: (string)=
      * }} opts 引擎选项：isPaused 读当前暂停态（bee 双标记游戏返回合并读取）/
-     *   canToggle 手动切换准入守卫（游戏状态机 + 成就墙冻结检查）/ setPaused
+     *   canToggle 三入口共用准入守卫（游戏状态机 + 成就墙冻结检查）/ setPaused
      *   (paused, byBlur) 落点：写游戏暂停标志 + 专属反馈（提示行撤下、计时基准
      *   重置、手势终止、键鼠清空等；byBlur=true 表示失焦自动暂停来源）/ overlay
      *   暂停遮罩元素（可省略，省略时显隐归 setPaused 自理）/ pauseSfx·resumeSfx
@@ -52,9 +52,9 @@
      *   幂等补起播的 BGM 曲名（仅 snake/tetris 需要，start 同名幂等不重启）
      * @returns {{toggle: Function, autoPause: Function, resume: Function}}
      *   引擎 API：toggle 手动切换（canToggle 守卫 + 有声，键盘 P/空格、遮罩点击
-     *   与有声失焦共用）/ autoPause 静默自动暂停（仅暂停不恢复、不发声，失焦
-     *   自动暂停专用）/ resume 仅恢复（已暂停时执行恢复序列，bee 点击与按键
-     *   恢复入口专用）
+     *   与有声失焦共用）/ autoPause 静默自动暂停（canToggle 不放行或已暂停时
+     *   跳过；仅暂停不恢复、不发声，失焦自动暂停专用）/ resume 仅恢复（canToggle
+     *   不放行或未暂停时空转；bee 点击与按键恢复入口专用）
      */
     function create(opts) {
         if (!opts || !opts.isPaused || !opts.canToggle || !opts.setPaused) {
@@ -88,14 +88,14 @@
                 if (!opts.canToggle()) return;
                 enter(!opts.isPaused(), false);
             },
-            /** 失焦自动暂停（静默）：已暂停时幂等跳过，仅暂停绝不自动恢复 */
+            /** 失焦自动暂停（静默）：canToggle 不放行（成就墙打开期）或已暂停时幂等跳过，仅暂停绝不自动恢复 */
             autoPause: function () {
-                if (opts.isPaused()) return;
+                if (!opts.canToggle() || opts.isPaused()) return;
                 enter(true, true);
             },
-            /** 仅恢复（不暂停）：未暂停时空转；bee 的点击/任意键恢复入口专用 */
+            /** 仅恢复（不暂停）：canToggle 不放行（成就墙打开期，与手动路径同约束防绕过）或未暂停时空转；bee 的点击/任意键恢复入口专用 */
             resume: function () {
-                if (!opts.isPaused()) return;
+                if (!opts.canToggle() || !opts.isPaused()) return;
                 enter(false, false);
             }
         };

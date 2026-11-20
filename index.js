@@ -558,8 +558,12 @@ let trophyClosedAt = -1e9;
     function toggle() { if (hall.hidden) open(); else close(); }
     btn.addEventListener('click', toggle);
     // V 键开合（全站统一开墙键，与各游戏内成就墙一致：关态按 V 开、开态按 V 关）。
-    // 全屏模式下 Esc 会被浏览器优先接管用于退出全屏，V 是不受影响的开合键
-    document.addEventListener('keydown', e => { if (e.code === 'KeyV' && !e.repeat) toggle(); });
+    // 全屏模式下 Esc 会被浏览器优先接管用于退出全屏，V 是不受影响的开合键；
+    // 游戏打开期间不响应（与导航/投币模块同款 game-open 守卫），避免殿堂盖在游戏覆盖层上
+    document.addEventListener('keydown', e => {
+        if (document.body.classList.contains('game-open')) return;
+        if (e.code === 'KeyV' && !e.repeat) toggle();
+    });
     document.getElementById('thClose').addEventListener('click', close);
     // ---------- 全站重置进度（th-foot 入口）：武装态二次点击确认，不使用弹窗 ----------
     // 完整恢复出厂：清空 58 项成就 + 七游戏最高分/评级 + 每日挑战达成标记 + 进行中快照 +
@@ -604,6 +608,8 @@ let trophyClosedAt = -1e9;
     hall.querySelector('.th-veil').addEventListener('pointerdown', close);
     document.addEventListener('pointerdown', e => {
         if (hall.hidden) return;
+        // 游戏打开期间不因点击覆盖层误关殿堂（与导航/投币模块同款 game-open 守卫）
+        if (document.body.classList.contains('game-open')) return;
         if (!hall.contains(e.target) && !btn.contains(e.target)) close();
     });
     // Esc 关闭（次选关墙键：仅非全屏场景可靠，全屏下浏览器优先响应退出全屏，改用 V 键开合）
@@ -1587,6 +1593,7 @@ document.addEventListener('keydown', e => {
     let overlay = null; // 当前覆盖层根元素（同一时间只保留一个游戏窗口）
     let totalBeforeOpen = null; // 打开游戏时的总分快照（返回大厅时比较是否涨分，涨分播破纪录号角）
     let openedCard = null; // 本次打开的游戏对应卡片元素（关机时作为末帧缩略图的飞回落点）
+    let curGameFrame = null; // 最近一次 openGame 的游戏 iframe（摘层时据此判断被移除局是否仍是当前目标局）
     const MIN_LOADING_MS = 450;      // LOADING 过渡最短展示时长，避免一闪而过显得突兀
     const LOADING_TIMEOUT_MS = 8000; // 加载超时兜底：load 事件迟迟不来也强制放行进入游戏
 
@@ -1610,7 +1617,12 @@ document.addEventListener('keydown', e => {
         const remove = () => {
             if (removed) return;
             removed = true;
-            pendingSaveAck = null; // 回执回调用后即清：摘层后到达的迟到回执不再触发逻辑
+            // 仅当在途回执仍属于本局 iframe 才清槽：0.55s 关机窗口内极速开 B 局再关时，
+            // 本局 900ms 兜底摘层不得误抹 B 局已登记的回执回调（迟到回执自身经槽位已空而失活）
+            if (pendingSaveAckFrame === frame) {
+                pendingSaveAck = null;
+                pendingSaveAckFrame = null;
+            }
             el.remove();
             // 焦点回流：iframe 移除后焦点随其销毁落到 body，键盘导航因 activeElement
             // 不在卡片上而整体失灵（索引查询恒为 -1）；把焦点还给来源卡片，
@@ -1624,7 +1636,9 @@ document.addEventListener('keydown', e => {
             // 总分上涨（本次游玩刷新了某款最高分）：播放破纪录号角庆祝
             const totalNow = readTotal();
             if ((totalBeforeOpen || 0) < (totalNow || 0)) SFX.newRecord();
-            totalBeforeOpen = null; // 快照用后即清，防止异常路径误触发
+            // 仅当被移除局仍是当前目标局才清快照：0.55s 关机窗口内若已新开局（B 局），
+            // 此处清掉会把 B 局的涨分基准抹成 null，关 B 时误播破纪录号角
+            if (frame === curGameFrame) totalBeforeOpen = null;
         };
         // 摘层闸门：关机动画与存档回执齐备才真正移除节点
         const tryRemove = () => { if (animDone && saveAcked) remove(); };
@@ -1639,6 +1653,7 @@ document.addEventListener('keydown', e => {
         }
         // 登记存档回执回调：文件底部全局 onTrustedMessage 收到 arcade:saved 时触发（槽位声明见该处）
         pendingSaveAck = () => { saveAcked = true; tryRemove(); };
+        pendingSaveAckFrame = frame; // 成对登记归属帧：remove 兜底清槽前须比对，防误抹新局的在途回执
         // 关气回流缩略：截取游戏画布末帧，CRT 坍缩为过曝亮线后缩略图接棒绽放、缩放飞回
         // 对应卡片（叙事闭环——"画面装回卡带"）。截图/动画全链路 try-catch，任何失败
         // （跨源、画布为空、LOADING 中关闭）静默跳过，退回原 CRT 关机演出；减动效不启动
@@ -1742,6 +1757,8 @@ document.addEventListener('keydown', e => {
         // 并快照当前总分，返回大厅时比较是否涨分
         SFX.bgm.pause();
         totalBeforeOpen = readTotal();
+        pendingSaveAck = null; // 重置回执槽位：上一局迟到的 arcade:saved 不得提前置位本局的摘层状态机
+        pendingSaveAckFrame = null; // 归属帧随槽位一并复位（新局开场本就无在途回执）
         openedCard = card || null; // 记录落点：closeGame 时末帧缩略图飞回这张卡片
         overlay = document.createElement('div');
         overlay.id = 'gameOverlay';
@@ -1749,6 +1766,7 @@ document.addEventListener('keydown', e => {
         document.body.classList.add('game-open');
         lobbyFx.active = false;
         const frame = document.createElement('iframe');
+        curGameFrame = frame; // 登记当前目标局：被移除局与新局 iframe 不同即视为已换局
         // 全屏状态由本页（顶层文档）持有，iframe 切换游戏不触发导航，故全屏全程保持
         frame.src = url + (url.includes('?') ? '&' : '?') + 'embed=1';
         // feature policy 授权：fullscreen 允许游戏页内的全屏按钮请求全屏（全屏状态由本页持有，
@@ -1820,8 +1838,11 @@ document.addEventListener('keydown', e => {
 
     // 存档回执握手槽位：closeGame 发出 arcade:save 后登记回调，收到 arcade:saved 回执
     // 时置位摘层状态机（ACK 握手）。槽位全局唯一、用后即清，多次开关游戏复用同一槽位；
-    // 摘层时置 null，迟到回执不再触发任何逻辑
+    // 摘层时按归属帧比对后置 null，迟到回执不再触发任何逻辑
     let pendingSaveAck = null;
+    /** 在途回执所属的 iframe（与 pendingSaveAck 成对登记 / 复位）：上局 900ms 兜底摘层
+     *  清槽前比对归属，防止误抹极速开关后新局已登记的回执回调 */
+    let pendingSaveAckFrame = null;
     // 子页消息：arcade:playtime = 游玩时长冲账（父页累计落盘 arcade_playtime_<id> 并刷新卡片角标）
     // 来源守卫收口至 arcade-common.js（仅同源 + file:// 豁免；跨源伪造消息在守卫处丢弃）
     Arcade.onTrustedMessage(e => {
@@ -1832,10 +1853,16 @@ document.addEventListener('keydown', e => {
             addPlaytime(d.id, d.seconds);
             refreshTimeBadges();
         }
-        // 存档回执：子页快照已写盘（保存/清除分支均回执），交还 closeGame 的摘层状态机
-        if (d && d.type === Arcade.MSG.SAVED && pendingSaveAck) {
+        // 存档回执：子页快照已写盘（保存/清除分支均回执），交还 closeGame 的摘层状态机。
+        // 来源守卫仅校验同源，此处再比对 e.source 与在途回执归属帧的 contentWindow：
+        // 极速开关场景下上局 A 摘层前极迟到的回执仍可同源送达，若不校验会消费 B 局
+        // 已登记的槽位、提前置位 B 局摘层状态机；来源不符不消费（A 局摘层另有 900ms
+        // 兜底，迟到回执被忽略即其正确归宿）
+        if (d && d.type === Arcade.MSG.SAVED && pendingSaveAck && pendingSaveAckFrame
+            && e.source === pendingSaveAckFrame.contentWindow) {
             const ack = pendingSaveAck;
             pendingSaveAck = null;
+            pendingSaveAckFrame = null; // 归属帧随消费一并复位
             ack();
         }
     });
