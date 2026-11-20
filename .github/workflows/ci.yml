@@ -1,11 +1,14 @@
-# 像素街机厅 · CI 自动化（2026-11-18 引入）
+# 像素街机厅 · CI 自动化（2026-11-18 引入；2026-11-20 起三阶段）
 #
-# 两阶段设计（顺序不可调换）：
-#   阶段 1 守护检查 —— 先单独跑 tests/check.py。verify_all.py 的第 1 步会自动
+# 三阶段设计（顺序不可调换）：
+#   阶段 1 版本指纹门禁 —— 先单独跑 tools/bump-versions.py --check（只读校验）。
+#     js 内容 hash 与基线不一致、或入口 ?v= 落后于同名 js 当前版本，即显形为红；
+#     若直接跑全量，verify_all 第 2 步的 bump 修复动作会静默抹平此类漂移。
+#   阶段 2 守护检查 —— 再单独跑 tests/check.py。verify_all 的第 2 步会自动
 #     重建分享包（tools/sync_packages.py），若直接跑全量，"改了 js 忘了 sync"
 #     的仓库态漂移会被自动重建静默抹平、检查全绿照常通过；守护检查前置，
 #     让此类漂移在 CI 上显形为红（check.py 的分享包一致性项对陈旧 zip 报错）。
-#   阶段 2 全量验证 —— tools/verify_all.py 五步流水（sync → check → 无头冒烟
+#   阶段 3 全量验证 —— tools/verify_all.py 六步流水（指纹门禁 → sync → check → 无头冒烟
 #     → 无头行为回归 → 计数口径单测），与本地一键验证完全同源，任一步失败非零码退出即红。
 #
 # 无头浏览器：verify_all.py 的探测清单末尾按裸命令名 chromium 走 PATH 查找，
@@ -50,8 +53,11 @@ jobs:
             echo "已包装 google-chrome 为 chromium：$(command -v chromium)"
           fi
 
+      - name: 版本指纹门禁（只读校验）
+        run: python tools/bump-versions.py --check
+
       - name: 守护检查（仓库态静态一致性）
         run: python tests/check.py
 
-      - name: 全量五步验证（sync → check → 无头冒烟 → 无头行为回归 → 计数口径单测）
+      - name: 全量六步验证（指纹门禁 → sync → check → 无头冒烟 → 无头行为回归 → 计数口径单测）
         run: python tools/verify_all.py

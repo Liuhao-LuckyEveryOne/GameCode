@@ -376,6 +376,10 @@ const pauseRestoreTip = document.getElementById('pauseRestoreTip');
 const finalScoreElement = document.getElementById('finalScore');
 /** "新纪录"提示元素 */
 const newRecordElement = document.getElementById('newRecord');
+/** 开始遮罩"开始游戏"按钮（原内联 onclick 收编为 JS 侧监听） */
+const startBtnElement = document.getElementById('startBtn');
+/** 结束遮罩"重新开始"按钮（原内联 onclick 收编为 JS 侧监听） */
+const againBtnElement = document.getElementById('againBtn');
 /** 成就墙全屏遮罩层（DOM 覆盖层，V/Esc 开合，打开期间主循环冻结） */
 const achWall = document.getElementById('achWall');
 /** 成就卡片网格容器（条目由共享成就引擎渲染） */
@@ -2153,6 +2157,11 @@ if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
 highElement.textContent = highScore;
 multElement.textContent = '×' + mult;
 drawAllBalls();
+
+// 开始/重新开始按钮接线：原 HTML 内联 onclick 收编为 JS 冒泡阶段监听，触发行为等价；
+// 两枚按钮同调 startGame 走新局流程，监听仅在点击后触发，与初始化顺序无耦合
+startBtnElement.addEventListener('click', startGame); // 开始遮罩：开局
+againBtnElement.addEventListener('click', startGame); // 结束遮罩：重新开始
 
 // 进度快照恢复：位于核心状态创建之后、默认新局逻辑（开始按钮触发的新局）之前。
 // 恢复成功则停回暂停遮罩等待玩家按 P 或点击遮罩继续（不立即开跑），

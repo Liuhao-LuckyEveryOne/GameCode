@@ -48,10 +48,8 @@ const FS = (() => {
         return (bottom > 0 ? bottom : TOP_SAFE_FALLBACK) + 16;
     }
 
-    /** 嵌入模式标记：运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入）；
-     *  判定口径与 fx.js / audio.js 的 EMBED 保持一致，修改时三处须同步 */
-    const embedVal = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
-    const EMBED = window.parent !== window && embedVal !== null && embedVal !== '0' && embedVal !== 'false';
+    /** 嵌入模式标记：单点定义于 arcade-common.js（Arcade.EMBED，audio/fx/fullscreen 三库同款公式收敛） */
+    const EMBED = Arcade.EMBED;
     /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
     const POST_MSG_TARGET = Arcade.MSG_TARGET;
 
@@ -596,6 +594,11 @@ const FS = (() => {
     // "← 游戏厅"返回链接已移除（位置让给成就墙入口），返回大厅由父页覆盖层 ✕ / 浏览器后退承担
     if (EMBED) initEmbed();
 
+    // 全屏按钮 click 接线单点（八页统一 id=fullscreenToggle）：原各页 HTML 内联
+    // onclick="FS.toggle(this)" 收编于此，触发行为等价（btn 仅用于按压动画，可空安全）
+    const fsToggleBtn = document.getElementById('fullscreenToggle');
+    if (fsToggleBtn) fsToggleBtn.addEventListener('click', () => toggle(fsToggleBtn));
+
     /**
      * 注册 CRT 开关机音回调：全屏状态真实翻转时触发（本地 fullscreenchange 与嵌入模式
      * arcade:fs 广播两条路径统一走此处）；首条嵌入广播（hello 回复的现状同步）仅静默校准不发声
@@ -606,11 +609,11 @@ const FS = (() => {
     }
 
     return {
-        /** 切换全屏入口（供按钮 onclick 调用） */
+        /** 切换全屏入口（F 键 / 子页 FS 请求 / 页面按钮监听三路共用） */
         toggle,
         /** 注册 CRT 开关机音回调（游戏层注入 SFX 调用，替代游戏各自监听的历史残留） */
         onCrtAudio
     };
 })();
-// 挂载到 window：与 fx.js / arcade-common.js 导出风格一致，供页面 inline 处理器与跨脚本引用
+// 挂载到 window：与 fx.js / arcade-common.js 导出风格一致，供跨脚本引用
 window.FS = FS;

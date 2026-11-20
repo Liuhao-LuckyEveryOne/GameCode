@@ -15,9 +15,10 @@
        S3 Esc 关闭豁免    —— Esc 关闭手势不投币
        S4 ✕ 关闭豁免      —— ✕ 按钮关闭后紧接点击不投币
        S5 400ms 窗口过期  —— 关闭超过 400ms 后点击 → 恢复正常投币
-       S6 成就聚合        —— 仅凭存档 + DOM：三代存档解析/钳位/损坏 JSON 容错 + 面板 20/58 + 各行计数
-       S7 嵌入协议握手    —— snake.html?embed=1 加载后父页收到 arcade:hello
-                              与 {type:'arcade:audio',act:'hello'} 两条报到
+       S6 成就聚合        —— 仅凭存档 + DOM：三代存档解析/钳位/损坏 JSON 容错 + 面板 20/61 + 各行计数
+       S7 嵌入协议握手    —— snake.html?embed=1 加载后父页收到 arcade:hello、
+                              {type:'arcade:audio',act:'hello'} 与
+                              {type:'arcade:fxlevel',act:'hello'} 三条报到
        S8 成就解锁链路    —— 种子快照 + 空格续玩 + 合成 rAF 帧泵：真实移动 tick 经 trackRunStat
                               解锁 score100；二次跨阈值重扫不覆盖时间戳（全程零白盒函数调用）
        S9 俄罗斯方块核心  —— 旋转矩阵顺/逆/往返自洽 + collide 底越界/末行/左右越界四例
@@ -68,7 +69,7 @@
      document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
      + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
      本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
-     一键全量验证：python tools/verify_all.py（重建分享包 → 十七项静态检查 →
+     一键全量验证：python tools/verify_all.py（重建分享包 → 十八项静态检查 →
        无头冒烟 → 无头行为回归 → 计数口径单测；自动起随机端口临时服 / 探测本机
        Chrome 或 Edge）。
 
@@ -106,8 +107,8 @@
 <ol id="results"></ol>
 <button id="rerun" type="button">重新运行</button>
 <div id="stage"></div>
-<script src="../arcade-common.js?v=20261119-1"></script>
-<script src="../fx.js?v=20261120-1"></script>
+<script src="../arcade-common.js?v=20261120-2"></script>
+<script src="../fx.js?v=20261120-2"></script>
 <script src="../ach-common.js?v=20261120-1"></script>
 <script>
 'use strict';
@@ -236,10 +237,11 @@ window.addEventListener('message', e => {
 });
 
 /**
- * 等待基线之后到达的两条嵌入协议报到（fullscreen.js 的 arcade:hello + audio.js 的 audio hello）。
- * 只检查基线之后的新增报文：报文日志跨场景累计，若检查全量会把上一场景的残留误认为本场景接线成功。
+ * 等待基线之后到达的三条嵌入协议报到（fullscreen.js 的 arcade:hello、audio.js 的 audio hello
+ * 与 fx.js 的 fxlevel hello）。只检查基线之后的新增报文：报文日志跨场景累计，若检查全量会把
+ * 上一场景的残留误认为本场景接线成功。
  * @param {number} mark 调用前记录的 msgLog.length 基线（场景加载 iframe 前取值）
- * @returns {Promise<void>} 收齐两条报到即 resolve；4 秒未齐 reject（公共库接线缺失）
+ * @returns {Promise<void>} 收齐三条报到即 resolve；4 秒未齐 reject（公共库接线缺失）
  */
 function waitHandshake(mark) {
     return new Promise((resolve, reject) => {
@@ -248,8 +250,9 @@ function waitHandshake(mark) {
             const fresh = msgLog.slice(mark);
             const hasHello = fresh.some(m => m.type === 'arcade:hello');
             const hasAudioHello = fresh.some(m => m.type === 'arcade:audio' && m.act === 'hello');
-            if (hasHello && hasAudioHello) return resolve();
-            if (performance.now() - t0 > 4000) return reject(new Error('4s 内未收齐该页嵌入握手报文（arcade:hello / audio hello）'));
+            const hasFxHello = fresh.some(m => m.type === 'arcade:fxlevel' && m.act === 'hello');
+            if (hasHello && hasAudioHello && hasFxHello) return resolve();
+            if (performance.now() - t0 > 4000) return reject(new Error('4s 内未收齐该页嵌入握手报文（arcade:hello / audio hello / fxlevel hello）'));
             setTimeout(poll, 60);
         })();
     });
@@ -336,7 +339,7 @@ async function s5_windowExpires() {
 /** S6 成就聚合：只依赖「存档结构 + DOM 输出」，全程不调用页面内部函数
  *  （此前断言直接调 readAchCount / readUnlockMap，页面一改名就误红——内部重构不应影响本用例）
  *  种子覆盖三代存档形态与损坏档，断言全部落在成就殿堂面板的可见结果：
- *  v1 纯数组（贪吃蛇 2 项）· v1 数组含超额脏键（俄罗斯方块 10 键 > 成就表 8 → 面板自然钳位 8）
+ *  v1 纯数组（贪吃蛇 2 项）· v1 数组含超额脏键（俄罗斯方块 10 键含 2 枚成就表外脏键 → 面板自然钳位 8/11）
  *  · 过渡对象型 {unlocked:[...]}（小蜜蜂 10 项全满）· 损坏 JSON（吃豆人 → 0） */
 async function s6_achAggregate() {
     lsClear();
@@ -344,7 +347,7 @@ async function s6_achAggregate() {
     const tetrisIds = ['score10000', 'score30000', 'score100000', 'lines40', 'lines100', 'level5', 'level10', 'tetris4'];
     const beeIds = ['firstBlood', 'hundred', 'combo10', 'combo25', 'boss1', 'wave10', 'score10k', 'bomb10', 'dash30', 'perfect'];
     lsSet('arcade_ach_snake', JSON.stringify(snakeIds));                                  // v1 数组：2 项
-    lsSet('arcade_ach_tetris', JSON.stringify(tetrisIds.concat(['ghostA', 'ghostB'])));   // 脏数据 10 键 > 成就表 8：面板钳位 8
+    lsSet('arcade_ach_tetris', JSON.stringify(tetrisIds.concat(['ghostA', 'ghostB'])));   // 脏数据：8 项有效 + 2 枚成就表外脏键不计入 → 面板 8/11
     lsSet('arcade_ach_bee', JSON.stringify({ unlocked: beeIds }));                        // 过渡对象型：10 项全满
     lsSet('arcade_ach_pac', '{{{bad json');                                               // 损坏 JSON：按 0
     const frame = await loadPage('../index.html');
@@ -354,14 +357,14 @@ async function s6_achAggregate() {
     const byName = new Map(secs.map(s => [s.querySelector('.th-sec-head b').textContent, s]));
     const count = n => (byName.get(n) ? byName.get(n).querySelector('.th-sec-count').textContent : '缺行'); // 「已解锁/总数」
     const locked = n => (byName.get(n) ? byName.get(n).querySelectorAll('.th-q').length : -1);           // 未解锁缩略图上的问号遮罩数
-    ok(doc.getElementById('thTotal').textContent === '20 / 58', '殿堂总数不为 20/58（实际 ' + doc.getElementById('thTotal').textContent + '）');
+    ok(doc.getElementById('thTotal').textContent === '20 / 61', '殿堂总数不为 20/61（实际 ' + doc.getElementById('thTotal').textContent + '）');
     ok(secs.length === 7, '殿堂游戏行数不为 7（实际 ' + secs.length + '）');
     ok(count('贪吃蛇') === '2/8', '贪吃蛇行计数不为 2/8（实际 ' + count('贪吃蛇') + '）');
-    ok(count('俄罗斯方块') === '8/8', '脏键未被成就表钳位到 8（实际 ' + count('俄罗斯方块') + '）');
+    ok(count('俄罗斯方块') === '8/11', '脏键未被成就表钳位到 8/11（实际 ' + count('俄罗斯方块') + '）');
     ok(count('吃豆人') === '0/8', '损坏 JSON 未按 0 容错（实际 ' + count('吃豆人') + '）');
     ok(count('小蜜蜂') === '10/10', '对象型存档计数不为 10/10（实际 ' + count('小蜜蜂') + '）');
-    ok(locked('贪吃蛇') === 6 && locked('俄罗斯方块') === 0 && locked('小蜜蜂') === 0, '未解锁问号遮罩数与存档不符');
-    return '仅凭存档 + DOM：殿堂 20/58、七行齐全、计数 2/8·8/8·0/8·10/10 全对、问号遮罩 6/0/0';
+    ok(locked('贪吃蛇') === 6 && locked('俄罗斯方块') === 3 && locked('小蜜蜂') === 0, '未解锁问号遮罩数与存档不符');
+    return '仅凭存档 + DOM：殿堂 20/61、七行齐全、计数 2/8·8/11·0/8·10/10 全对、问号遮罩 6/3/0';
 }
 
 /**
@@ -449,10 +452,10 @@ async function s7s8_embedAndAch() {
         dir: 'right', dirQueue: [],
         food: { x: 17, y: 4 }, score, eaten: 0, maxCombo: 0, gold: 0
     });
-    // S7 协议握手：embed 页加载后等待两条报到（main() 开头已清空 msgLog，基线 0 即全量）
+    // S7 协议握手：embed 页加载后等待三条报到（main() 开头已清空 msgLog，基线 0 即全量）
     await loadPage('../snake.html?embed=1'); // 查询串已带 embed，loadPage 会以 & 续接绕缓存参数
     await waitHandshake(0);
-    record('S7 嵌入协议握手（arcade:hello + audio hello）', true, '两条报到报文均按 v2.3.1 修正指纹到达父页');
+    record('S7 嵌入协议握手（arcade:hello + audio hello + fxlevel hello）', true, '三条报到报文均按修正指纹到达父页');
     // S8 第一段（真实解锁）：引导装载 → 恢复提示可见 → 空格续玩 → 泵帧至移动 tick 落盘。
     // 该落盘由首个移动 tick 的 trackRunStat 写入，同 tick 连带解锁 score100——两次 saveAchStore
     // 之间有中间态（best 已写、章未写），判定同时要求两者即天然只认最终态。

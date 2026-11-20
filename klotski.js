@@ -459,6 +459,16 @@ const dailyLineElement = document.getElementById('dailyLine');
 const dailyDoneElement = document.getElementById('dailyDone');
 /** 结算面板"成就解锁"提示行元素（本次通关有新成就时绿色展示成就名） */
 const achUnlockedElement = document.getElementById('achUnlocked');
+/** 侧栏布局选择容器（6 枚布局按钮共用一个处理函数，事件委托到容器统一分发） */
+const layoutSelectElement = document.getElementById('layoutSelect');
+/** 开始遮罩"开始游戏"按钮（原内联 onclick 收编为 JS 侧监听） */
+const startBtnElement = document.getElementById('startBtn');
+/** 通关遮罩"再来一局"按钮（原内联 onclick 收编为 JS 侧监听） */
+const againBtnElement = document.getElementById('againBtn');
+/** 侧栏"重开"按钮（原内联 onclick 收编为 JS 侧监听） */
+const restartBtnElement = document.getElementById('restartBtn');
+/** 侧栏"演示最佳解"按钮（原内联 onclick 收编为 JS 侧监听） */
+const demoBtnElement = document.getElementById('demoBtn');
 
 /* ===================== 核心逻辑 ===================== */
 
@@ -1240,6 +1250,19 @@ const diffCtl = Arcade.bindDifficultyButtons({
         updateHud();
     }
 });
+
+/* 侧栏与遮罩按钮接线：原 HTML 内联 onclick 收编为 JS 冒泡阶段监听，触发行为等价；
+ * 布局按钮 6 枚共用 selectLayout 一个入口，委托到容器按冒泡统一分发
+ * （与难度按钮走共享库委托的口径一致），其余单按钮逐一绑定 */
+layoutSelectElement.addEventListener('click', (e) => {
+    const btn = e.target.closest('.layout-btn');
+    if (btn) selectLayout(btn); // 命中按钮才走原选择流程，容器空白处点击不响应
+});
+startBtnElement.addEventListener('click', startGame); // 开始遮罩：进入对局
+againBtnElement.addEventListener('click', restartLayout); // 通关遮罩：再来一局
+undoBtnElement.addEventListener('click', undoMove); // 侧栏撤销：大师难度置灰后 disabled 天然拦截点击（与内联 onclick 同效）
+restartBtnElement.addEventListener('click', restartLayout); // 侧栏重开
+demoBtnElement.addEventListener('click', startDemo); // 侧栏演示最佳解
 
 /**
  * 开始游戏（开始遮罩按钮）：隐藏遮罩并进入 playing，开始计时

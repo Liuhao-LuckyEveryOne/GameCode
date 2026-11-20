@@ -283,6 +283,20 @@ const pauseScreen = document.getElementById('pauseScreen');
 const comboEl = document.getElementById('combo');
 /** 撤销按钮（文字显示剩余次数，无快照或次数用尽时禁用） */
 const undoBtn = document.getElementById('undoBtn');
+/** 开始面板开始按钮 */
+const startBtn = document.getElementById('startBtn');
+/** 胜利面板继续挑战按钮 */
+const continueBtn = document.getElementById('continueBtn');
+/** 胜利面板重新开始按钮 */
+const winRestartBtn = document.getElementById('winRestartBtn');
+/** 结束面板重新开始按钮 */
+const overRestartBtn = document.getElementById('overRestartBtn');
+/* 控制按钮接线：原 HTML 内联 onclick 收编为 JS 监听，触发行为等价 */
+startBtn.addEventListener('click', startGame);
+continueBtn.addEventListener('click', continueGame);
+winRestartBtn.addEventListener('click', startGame);
+overRestartBtn.addEventListener('click', startGame);
+undoBtn.addEventListener('click', doUndo);
 /** 画布下方操作提示行内的"已恢复上次进度"标记（仅进度快照恢复成功时显示，本局重开后隐藏） */
 const restoreNote = document.getElementById('restoreNote');
 /** 1024 目标进度条填充元素（宽度随棋盘最大方块 log2 比例推进） */
@@ -1190,11 +1204,17 @@ function updateDanger(silent) {
     dangerLevel = level;
 }
 
+/** 统一口径判断当前是否可执行玩家动作：非暂停且成就墙关闭；
+ *  对局态（playing）与动作特有前置条件由各调用点按自身语义自行叠加 */
+function canAct() {
+    return !isPaused && !Ach.isOpen();
+}
+
 /** 执行一次撤销：弹出最近快照重建棋盘；结束/胜利面板下也可救回 */
 function doUndo() {
     // 暂停 / 成就墙打开时禁止撤销（对齐其他游戏暂停锁操作）；无快照 / 次数用尽时忽略
     // （开局前 history 必为空，天然屏蔽未开始状态）
-    if (isPaused || Ach.isOpen() || !history.length || undosLeft <= 0) return;
+    if (!canAct() || !history.length || undosLeft <= 0) return;
     const snap = history.pop();
     undosLeft--;
     restoreBoard(snap);
@@ -1593,7 +1613,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
  *  @param {number} dt 帧间隔（秒） */
 function updateRepeat(dt) {
     // 无按住方向，或不在可操作对局态：不推进计时（暂停 / 成就墙关闭后从原节奏点继续）
-    if (!heldKeys.length || !playing || isPaused || Ach.isOpen()) return;
+    if (!heldKeys.length || !playing || !canAct()) return;
     repeatTimer -= dt;
     if (repeatTimer > 0) return;
     move(KEY_DIRS[heldKeys[heldKeys.length - 1]], false); // 取最后按下的物理键映射的方向补发
@@ -1608,7 +1628,7 @@ document.addEventListener('keydown', (event) => {
     if (dir) {
         event.preventDefault(); // 方向键始终拦截，避免面板状态下按键滚动页面打断操作节奏
         if (event.repeat) return; // 系统按键重复一律忽略：连滑由自定义计时器驱动（延迟更短、节奏更稳）
-        if (!playing || isPaused || Ach.isOpen()) return; // 暂停 / 成就墙中屏蔽滑动，对齐其他游戏暂停锁操作
+        if (!playing || !canAct()) return; // 暂停 / 成就墙中屏蔽滑动，对齐其他游戏暂停锁操作
         move(dir); // 按下即刻出招
         if (heldKeys.indexOf(event.code) === -1) heldKeys.push(event.code); // 记录按住物理键（code 稳定，keyup 恒能对上）
         repeatTimer = REPEAT_DELAY; // 重置连滑计时：快节奏轮按时每次按下都即刻响应
@@ -1682,12 +1702,12 @@ Snap.bindFocusLoss(handleFocusLoss); // blur + visibilitychange 双通道接线�
 // 且每次触发后把起点重置为当前位置，一次连续拖动即可连环滑动
 let touchX = 0, touchY = 0;
 document.addEventListener('touchstart', (event) => {
-    if (!playing || isPaused || Ach.isOpen() || event.touches.length !== 1) return;
+    if (!playing || !canAct() || event.touches.length !== 1) return;
     touchX = event.touches[0].clientX;
     touchY = event.touches[0].clientY;
 }, { passive: true });
 document.addEventListener('touchmove', (event) => {
-    if (!playing || isPaused || Ach.isOpen()) return;
+    if (!playing || !canAct()) return;
     event.preventDefault(); // 对局中禁用页面滚动，保证滑动手势专属
     if (event.touches.length !== 1) return;
     const t = event.touches[0];
@@ -1721,7 +1741,7 @@ function endMouseDrag() {
 }
 canvas.addEventListener('pointerdown', (event) => {
     if (event.pointerType !== 'mouse' || event.button !== 0) return; // 非鼠标或非左键不接管
-    if (!playing || isPaused || Ach.isOpen()) return; // 与触屏通道相同的可操作态守卫
+    if (!playing || !canAct()) return; // 与触屏通道相同的可操作态守卫
     event.preventDefault(); // 阻止画布默认的拖选行为
     Arcade.capturePointer(canvas, event.pointerId); // 按住后拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
     mouseDragging = true;
@@ -1730,7 +1750,7 @@ canvas.addEventListener('pointerdown', (event) => {
 });
 canvas.addEventListener('pointermove', (event) => {
     if (event.pointerType !== 'mouse' || !mouseDragging) return; // 未按下时的悬浮移动直接忽略
-    if (!playing || isPaused || Ach.isOpen()) return; // 暂停 / 成就墙期间冻结手势
+    if (!playing || !canAct()) return; // 暂停 / 成就墙期间冻结手势
     const dx = event.clientX - dragX;
     const dy = event.clientY - dragY;
     // 位移不足阈值视为尚未成招，继续等待指针划动

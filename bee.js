@@ -127,6 +127,12 @@ const RESPAWN_INVINCIBLE = 2;
 const ENEMY_FIRE_INTERVAL = 1.4;
 /** 俯冲触发基准间隔（秒），实际间隔随波次缩短 */
 const DIVE_INTERVAL = 3.4;
+/** 俯冲间隔的逐波衰减系数：每波实际间隔在前波基础上乘该值 */
+const DIVE_INTERVAL_DECAY = 0.93;
+/** 普通波俯冲触发间隔下限（秒）：缩短与随机抖动后不低于该值 */
+const DIVE_INTERVAL_MIN = 1.1;
+/** 俯冲潮事件下俯冲触发间隔下限（秒）：较普通波大幅收紧 */
+const DIVE_INTERVAL_TIDE_MIN = 0.55;
 /** 俯冲初始下落速度（像素/秒） */
 const DIVE_START_VY = 140;
 /** 俯冲下落加速度（像素/秒²） */
@@ -153,12 +159,24 @@ const BOSS_BONUS = 500;
 const BOSS_BONUS_PER_WAVE = 50;
 /** Boss 扇形弹幕间隔（秒，随波次缩短） */
 const BOSS_FAN_INTERVAL = 2.0;
+/** Boss 扇形弹幕间隔的逐波缩短量（秒/波，超过第 5 波起每波递减） */
+const BOSS_FAN_INTERVAL_DECAY = 0.06;
 /** Boss 瞄准单发间隔（秒） */
 const BOSS_AIM_INTERVAL = 1.1;
+/** Boss 瞄准单发间隔的逐波缩短量（秒/波，超过第 5 波起每波递减） */
+const BOSS_AIM_INTERVAL_DECAY = 0.04;
 /** Boss 扇形弹幕的发数 */
 const BOSS_FAN_COUNT = 5;
 /** Boss 扇形弹幕总张角（弧度） */
 const BOSS_FAN_SPREAD = 0.9;
+/** Boss 游走的水平角频率（弧度/秒）：决定左右摆动快慢 */
+const BOSS_SWAY_FREQ_X = 0.9;
+/** Boss 沉浮的纵向角频率（弧度/秒）：决定上下起伏快慢 */
+const BOSS_SWAY_FREQ_Y = 0.45;
+/** Boss 游走轨迹与屏幕两端的留边（像素） */
+const BOSS_SWAY_MARGIN_X = 16;
+/** Boss 沉浮的纵向振幅（像素） */
+const BOSS_SWAY_AMP_Y = 18;
 /** Boss 血条失血白色闪烁的持续时间（秒） */
 const BOSS_HURT_FLASH_TIME = 0.12;
 /** Boss 入场警告演出时长（秒）：红色警戒横幅与警报鸣响结束后 Boss 才现身入场 */
@@ -562,6 +580,13 @@ const highScoreElement = document.getElementById('highScore');
 const startScreen = document.getElementById('startScreen');
 /** 游戏结束遮罩 */
 const gameOverScreen = document.getElementById('gameOverScreen');
+/** 开始面板开始按钮 */
+const startBtnElement = document.getElementById('startBtn');
+/** 结算面板重开按钮 */
+const againBtnElement = document.getElementById('againBtn');
+/* 控制按钮接线：原 HTML 内联 onclick 收编为 JS 监听，触发行为等价 */
+startBtnElement.addEventListener('click', startGame);
+againBtnElement.addEventListener('click', startGame);
 /** 暂停遮罩（与开始/结束遮罩同款面板形态，同步显示逻辑见 syncPauseOverlay） */
 const pauseScreen = document.getElementById('pauseScreen');
 /** 暂停遮罩恢复方式提示行（手动/失焦文案由 syncPauseOverlay 动态写入） */
@@ -819,6 +844,7 @@ function startGame() {
     SFX.start();
     // 开始游戏：启动蜜蜂保卫战专属背景音乐
     SFX.bgm.start('bee');
+    snapPipe.clear(); // 开新局即清除残留进度快照（与 endGame 侧对称防御）：开始/重新开始一律按全新开局落子，防止旧局快照在关页时覆盖新局进度；存储不可用时静默跳过，确保开局音效不受存储异常中断
 }
 
 /**
@@ -1524,12 +1550,24 @@ function nextWave() {
 /* ===================== 主逻辑更新 ===================== */
 
 /**
- * 推进一帧游戏逻辑：玩家 → 子弹 → 蜂群/Boss → 碰撞 → 波次判定
+ * 推进一帧游戏逻辑（编排入口）：按原顺序调用玩家 → 弹道 → 波次三个阶段，
+ * 阶段内细节见各函数；恢复快照的提示语清理为帧级关注点，留在本入口
  * @param {number} dt 距上一帧经过的秒数
  */
 function updateGame(dt) {
     // 恢复快照的暂停遮罩提示语只在恢复后的首个续玩帧清除，之后再次手动暂停不再展示
     if (restoredNotice) restoredNotice = '';
+    updatePlayer(dt);
+    updateProjectiles(dt);
+    updateWave(dt);
+}
+
+/**
+ * 推进玩家阶段：移动/冲刺/引擎尾焰/开火/无敌与连击窗口/
+ * 道具时限倒计时/冲刺冷却与残影衰减，并回写成就单局分数
+ * @param {number} dt 距上一帧经过的秒数
+ */
+function updatePlayer(dt) {
     // ---- 玩家移动：键盘/鼠标等效方向恒速移动（等同按键手感），鼠标静止即零输入零移动；冲刺期间沿冲刺方向高速位移 ----
     // 推进鼠标等效方向倒计时：持续无新移动则超时归零（模拟松键），飞船随之静止
     if (mouseDirTimer > 0) {
@@ -1608,7 +1646,13 @@ function updateGame(dt) {
     }
     // 成就：单局分数最佳值实时回写（超越历史最佳才落盘，挂靠的 score10k 由共享层连带解锁）
     Ach.trackRunStat('score', Math.floor(score));
+}
 
+/**
+ * 推进弹道阶段：玩家子弹与敌方子弹飞行（出屏移除）、道具下落与拾取
+ * @param {number} dt 距上一帧经过的秒数
+ */
+function updateProjectiles(dt) {
     // ---- 玩家子弹飞行，出屏移除 ----
     for (let i = bullets.length - 1; i >= 0; i--) {
         const bl = bullets[i];
@@ -1648,7 +1692,15 @@ function updateGame(dt) {
             applyPowerup(p);
         }
     }
+}
 
+/**
+ * 推进波次阶段：蜂群/Boss 分支更新 → 子弹/敌弹/俯冲三类碰撞结算 → 波次推进判定；
+ * 碰撞结算中的提前返回会连同跳过波次判定，与拆分前「终止整帧」语义一致
+ * （本阶段为编排顺序的最后一环，返回即结束本帧）
+ * @param {number} dt 距上一帧经过的秒数
+ */
+function updateWave(dt) {
     // ---- 蜂群分支更新：时停冻结 / Boss 波走 Boss 逻辑 / 普通波走蜂群逻辑 ----
     if (enemyFreezeTimer > 0) {
         // 时间静止：敌阵与敌方开火全部冻结，玩家仍可自由输出
@@ -1746,8 +1798,8 @@ function updateSwarm(dt) {
         triggerDive();
         // 间隔随波次缩短，并保留随机性避免机械感；俯冲潮事件下大幅缩短；难度除数整体收紧
         diveTimer = Math.max(
-            waveEvent === 'tide' ? 0.55 : 1.1,
-            DIVE_INTERVAL * Math.pow(0.93, wave - 1) * (0.7 + Math.random() * 0.6) * (waveEvent === 'tide' ? TIDE_DIVE_MULT : 1) / diffCfg.dive
+            waveEvent === 'tide' ? DIVE_INTERVAL_TIDE_MIN : DIVE_INTERVAL_MIN,
+            DIVE_INTERVAL * Math.pow(DIVE_INTERVAL_DECAY, wave - 1) * (0.7 + Math.random() * 0.6) * (waveEvent === 'tide' ? TIDE_DIVE_MULT : 1) / diffCfg.dive
         );
     }
 
@@ -1868,8 +1920,8 @@ function updateBoss(dt) {
         return;
     }
     // 水平正弦游走（两端留边距），纵向缓慢沉浮
-    boss.x = viewW / 2 - BOSS_W / 2 + Math.sin(boss.t * 0.9) * (viewW / 2 - BOSS_W / 2 - 16);
-    boss.y = 70 + (Math.sin(boss.t * 0.45) + 1) * 18;
+    boss.x = viewW / 2 - BOSS_W / 2 + Math.sin(boss.t * BOSS_SWAY_FREQ_X) * (viewW / 2 - BOSS_W / 2 - BOSS_SWAY_MARGIN_X);
+    boss.y = 70 + (Math.sin(boss.t * BOSS_SWAY_FREQ_Y) + 1) * BOSS_SWAY_AMP_Y;
 
     // 狂暴倍率：开火间隔缩短，压迫感陡增
     const rageMult = boss.enraged ? 0.65 : 1;
@@ -1877,13 +1929,13 @@ function updateBoss(dt) {
     boss.aimTimer -= dt;
     if (boss.aimTimer <= 0) {
         bossAimedShot(ENEMY_BULLET_SPEED + 40);
-        boss.aimTimer = Math.max(0.6, (BOSS_AIM_INTERVAL - (wave - 5) * 0.04) * rageMult);
+        boss.aimTimer = Math.max(0.6, (BOSS_AIM_INTERVAL - (wave - 5) * BOSS_AIM_INTERVAL_DECAY) * rageMult);
     }
     // 扇形弹幕
     boss.fanTimer -= dt;
     if (boss.fanTimer <= 0) {
         bossFanShot();
-        boss.fanTimer = Math.max(1.1, (BOSS_FAN_INTERVAL - (wave - 5) * 0.06) * rageMult);
+        boss.fanTimer = Math.max(1.1, (BOSS_FAN_INTERVAL - (wave - 5) * BOSS_FAN_INTERVAL_DECAY) * rageMult);
     }
 }
 
@@ -2499,6 +2551,9 @@ function validateBeeSnapshot(s) {
     // ---- 敌人数组校验：蜂种枚举合法、编队位在网格内、逐字段类型齐全；
     //      阵亡蜂允许 hp ≤ 0（击落瞬间残留值），存活蜂必须 hp ≥ 1 ----
     if (!Array.isArray(s.bees) || s.bees.length > 400) return false;
+    // 空蜂群且无 Boss 判定为脏档弃档：无 Boss 波的推进条件是 bees.length > 0，
+    // 容忍空蜂群会让脏档恢复后波次永不推进、游戏软锁；Boss 波 bees 为空属正常状态不受影响
+    if (s.bees.length === 0 && s.boss === null) return false;
     for (const b of s.bees) {
         if (!b) return false;
         if (!snapIsInt(b.col, 0, BEE_COLS - 1) || !snapIsInt(b.row, 0, BEE_ROWS - 1)) return false;

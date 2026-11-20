@@ -127,12 +127,24 @@ function readBest(keys, direction) {
     return best;
 }
 
+// HTML 实体转义映射：覆盖拼入 innerHTML / 属性值时会改变结构的五个标记字符
+const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/**
+ * HTML 实体转义：殿堂相片 title 等文本拼入 innerHTML 属性值前的防御性转义
+ * @param {string} s 原始文本
+ * @returns {string} 五个标记字符已替换为 HTML 实体的安全文本
+ */
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, ch => ESC_MAP[ch]);
+}
+
 /** 成就殿堂数据源：各游戏存档键、中文墙区名与成就相片表，顺序与大厅卡片排列一致
  *  （七款游戏均已升级 v2 对象存档 {unlocked:{id:时间戳}, best:{统计}}）。
  *  photos 为殿堂相片墙的展示用精简拷贝，五元组 [id, 名称, emoji 示意图, 稀有度, 描述]，
  *  id 与各游戏 ACHIEVEMENTS 定义表一一对应（snake.js/tetris.js/pac.js/bee.js/
  *  pinball.js/klotski.js/1024.js），游戏侧增删成就时须同步本表；
- *  成就数量：snake/tetris/pac/pinball/klotski/1024 各 8 条，bee 10 条，全站共 58 条 */
+ *  成就数量：snake/pac/pinball/klotski/1024 各 8 条，tetris 11 条，bee 10 条，全站共 61 条 */
 const ACH_DEFS = [
     {
         id: 'snake', key: 'arcade_ach_snake', name: '贪吃蛇', photos: [
@@ -155,7 +167,10 @@ const ACH_DEFS = [
             ['lines100', '消行大师', '🏗️', 'epic', '累计消除 100 行'],
             ['level5', '高速运转', '⚡', 'common', '等级达到 5'],
             ['level10', '十级高手', '🌟', 'legendary', '等级达到 10'],
-            ['tetris4', 'TETRIS！', '💥', 'rare', '单次消除 4 行']
+            ['tetris4', 'TETRIS！', '💥', 'rare', '单次消除 4 行'],
+            ['combo5', '连击达人', '🔥', 'rare', '单局连续消行 5 次'],
+            ['tspin2', '回旋妙手', '🌀', 'epic', '单次 T-Spin 消除 2 行及以上'],
+            ['b2b1', '连锁反应', '⛓️', 'rare', '触发一次 B2B 连锁加成']
         ]
     },
     {
@@ -289,7 +304,8 @@ function readPlaytimeMinutes(id) {
     } catch (e) { return 0; }
 }
 
-/** 刷新全部卡片的游玩时长角标：累计不足 1 分钟隐藏，有记录显示「N 分钟」 */
+/** 刷新全部卡片的游玩时长角标：累计不足 1 分钟隐藏，有记录显示「N 分钟」
+ *  角标 DOM id 契约：pt-<游戏id>，与 index.html 卡片内 span.time-badge 一一对应 */
 function refreshTimeBadges() {
     for (let i = 0; i < GAMES.length; i++) {
         if (!GAMES[i].playtime) continue; // 未参与时长统计的游戏不出角标
@@ -322,6 +338,7 @@ let lastShownTotal = null;
 /**
  * 刷新全部卡片的 BEST 显示：分数类显示「BEST 123」，klotski 步数类显示「BEST 42 步」，
  * 无任何纪录显示「BEST --」；并同步刷新标题下方的六款游戏总分条
+ * 角标 DOM id 契约：best-<游戏id>（id 取 BEST_DEFS[].id），与 index.html 卡片内 p.best 一一对应
  */
 function refreshBest() {
     for (let i = 0; i < BEST_DEFS.length; i++) {
@@ -390,7 +407,7 @@ function refreshLastBadge() {
     window.addEventListener('storage', () => { refreshBest(); refreshLastBadge(); refreshTimeBadges(); });
 })();
 
-// ---------- 成就殿堂：全站成就旗舰展示覆盖层（七游戏共 58 项），入口按钮 / V 键开合 / Esc / 点暗幕 / ✕ 关闭 ----------
+// ---------- 成就殿堂：全站成就旗舰展示覆盖层（七游戏共 61 项），入口按钮 / V 键开合 / Esc / 点暗幕 / ✕ 关闭 ----------
 /** 成就殿堂最近一次关闭的时刻（performance.now()，初始极小值）：供投币监听豁免「刚关闭殿堂」的手势——
     殿堂关闭监听挂 document、投币监听挂 window，冒泡阶段 document 先于 window 触发，
     关闭手势先行把殿堂置 hidden，投币监听再查 hidden 已失效，须以时间戳判定 */
@@ -468,7 +485,7 @@ let trophyClosedAt = -1e9;
                     + ' rar-' + ph[3] + (opening && !REDUCED_MOTION ? ' th-in' : '')
                     + '" style="--tilt:' + tilt + 'deg;--tape:' + tape + 'deg;--hue:' + hue
                     + ';--hue-bg:' + hue + '2e;--d:' + (0.16 + gi * 0.018).toFixed(3)
-                    + 's" title="' + tip + '">'
+                    + 's" title="' + escapeHtml(tip) + '">'
                     + '<i class="th-tape" aria-hidden="true"></i>'
                     + '<span class="th-shot"><span class="th-emoji" aria-hidden="true">' + ph[2]
                     + '</span>' + (has ? '' : '<span class="th-q" aria-hidden="true">?</span>')
@@ -518,7 +535,7 @@ let trophyClosedAt = -1e9;
             rankHintEl.textContent = '位阶已满 · 传说达成';
         }
         // 里程碑轨道：水位 = 全站进度（--mile-prog，CSS 0.9s 过渡与进度环同节奏推进）；
-        // 节点按 值/58 真实比例落位（--x）；达成的点亮 is-on，首个未达成阶呼吸描边 is-next
+        // 节点按 值/61 真实比例落位（--x）；达成的点亮 is-on，首个未达成阶呼吸描边 is-next
         mileEl.style.setProperty('--mile-prog', Math.min(unlocked / ACH_TOTAL * 100, 100).toFixed(2) + '%');
         let nextIdx = -1;
         let pips = '<span class="th-pip th-pip-zero" style="--x:0%"><i></i><em>0</em></span>'; // 原点刻度：进度条零位（弱化灰点，非成就节点）
@@ -566,7 +583,7 @@ let trophyClosedAt = -1e9;
     });
     document.getElementById('thClose').addEventListener('click', close);
     // ---------- 全站重置进度（th-foot 入口）：武装态二次点击确认，不使用弹窗 ----------
-    // 完整恢复出厂：清空 58 项成就 + 七游戏最高分/评级 + 每日挑战达成标记 + 进行中快照 +
+    // 完整恢复出厂：清空 61 项成就 + 七游戏最高分/评级 + 每日挑战达成标记 + 进行中快照 +
     // 游玩时长 + 「上次游玩」记录；音控/演出强度/难度/布局等设置类存档不在清除清单内，
     // 天然保留。监听置于殿堂模块内：确认后可直接 render(false) 重渲染殿堂零进度状态
     const resetBtn = document.getElementById('thReset');
@@ -868,6 +885,7 @@ document.addEventListener('keydown', e => {
 // ---------- 贪吃蛇预览动画：小蛇沿环形路径爬行，食物闪烁 ----------
 (function () {
     const cv = document.getElementById('snakePreview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const G = 20, N = 8; // 8×8 网格，格 20px
     // 外圈环形路径（顺时针）
@@ -920,6 +938,7 @@ document.addEventListener('keydown', e => {
 // ---------- 俄罗斯方块预览动画：方块依次下落堆叠，堆高后清盘重来 ----------
 (function () {
     const cv = document.getElementById('tetrisPreview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const G = 16, COLS = 10, ROWS = 10;
     // 预演序列：形状（相对坐标）、颜色、落点列
@@ -1043,6 +1062,7 @@ document.addEventListener('keydown', e => {
 // ---------- 吃豆人预览动画：吃豆人横向吃豆，两只幽灵在后方紧追 ----------
 (function () {
     const cv = document.getElementById('pacPreview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const DOTS = [];   // 一行豆子 { x, eaten }
     for (let x = 10; x <= 150; x += 14) DOTS.push({ x: x, eaten: false });
@@ -1139,6 +1159,7 @@ document.addEventListener('keydown', e => {
 // ---------- 3D弹球预览动画：金属球沿 8 字轨迹穿梭弹柱间，双挡板周期拍动 ----------
 (function () {
     const cv = document.getElementById('pinballPreview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     // 三枚弹柱 { x, y, r, flash }（flash：撞击闪光强度 0~1，随时间衰减）
     const bumps = [
@@ -1216,6 +1237,7 @@ document.addEventListener('keydown', e => {
 // ---------- 小蜜蜂预览动画：蜂群编队随波摆动，玩家飞船往返扫射，被击中的蜂闪白后重生 ----------
 (function () {
     const cv = document.getElementById('beePreview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     // 蜂群编队：3 行 × 5 列，每只蜂记录存活状态与受击闪光/重生倒计时
     const BEES = [];
@@ -1353,6 +1375,7 @@ document.addEventListener('keydown', e => {
 // ---------- 华容道预览动画：横将让路 → 曹操 2×2 深红鎏金块探身出门 → 依次归位，出口微光呼吸 ----------
 (function () {
     const cv = document.getElementById('klotskiPreview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const G = 30, OX = 20, OY = 5; // 格 30px，棋盘 120×150，画布内水平居中
     // 静态棋子底座：竖将×4（青）+ 兵×2（粉），全程不动
@@ -1485,6 +1508,7 @@ document.addEventListener('keydown', e => {
 // ---------- 1024预览动画：数字方块滑向同伴合并翻倍，白闪+光晕脉冲后数值逐级递升循环 ----------
 (function () {
     const cv = document.getElementById('n1024Preview');
+    if (!cv) return;
     const ctx = cv.getContext('2d');
     const G = 36, OX = 8, OY = 8; // 4×4 网格，格 36px，棋盘四周留 8px 边距
     // 数值 → 霓虹色映射（数值越高越暖，与游戏页方块配色阶梯呼应）

@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""「十七项」计数口径单元测试（tests/test_counter_text.py）
+"""检查项计数口径单元测试（tests/test_counter_text.py）
 
-零依赖标准库 unittest：锁定 2026-11-20 文案修正批的 6 处修复点——
+零依赖标准库 unittest：锁定 2026-11-20 文案修正批（十七项口径，6 处）与
+同日检查项扩容批（十六→十八项口径，6 处锚定句同步升级）的修复点——
 server.py（docstring + 注释）、tests/smoke.html（头部注释）、tools/verify_all.py
-（docstring + 步骤注释 + 步骤标题字符串）的检查项计数口径为「十七项」，
-并对全仓库源文件做旧计数「十五项」裸写反断言。
+（docstring + 步骤注释 + 步骤标题字符串）的检查项计数口径为「十八项」，
+并对全仓库源文件做旧计数「十七项 / 十五项」裸写反断言（双旧值同防，防
+后续扩容时只更新部分引用点、或只防最新旧值遗留更早旧值的盲区）。
 
-豁免规则：中文引号「十五项」完整引用形式为修改记录里的历史记载（描述当时
+豁免规则：中文引号「…项」完整引用形式为修改记录里的历史记载（描述当时
 修复内容本身），不属计数滞后声明，扫描时豁免；其余裸写一律报红。
 
-防回归目标：后续把锚定句改回旧值、或新增文件引入旧口径时，本测试即红。
+防回归目标：后续把锚定句改回任一旧值、新增检查项后漏改口径引用点、
+或新增文件引入旧口径时，本测试即红。
 
 运行（项目根目录或任意目录均可）：
     python tests/test_counter_text.py -v
@@ -24,36 +27,38 @@ from pathlib import Path
 # 路径基准：仓库根 = 本脚本目录的上一级（与 tests/check.py 同款）
 ROOT = Path(__file__).resolve().parent.parent
 
-# 6 处修复点的正向锚定句（子串在各自文件内出现即认定口径正确）
+# 6 处修复点的正向锚定句（子串在各自文件内出现即认定口径正确；
+# 检查项扩容后只需改本表的计数数字，锚定结构不变）
 EXPECTED_ANCHORS = {
     "server.py": [
-        "起服即检十七项站点约定",  # run_startup_check docstring
-        "静态一致性检查（十七项，检查项明细见",  # __main__ 起服前注释
+        "起服即检十八项站点约定",  # run_startup_check docstring
+        "静态一致性检查（十八项，检查项明细见",  # __main__ 起服前注释
     ],
     "tests/smoke.html": [
-        "重建分享包 → 十七项静态检查",  # 头部注释 verify_all 链句
+        "重建分享包 → 十八项静态检查",  # 头部注释 verify_all 链句
     ],
     "tools/verify_all.py": [
-        "tests/check.py（十七项检查全绿）",  # 模块 docstring 五步流水说明
-        "# 第 2 步：静态十七项检查",  # main 内步骤注释
-        "静态一致性检查（十七项）",  # main 内步骤标题字符串（运行时打印）
+        "tests/check.py（十八项检查全绿）",  # 模块 docstring 六步流水说明
+        "# 第 3 步：静态十八项检查",  # main 内步骤注释（六步流水：--check 置首步后顺延）
+        "静态一致性检查（十八项）",  # main 内步骤标题字符串（运行时打印）
     ],
 }
 
-# 旧计数裸写模式：负向断言排除中文引号包裹的「十五项」完整引用（历史记载豁免）
-STALE_PATTERN = re.compile(r"(?<!「)十五项(?!」)")
+# 旧计数裸写模式：双旧值同防（十五 = 首次修正前口径，十七 = 检查项扩容前口径）；
+# 负向断言排除中文引号包裹的「十五项 / 十七项」完整引用（历史记载豁免）
+STALE_PATTERN = re.compile(r"(?<!「)(?:十七|十五)项(?!」)")
 
 # 反断言扫描的源文件类型（含 md 文档；分享包目录随源文件判定，跳过避免重复）
 SCAN_GLOBS = ("*.py", "*.js", "*.html", "*.md")
 SKIP_DIRS = {".trae-html-share-packages", ".git"}
-# 测试装置自身：模式定义行含「十五项」字面量，属刻意直写，豁免
+# 测试装置自身：模式定义行含「十七项 / 十五项」字面量，属刻意直写，豁免
 SKIP_FILES = {"tests/test_counter_text.py"}
 
 
 def in_cn_quote(text, pos):
     """判定 pos 处命中是否处于中文引号「…」上下文内。
 
-    「十五项」完整引用形式是修改记录里的历史记载，扫描时豁免；正则负向断言
+    「…项」完整引用形式是修改记录里的历史记载，扫描时豁免；正则负向断言
     只覆盖同行相邻引号，跨行引号「…\\n十五项…」看不到相邻引号，按此函数自然豁免。
     两个反断言用例共用本函数，保证豁免口径一致。
 
@@ -89,10 +94,10 @@ def iter_repo_sources():
 
 
 class CounterTextTest(unittest.TestCase):
-    """「十七项」计数口径守护测试。"""
+    """检查项计数口径守护测试。"""
 
     def test_anchors_carry_new_counter(self):
-        """6 处修复点锚定句全部携带新口径「十七项」。"""
+        """6 处修复点锚定句全部携带新口径「十八项」。"""
         for rel, anchors in EXPECTED_ANCHORS.items():
             text = (ROOT / rel).read_text(encoding="utf-8")
             for anchor in anchors:
@@ -102,7 +107,7 @@ class CounterTextTest(unittest.TestCase):
                         f"{rel} 缺少锚定句（计数口径可能被改回旧值）: {anchor}")
 
     def test_fixed_files_have_no_stale_counter(self):
-        """6 处修复点所在文件全文不含旧计数「十五项」裸写。"""
+        """6 处修复点所在文件全文不含旧计数（十五项 / 十七项）裸写。"""
         problems = []
         for rel in EXPECTED_ANCHORS:
             text = (ROOT / rel).read_text(encoding="utf-8")
@@ -111,11 +116,11 @@ class CounterTextTest(unittest.TestCase):
                 if in_cn_quote(text, m.start()):
                     continue
                 line_no = text.count("\n", 0, m.start()) + 1
-                problems.append(f"{rel}:{line_no} 裸写旧计数「十五项」")
+                problems.append(f"{rel}:{line_no} 裸写旧计数「{m.group()}」")
         self.assertEqual(problems, [], "\n".join(problems))
 
     def test_repo_has_no_stale_counter(self):
-        """全仓库源文件无旧计数「十五项」裸写（「十五项」引用形式豁免）。"""
+        """全仓库源文件无旧计数（十五项 / 十七项）裸写（「…项」引用形式豁免）。"""
         problems = []
         for rel, text in iter_repo_sources():
             # 全文扫描报行号：命中后按匹配偏移换算行号并截取所在行，便于直接定位
@@ -128,7 +133,7 @@ class CounterTextTest(unittest.TestCase):
                 line_end = text.find("\n", m.start())
                 if line_end == -1:
                     line_end = len(text)
-                problems.append(f"{rel}:{line_no} 裸写旧计数「十五项」: {text[line_start:line_end].strip()[:60]}")
+                problems.append(f"{rel}:{line_no} 裸写旧计数「{m.group()}」: {text[line_start:line_end].strip()[:60]}")
         self.assertEqual(problems, [], "\n".join(problems))
 
 

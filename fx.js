@@ -21,10 +21,8 @@
 const FX = (() => {
     /** 是否偏好减弱动效（系统级设置；各游戏据此跳过粒子/卡帧等纯装饰演出，探测收口于 arcade-common.js） */
     const prefersReduced = Arcade.prefersReducedMotion;
-    /** 嵌入判据（本库唯一口径，与 fullscreen.js / audio.js 的 EMBED 保持一致，修改时三处须同步）：
-     *  运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入） */
-    const embedVal = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
-    const EMBED = window.parent !== window && embedVal !== null && embedVal !== '0' && embedVal !== 'false';
+    /** 嵌入判据：单点定义于 arcade-common.js（Arcade.EMBED，audio/fx/fullscreen 三库同款公式收敛） */
+    const EMBED = Arcade.EMBED;
 
     /**
      * 高清屏适配：按 devicePixelRatio 放大画布物理分辨率，同时以 setTransform 锁定 CSS 逻辑坐标系，
@@ -220,7 +218,8 @@ const FX = (() => {
         }
     });
 
-    // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页收父页广播静默应用；父页收子页设档请求后经 setFxLevel 持久化并广播
+    // 跨文档同步接线（随本文件解析即注册，index.js 零改动）：子页加载即发 hello 报到并收父页广播静默应用；
+    // 父页收子页设档请求后经 setFxLevel 持久化并广播，收 hello 报到即回发当前权威档位
     if (EMBED) {
         // 子页角色：广播报文无 act 字段，收到即静默应用（不持久化、不回传）
         // 双校验：Arcade.onTrustedMessage 先过 origin 守卫（仅同源 + file:// 豁免），再确认消息确来自直接父页
@@ -229,11 +228,16 @@ const FX = (() => {
             const d = e.data;
             if (d && d.type === Arcade.MSG.FXLEVEL && d.act === undefined) setFxLevel(d.idx, true, d.mode);
         });
+        // 就绪报到：向父页索取当前权威档位（iframe 加载晚于大厅时错过历史广播），
+        // 指纹须与父页监听约定一致（type:arcade:fxlevel + act:hello）；回发报文无 act 字段，走上方应用分支
+        window.parent.postMessage({ type: Arcade.MSG.FXLEVEL, act: 'hello' }, POST_MSG_TARGET);
     } else {
         // 父页（大厅）角色：来源守卫收口至 arcade-common.js（仅同源，或 file:// 直开时豁免 origin 'null'）
         Arcade.onTrustedMessage((e) => {
             const d = e.data;
-            if (d && d.type === Arcade.MSG.FXLEVEL && d.act === 'set') setFxLevel(d.idx); // 内部自动广播
+            if (!d || d.type !== Arcade.MSG.FXLEVEL) return;
+            if (d.act === 'set') setFxLevel(d.idx); // 内部自动广播
+            else if (d.act === 'hello' && e.source) e.source.postMessage({ type: Arcade.MSG.FXLEVEL, idx: fxLevel, mode: fxMode }, POST_MSG_TARGET); // 子页就绪报到：回发当前权威档位（载荷与广播一致，无 act 字段）
         });
     }
     // 自动档开机自启：持久化恢复为自动模式时（父页/独立运行）立即启动帧率引擎
@@ -614,6 +618,11 @@ const FX = (() => {
             last = performance.now();
             requestAnimationFrame(frame);
             window.addEventListener('pagehide', flush); // 离页兜底冲账（iframe 被移除时尽力而为）
+            // 隐藏即断帧：rAF 暂停期间 lastVisible 残留 true，回前台首帧会被 5 秒钳位白送时长，
+            // 置 false 让首帧只作基准校正（与 frame() 的连续可见帧判定口径一致）
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState !== 'visible') lastVisible = false;
+            });
         }
         // 以 { init } 对象形状导出：全部游戏页统一按 FX.playtime.init('id') 调用，
         // 此前直接 return init 导致 .init 属性不存在，每个游戏页加载即抛 TypeError

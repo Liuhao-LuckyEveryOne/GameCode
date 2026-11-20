@@ -627,7 +627,7 @@
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
-    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <button id="fullscreenToggle" class="fs-toggle" title="切换全屏（快捷键 F）">全屏 · 开</button>
     <h1 class="title">1024!</h1>
     <p class="subtitle">PIXEL MERGE</p>
     <div class="layout">
@@ -652,15 +652,15 @@
                         <button class="difficulty-btn active" data-diff="normal">普通 4×4</button>
                         <button class="difficulty-btn" data-diff="hard">困难 3×3</button>
                     </div>
-                    <button onclick="startGame()">开始游戏</button>
+                    <button id="startBtn">开始游戏</button>
                 </div>
                 <!-- 胜利遮罩：首次合并出 1024 时弹出，可继续挑战更高分 -->
                 <div id="winScreen" style="display: none;">
                     <h2 class="win-title">达成 1024！</h2>
                     <p>当前分数: <span id="winScore">0</span></p>
                     <div class="btn-row">
-                        <button onclick="continueGame()">继续挑战</button>
-                        <button class="btn-ghost" onclick="startGame()">重新开始</button>
+                        <button id="continueBtn">继续挑战</button>
+                        <button id="winRestartBtn" class="btn-ghost">重新开始</button>
                     </div>
                 </div>
                 <!-- 结束遮罩：棋盘填满且无可合并时显示最终分数与新纪录标记 -->
@@ -675,7 +675,7 @@
                         <div class="run-stat"><span class="rs-label">最大方块</span><span class="rs-value" id="statMaxTile">0</span></div>
                         <div class="run-stat"><span class="rs-label">用时</span><span class="rs-value" id="statTime">00:00</span></div>
                     </div>
-                    <button onclick="startGame()">重新开始</button>
+                    <button id="overRestartBtn">重新开始</button>
                 </div>
                 <!-- 暂停遮罩：P / 空格手动暂停或切窗失焦自动暂停时显示，再按暂停键继续 -->
                 <div id="pauseScreen" style="display: none;">
@@ -685,7 +685,7 @@
             </div>
             <!-- 控制行：撤销按钮（剩余次数随难度不同，结束后仍可救回死局） -->
             <div class="ctrl-row">
-                <button id="undoBtn" class="ctrl-btn" onclick="doUndo()">UNDO ×3 (Z)</button>
+                <button id="undoBtn" class="ctrl-btn">UNDO ×3 (Z)</button>
             </div>
             <p class="ctrl-hint">滑动合并 · 连击追加奖励分 · <kbd data-code="KeyZ">Z</kbd> 救场<span id="restoreNote" style="display: none;"> · 已恢复上次进度</span></p>
         </div>
@@ -723,10 +723,10 @@
     <!-- ===================== 成就墙：DOM 全屏覆盖层（V/Esc 开合，打开时游戏逻辑冻结） ===================== -->
     <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，成就墙开合/解锁/存档迁移由此驱动) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → gamepad.js(GP) → ach-trigger.js → 1024.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261119-1"></script>
-    <script src="audio.js?v=20261120-1"></script>
-    <script src="fx.js?v=20261120-1"></script>
-    <script src="fullscreen.js?v=20261120-1"></script>
+    <script src="arcade-common.js?v=20261120-2"></script>
+    <script src="audio.js?v=20261120-2"></script>
+    <script src="fx.js?v=20261120-2"></script>
+    <script src="fullscreen.js?v=20261120-3"></script>
     <script src="ach-common.js?v=20261120-1"></script>
     <script src="snap-common.js?v=20261120-1"></script>
     <script src="pause-common.js?v=20261120-1"></script>
@@ -734,6 +734,6 @@
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261120-2"></script>
     <script src="ach-trigger.js?v=20261120-1"></script>
-    <script src="1024.js?v=20261120-1"></script>
+    <script src="1024.js?v=20261120-3"></script>
 </body>
 </html>

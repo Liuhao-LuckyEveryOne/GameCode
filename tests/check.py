@@ -41,6 +41,16 @@
                      逐一断言至少一条候选可命中（.cls 核对 class 词表 / #id 核对
                      id 属性精确相等 / h1.cls 限定标签名核对 class 词表），页面
                      markup 重构删容器或改类名时静态期即红，不等全屏功能静默失配
+  16. 难度数值校验 —— docs/设计需求文档.md 难度表中提取的数值/常量逐个在对应
+                     游戏 js 原文断言存在（具名常量锚定防重命名漂移；锚未命中
+                     记跳过不计失败，文档缺失或数值在 js 侧找不到即报红）
+  17. 演出要素存在性 —— 全屏/CRT 切换元素（8 页 fullscreenToggle id）、演出禁用
+                     路径（reduced-motion 探测口与 fx 门控）与 CRT 开关机音接线
+                     （公共库接口 + 大厅/bee/1024 接线点）逐面断言存在，
+                     演出接线断裂时静态期即红
+  18. 音效键唯一 —— audio.js 与 audio-*.js 七分册的 SFX 键定义（8 空格缩进
+                     「键名: (」函数值条目）全量比对，跨文件同名键即报红
+                     （分册后置挂载静默覆盖同名键，被覆盖方沦为死代码）
 
 用法（项目根目录或任意目录均可）：
     python tests/check.py
@@ -914,21 +924,55 @@ def _string_array(entry, field):
     return re.findall(r"['\"]([\w-]+)['\"]", m.group(1)) if m else []
 
 
+def _field_loose(entry, field):
+    """条目内提取 field: 'xxx' 形态的字符串字面量值（宽松版，值可含任意字符）。
+
+    _field_str 的值域受限于 \\w 与连字符，成就名称（如 'TETRIS！' 含全角标点）
+    会失配，元数据比对须用本函数。
+
+    参数:
+        entry: 顶层条目文本
+        field: 字段名（如 id / name / rarity / cat）
+    返回:
+        字段值字符串；缺失时 None
+    """
+    m = re.search(r"\b" + field + r"\s*:\s*['\"]([^'\"]*)['\"]", entry)
+    return m.group(1) if m else None
+
+
+def _photo_rows(entry):
+    """成就殿堂条目内提取 photos 相片表完整五元组行。
+
+    子数组五元组 [id, 名称, emoji 示意图, 稀有度, 描述]；从 photos: 起扫描
+    避免条目内其它字段干扰。名称/描述含任意字符（中文/标点/emoji），一律
+    宽松匹配非引号字符。
+
+    参数:
+        entry: 顶层条目文本
+    返回:
+        五元组列表 [id, 名称, emoji, 稀有度, 描述]；条目缺 photos 字段时 None
+    """
+    m = re.search(r"\bphotos\s*:", entry)
+    if not m:
+        return None
+    return re.findall(
+        r"\[\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]"
+        r"\s*,\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\]",
+        entry[m.start():])
+
+
 def _photo_ids(entry):
     """成就殿堂条目内提取 photos 相片表各子数组首元素（成就 id 序列）。
-
-    子数组五元组 [id, 名称, emoji, 稀有度, 描述] 的首元素即 id；
-    从 photos: 起扫描避免条目内其它字段干扰。
 
     参数:
         entry: 顶层条目文本
     返回:
         成就 id 列表；条目缺 photos 字段时 None
     """
-    m = re.search(r"\bphotos\s*:", entry)
-    if not m:
+    rows = _photo_rows(entry)
+    if rows is None:
         return None
-    return re.findall(r"\[\s*['\"](\w+)['\"]\s*,", entry[m.start():])
+    return [r[0] for r in rows]
 
 
 def _diff_set(problems, left_label, left, right_label, right):
@@ -993,14 +1037,16 @@ def _klotski_expected_keys(text, js_name, problems):
 def check_lobby_defs_problems():
     """检查项 13：大厅 ACH_DEFS/BEST_DEFS 与七游戏实际定义同步。
 
-    大厅成就殿堂（ACH_DEFS：photos 相片表 id + 存档键 key）与卡片 BEST 角标
+    大厅成就殿堂（ACH_DEFS：photos 相片表 + 存档键 key）与卡片 BEST 角标
     （BEST_DEFS：各游戏最高分 localStorage 键）是游戏侧定义的镜像拷贝，游戏侧
     增删成就或改键后漏同步会静默劣化大厅展示（相片墙缺卡/多卡、BEST 角标
     NaN 或漏读）。本项做静态双向比对：①成就 id 集合（photos 首元素 ↔ 游戏侧
-    ACHIEVEMENTS 条目 id，含两侧内部重复检测）；②存档键（游戏侧 arcade_ach_*
-    字面量 ↔ 大厅 key 字段）；③最高分键（游戏侧 *HighScore/*BestScore 字面量
-    ↔ 大厅 keys 数组；klotski 模板拼键按 DIFF_IDS × LAYOUTS 静态展开 18 新键
-    + 6 旧版布局键核对）。
+    ACHIEVEMENTS 条目 id，含两侧内部重复检测）；②成就元数据（photos 五元组
+    的名称/稀有度 ↔ 游戏侧 name/rarity 字段按 id 配对逐条核对；cat 为游戏侧
+    独有字段，相片表无对应列，其存在性由检查项 11 兜底）；③存档键（游戏侧
+    arcade_ach_* 字面量 ↔ 大厅 key 字段）；④最高分键（游戏侧 *HighScore/
+    *BestScore 字面量 ↔ 大厅 keys 数组；klotski 模板拼键按 DIFF_IDS ×
+    LAYOUTS 静态展开 18 新键 + 6 旧版布局键核对）。
 
     返回:
         失败明细列表（空列表 = 通过）
@@ -1028,7 +1074,7 @@ def check_lobby_defs_problems():
     for entry in _split_top_objects(_slice_array_body(index_text, ach_decl.end())):
         gid = _field_str(entry, "id")
         if gid:
-            ach_defs[gid] = (_field_str(entry, "key"), _photo_ids(entry))
+            ach_defs[gid] = (_field_str(entry, "key"), _photo_rows(entry))
         else:
             problems.append(f"index.js ACH_DEFS 条目缺 id 字段: {entry.strip()[:60]}")
 
@@ -1040,9 +1086,10 @@ def check_lobby_defs_problems():
         text = _strip_comments_keep_strings(path.read_text(encoding="utf-8"))
         stem = path.stem  # 游戏 id：大厅两表键与 js 文件名同名约定
 
-        # ① 成就 id 集合：游戏侧 ACHIEVEMENTS 条目 id 提取
+        # ① 成就 id 集合 + 元数据：游戏侧 ACHIEVEMENTS 条目 id/name/rarity 提取
         decl = ACH_DECL_RE.search(text)
         game_ids = None
+        game_meta = {}  # 成就 id -> (名称, 稀有度)（元数据比对用）
         if not decl:
             problems.append(f"{js_name} 未找到 ACHIEVEMENTS 数组声明（形态漂移，需同步本检查器）")
         else:
@@ -1050,7 +1097,12 @@ def check_lobby_defs_problems():
             if body is None:
                 problems.append(f"{js_name} 成就数组未闭合")
             else:
-                game_ids = [i for i in (_field_str(e, "id") for e in _split_top_objects(body)) if i]
+                game_ids = []
+                for e in _split_top_objects(body):
+                    i = _field_str(e, "id")
+                    if i:
+                        game_ids.append(i)
+                        game_meta[i] = (_field_loose(e, "name"), _field_loose(e, "rarity"))
                 if not game_ids:
                     problems.append(f"{js_name} 成就数组条目 id 提取为空（形态漂移，需同步本检查器）")
                     game_ids = None
@@ -1058,14 +1110,26 @@ def check_lobby_defs_problems():
         if hall is None:
             problems.append(f"index.js ACH_DEFS 缺少 {stem} 条目（游戏侧成就表存在）")
         elif game_ids is not None:
-            hall_key, photo_ids = hall
-            if photo_ids is None:
+            hall_key, photo_rows = hall
+            if photo_rows is None:
                 problems.append(f"index.js ACH_DEFS[{stem}] 缺 photos 相片表")
             else:
+                photo_ids = [r[0] for r in photo_rows]
                 _diff_set(problems, f"index.js ACH_DEFS[{stem}] photos", photo_ids,
                           f"{js_name} 成就表", game_ids)
+                # ② 元数据一致性：photos 五元组的名称/稀有度 ↔ 游戏侧 name/rarity
+                # （按 id 配对逐条核对；cat 为游戏侧独有字段无对照列，检查项 11 兜底）
+                for row in photo_rows:
+                    aid, hname, _emoji, hrarity = row[0], row[1], row[2], row[3]
+                    gname, grarity = game_meta.get(aid, (None, None))
+                    if gname is not None and hname != gname:
+                        problems.append(f"{stem} 成就 {aid} 名称不一致：大厅 photos '{hname}' "
+                                        f"vs 游戏侧 '{gname}'（改侧后须同步另一侧）")
+                    if grarity is not None and hrarity != grarity:
+                        problems.append(f"{stem} 成就 {aid} 稀有度不一致：大厅 photos '{hrarity}' "
+                                        f"vs 游戏侧 '{grarity}'（相片墙边框配色与锁定卡稀有度展示失真）")
 
-            # ② 存档键：游戏侧 arcade_ach_* 字面量 ↔ 大厅 key 字段
+            # ③ 存档键：游戏侧 arcade_ach_* 字面量 ↔ 大厅 key 字段
             game_keys = set(ACH_KEY_LIT_RE.findall(text))
             if game_keys and hall_key:
                 if game_keys != {hall_key}:
@@ -1076,7 +1140,7 @@ def check_lobby_defs_problems():
             else:
                 problems.append(f"index.js ACH_DEFS[{stem}] 缺 key 字段")
 
-        # ③ 最高分键：游戏侧字面量 ↔ 大厅 keys 数组（klotski 静态展开）
+        # ④ 最高分键：游戏侧字面量 ↔ 大厅 keys 数组（klotski 静态展开）
         hall_keys = best_defs.get(stem)
         if hall_keys is None:
             problems.append(f"index.js BEST_DEFS 缺少 {stem} 条目（游戏侧最高分读写存在）")
@@ -1424,8 +1488,42 @@ def check_stage_presence_problems():
     return problems
 
 
+# ---------- 检查项 18：SFX 音效键跨文件唯一 ----------
+# v3.5 音效命名空间化后，audio.js 收敛为「合成引擎 + 通用音 + 大厅音」，七游戏专属
+# 音效各自拆分至 audio-<game>.js 分册（Object.assign(SFX, {...}) 后置覆盖挂载）。
+# 若 audio.js 与分册（或分册彼此）出现同名键，后加载者静默覆盖前者，前者沦为
+# 死代码（历史上 audio.js 的 5 个卡片点击音占位实现即因此全部失效且无人察觉）。
+# SFX 键定义形态：8 空格缩进的「键名: (」函数值条目（audio.js 通用音与分册
+# Object.assign 参数对象同款缩进）；SONGS 曲目键与 bgm 状态对象因冒号后非 "("
+# 天然不命中。先剥注释再提取，防中文注释行的半角括号伪匹配。
+SFX_KEY_DEF_RE = re.compile(r"(?m)^ {8}([A-Za-z_$][\w$]*)\s*:\s*\(")
+
+
+def check_sfx_key_problems():
+    """检查项 18：SFX 音效键跨文件唯一（audio.js 与 audio-*.js 分册全量比对）。
+
+    返回:
+        失败明细列表（空列表 = 通过）
+    """
+    problems = []
+    owners = {}  # 键名 -> 定义文件名列表（同键多文件即冲突）
+    files = sorted(list(ROOT.glob("audio-*.js")) + [ROOT / "audio.js"],
+                   key=lambda p: p.name)
+    for path in files:
+        if not path.is_file():
+            continue  # 分册缺失由检查项 3（公共库加载序）把关，本项不重复
+        text = _strip_comments_keep_strings(path.read_text(encoding="utf-8"))
+        for key in SFX_KEY_DEF_RE.findall(text):
+            owners.setdefault(key, []).append(path.name)
+    for key, defs in sorted(owners.items()):
+        if len(defs) > 1:
+            problems.append(f"SFX 键 {key} 重复定义于: {', '.join(defs)}"
+                            f"（分册后置挂载静默覆盖同名键，被覆盖方沦为死代码，须改名或删除）")
+    return problems
+
+
 def main():
-    """主流程：依次运行十七项检查，汇总结果并按退出码约定返回。"""
+    """主流程：依次运行十八项检查，汇总结果并按退出码约定返回。"""
     targets = scan_targets()  # 每文件只读一次/去噪一次：第 4/5/8 项共用同一份目标
     checks = [
         ("引用完整性", check_refs_problems),
@@ -1445,6 +1543,7 @@ def main():
         ("全屏选择器契约", check_fs_selectors_problems),
         ("难度数值校验", check_diff_values_problems),
         ("演出要素存在性", check_stage_presence_problems),
+        ("音效键唯一", check_sfx_key_problems),
     ]
     all_ok = True
     for label, fn in checks:

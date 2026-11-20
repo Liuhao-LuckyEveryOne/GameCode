@@ -53,10 +53,8 @@
  * 嵌入模式（?embed 于 iframe 内运行）下状态由大厅（父页）统一持有，经 postMessage 实时同步大厅与游戏
  */
 const SFX = (() => {
-    /** 嵌入模式标记：运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入）；
-     *  判定口径与 fullscreen.js / fx.js 的 EMBED 保持一致，修改时三处须同步 */
-    const embedVal = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
-    const EMBED = window.parent !== window && embedVal !== null && embedVal !== '0' && embedVal !== 'false';
+    /** 嵌入模式标记：单点定义于 arcade-common.js（Arcade.EMBED，audio/fx/fullscreen 三库同款公式收敛） */
+    const EMBED = Arcade.EMBED;
     /** 消息投递目标：单点定义于 arcade-common.js（Arcade.MSG_TARGET，file:// 回退 '*' / 同源收紧 '/'） */
     const POST_MSG_TARGET = Arcade.MSG_TARGET;
     let ctx = null; // AudioContext（首次使用时懒创建，规避浏览器自动播放限制）
@@ -352,7 +350,7 @@ const SFX = (() => {
         broadcastAudio();
     }
 
-    // 跨文档同步接线（随本文件解析即注册；EMBED 为本文件局部常量，不依赖后加载的 fullscreen.js）
+    // 跨文档同步接线（随本文件解析即注册；EMBED 取自 arcade-common.js 单点，标准加载序下先于本库就绪）
     if (EMBED) {
         // 子页角色：监听父页广播并应用状态；加载后向父页报到以获取当前权威状态（静音 + 双通道档位）
         // 双校验：Arcade.onTrustedMessage 先过 origin 守卫（仅同源 + file:// 豁免），再确认消息确来自直接父页
@@ -885,23 +883,14 @@ const SFX = (() => {
         /** 华容道卡片：古风木质拨弦下滑双音（棋子叩击木盘的温润质感） */
         cardKlotski: () => { tone(520, 0.08, 'triangle', 0.11, 390); tone(390, 0.1, 'triangle', 0.09, 0, 0.09); },
         /** 1024卡片：数字方块滑动上滑音 + 合并确认双击（对应玩法核心动作） */
-        cardN1024: () => { tone(330, 0.09, 'triangle', 0.09, 540); tone(540, 0.06, 'square', 0.09, 0, 0.1); tone(660, 0.08, 'square', 0.07, 0, 0.16); },
+        cardN1024: () => { tone(330, 0.09, 'triangle', 0.09, 540); tone(540, 0.06, 'square', 0.09, 0, 0.1); tone(660, 0.08, 'square', 0.07, 0, 0.16); }
 
-        /* ---------- 卡片点击音效（进入对应游戏的"另一款代表音"） ---------- */
-        /** 俄罗斯方块升级：三连上行琶音 */
-        tLevelUp: () => { tone(523, 0.07, 'square', 0.1); tone(659, 0.07, 'square', 0.1, 0, 0.07); tone(784, 0.12, 'square', 0.1, 0, 0.14); },
-        /** 吃豆人开场：三音上行启程号角 */
-        pacReady: () => { tone(440, 0.1, 'square', 0.1); tone(660, 0.1, 'square', 0.1, 0, 0.12); tone(880, 0.16, 'square', 0.1, 0, 0.24); },
-        /** 弹球发射：弹射器蓄能低鸣 + 弹簧弹射上滑 */
-        pinLaunch: () => { tone(120, 0.14, 'sawtooth', 0.13, 920); tone(1800, 0.08, 'square', 0.06, 300, 0.1); },
-        /** 华容道选子：木质叩击下滑单音 */
-        klSelect: () => tone(340, 0.07, 'triangle', 0.11, 260),
-        /** 1024合并：合并音高随数值档位上行 + 上方确认双击 @param {number} n 合并出的目标数值 */
-        n1024Merge: (n = 32) => {
-            const f = 300 + Math.min(Math.log2(Math.max(n, 2)), 11) * 55; // 数值越大音越高，封顶防刺耳
-            tone(f, 0.07, 'triangle', 0.1);
-            tone(f * 1.5, 0.09, 'square', 0.08, 0, 0.07);
-        }
+        // 卡片点击音（tLevelUp/pacReady/pinLaunch/klSelect/n1024Merge）不在本文件定义：
+        // 五键单源定义于对应游戏音效分册（audio-*.js），index.html 补载五款分册后引用。
+        // 历史上此处曾有一套同名占位实现，恒被分册 Object.assign 覆盖成死代码且签名漂移
+        // （n1024Merge 占位 (n=32) vs 分册真身 (value, delay)），已删除；跨文件重复定义
+        // 由 check.py「音效键唯一」检查项静态报红
+
     };
 })();
 // 挂载到 window：与 fx.js / arcade-common.js / fullscreen.js 导出风格一致，供跨脚本引用

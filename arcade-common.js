@@ -10,7 +10,8 @@
  * 职责五：系统级「减少动态效果」偏好唯一探测点（prefersReducedMotion，fx/fullscreen/gamepad/大厅统一消费）
  * 职责六：跨游戏渲染/HUD 同构样板工厂（createGridLayer 离屏网格层三件套 / createAchHud 成就墙六件套，
  *         dpr 读取口径与成就墙 id 契约单点收敛；当前 snake/tetris 接入，其余游戏各自变体不强制迁移）
- * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, removeByPrefix, capturePointer, bindDifficultyButtons, prefersReducedMotion, createGridLayer, createAchHud }
+ * 职责七：嵌入模式判据唯一实现（EMBED，audio/fx/fullscreen 三库统一消费，消「三处同款公式须人工同步」隐患）
+ * 暴露全局：window.Arcade = { onTrustedMessage, MSG, MSG_TARGET, EMBED, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, removeByPrefix, capturePointer, bindDifficultyButtons, prefersReducedMotion, createGridLayer, createAchHud }
  * ========================================================================== */
 const Arcade = (() => {
     'use strict';
@@ -51,6 +52,14 @@ const Arcade = (() => {
      * 原 audio/fullscreen/fx/index 四处同款公式的单点定义
      */
     const MSG_TARGET = (location.protocol === 'file:') ? '*' : '/';
+
+    /**
+     * 嵌入模式判据全站单点：运行于 iframe 且 URL 携带 ?embed（值 0/false 为显式退出，不算嵌入）。
+     * 原 audio.js/fx.js/fullscreen.js 三处同款公式的收敛定义——三库各自复制导致注释互指
+     * 「修改时须三处同步」，单点后口径唯一，本库先于三库加载无时序风险
+     */
+    const embedQuery = new URLSearchParams(location.search).get('embed'); // 未携带 ?embed 时为 null
+    const EMBED = window.parent !== window && embedQuery !== null && embedQuery !== '0' && embedQuery !== 'false';
 
     const warnedWriteKeys = new Set(); // 已告警过的写失败键：存储被禁时同键反复失败，仅首次告警避免刷屏
 
@@ -313,6 +322,6 @@ const Arcade = (() => {
     // 系统级「减少动态效果」偏好全站唯一探测点：各库/大厅读取本值，禁止各自重复探测
     const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-    return { onTrustedMessage, MSG, MSG_TARGET, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION, createGridLayer, createAchHud };
+    return { onTrustedMessage, MSG, MSG_TARGET, EMBED, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION, createGridLayer, createAchHud };
 })();
 window.Arcade = Arcade;

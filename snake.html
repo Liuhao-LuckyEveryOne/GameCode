@@ -399,7 +399,7 @@
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
-    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <button id="fullscreenToggle" class="fs-toggle" title="切换全屏（快捷键 F）">全屏 · 开</button>
     <h1 class="title">SNAKE</h1>
     <div class="layout">
         <div id="gameContainer">
@@ -424,7 +424,7 @@
                     <button class="difficulty-btn active" data-speed="150" data-points="10">中等</button>
                     <button class="difficulty-btn" data-speed="100" data-points="20">困难</button>
                 </div>
-                <button id="btnStart" onclick="startGame()">开始游戏</button>
+                <button id="btnStart">开始游戏</button>
             </div>
             <!-- 暂停遮罩：空格暂停时由 snake.js 显示，再按空格继续 -->
             <div id="pauseScreen" style="display: none;">
@@ -438,7 +438,7 @@
                 <h2 id="gameOverTitle">游戏结束</h2>
                 <p>最终分数: <span id="finalScore">0</span></p>
                 <p id="newRecord" style="display: none;">新纪录！</p>
-                <button id="btnRestart" onclick="startGame()">重新开始</button>
+                <button id="btnRestart">重新开始</button>
             </div>
         </div>
         <!-- 侧边信息栏：STATS 记分面板（snake.js 按 id 实时刷新）+ KEYS 键位面板 -->
@@ -467,10 +467,10 @@
     <!-- ===================== 成就墙：DOM 全屏覆盖层（V/Esc 开合，打开时游戏逻辑冻结） ===================== -->
     <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，成就墙开合/解锁/存档迁移由此驱动) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → gamepad.js / ach-trigger.js → snake.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261119-1"></script>
-    <script src="audio.js?v=20261120-1"></script>
-    <script src="fx.js?v=20261120-1"></script>
-    <script src="fullscreen.js?v=20261120-1"></script>
+    <script src="arcade-common.js?v=20261120-2"></script>
+    <script src="audio.js?v=20261120-2"></script>
+    <script src="fx.js?v=20261120-2"></script>
+    <script src="fullscreen.js?v=20261120-3"></script>
     <script src="ach-common.js?v=20261120-1"></script>
     <script src="snap-common.js?v=20261120-1"></script>
     <script src="pause-common.js?v=20261120-1"></script>
@@ -478,6 +478,6 @@
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261120-2"></script>
     <script src="ach-trigger.js?v=20261120-1"></script>
-    <script src="snake.js?v=20261120-1"></script>
+    <script src="snake.js?v=20261120-2"></script>
 </body>
 </html>

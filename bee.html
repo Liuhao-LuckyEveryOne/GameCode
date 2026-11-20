@@ -683,7 +683,7 @@
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
-    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <button id="fullscreenToggle" class="fs-toggle" title="切换全屏（快捷键 F）">全屏 · 开</button>
     <h1 class="title">BEE</h1>
     <div class="layout">
         <div id="gameContainer">
@@ -709,7 +709,7 @@
                     <button class="diff-btn selected" data-diff="normal">普通</button>
                     <button class="diff-btn" data-diff="hard">困难</button>
                 </div>
-                <button onclick="startGame()">开始游戏</button>
+                <button id="startBtn">开始游戏</button>
             </div>
             <!-- 结束遮罩：显示最终分数/波次/评级与新纪录标记，提供重新开始按钮 -->
             <div id="gameOverScreen" style="display: none;">
@@ -719,7 +719,7 @@
                 <!-- 结算评级徽章：大字评级 + 分级配色（S/A/B/C），弹出时播 rankPop 弹入动画 -->
                 <div id="finalRank" class="rank-badge" style="display: none;">C</div>
                 <p id="newRecord" style="display: none;">新纪录！</p>
-                <button onclick="startGame()">重新开始</button>
+                <button id="againBtn">重新开始</button>
             </div>
             <!-- 暂停遮罩：P 键手动暂停或窗口失焦自动暂停时显示，形态与开始/结束面板一致；
                  bee.js 以 syncPauseOverlay 同步显隐，并按暂停来源切换恢复提示文案 -->
@@ -753,10 +753,10 @@
          卡片网格由共享库 ach-common.js 按规范标记动态填充（bee 页 CSS 提供粉金皮肤） -->
     <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，依赖 SFX/FX) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → bee.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261119-1"></script>
-    <script src="audio.js?v=20261120-1"></script>
-    <script src="fx.js?v=20261120-1"></script>
-    <script src="fullscreen.js?v=20261120-1"></script>
+    <script src="arcade-common.js?v=20261120-2"></script>
+    <script src="audio.js?v=20261120-2"></script>
+    <script src="fx.js?v=20261120-2"></script>
+    <script src="fullscreen.js?v=20261120-3"></script>
     <script src="ach-common.js?v=20261120-1"></script>
     <script src="snap-common.js?v=20261120-1"></script>
     <script src="pause-common.js?v=20261120-1"></script>
@@ -764,6 +764,6 @@
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261120-2"></script>
     <script src="ach-trigger.js?v=20261120-1"></script>
-    <script src="bee.js?v=20261120-3"></script>
+    <script src="bee.js?v=20261120-5"></script>
 </body>
 </html>

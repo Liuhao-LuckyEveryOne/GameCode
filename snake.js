@@ -180,6 +180,9 @@ const newRecordElement = document.getElementById('newRecord');
 const btnStart = document.getElementById('btnStart');
 /** 结算面板重开按钮（面板显示时自动聚焦，空格即可重开） */
 const btnRestart = document.getElementById('btnRestart');
+/* 控制按钮接线：原 HTML 内联 onclick 收编为 JS 监听，触发行为等价 */
+btnStart.addEventListener('click', startGame);
+btnRestart.addEventListener('click', startGame);
 
 /** 方向反向映射，用于禁止 180° 掉头 */
 const opposites = { up: 'down', down: 'up', left: 'right', right: 'left' };

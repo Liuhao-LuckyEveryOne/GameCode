@@ -15,6 +15,8 @@
 用法：
     python tools/bump-versions.py          # 检测变更并 bump
     python tools/bump-versions.py --seed   # 首次运行/重置基线：仅记录当前 hash，不 bump
+    python tools/bump-versions.py --check  # 门禁校验：只检测不改写（存在待 bump js 或
+                                           # 待同步入口即退出码 1），供 CI/verify_all 使用
 """
 import hashlib
 import json
@@ -57,6 +59,7 @@ def main():
         pass
 
     seed = '--seed' in sys.argv
+    check = '--check' in sys.argv
     htmls = collect_htmls()
     if not htmls:
         print('未找到任何 html 文件')
@@ -150,7 +153,8 @@ def main():
             if hits:
                 html_bytes[html] = upgraded
                 count += 1
-        cache[name] = h
+        if not check:
+            cache[name] = h  # --check 门禁模式不刷新基线（保持基线只读）
         bumped.append('%s  %s -> %s （%d 个 html）' % (name, old_v, new_v, count))
         if manual:
             print('提示：%s 存在手写非标版本引用，未自动覆盖：%s' % (name, '、'.join(manual)))
@@ -207,6 +211,18 @@ def main():
             entry_synced.append('%s -> %s （对齐 %s，%d 个 html）' % (ename, js_v, jsname, count))
         if manual:
             print('提示：入口 %s 存在手写非标版本引用，未自动覆盖：%s' % (ename, '、'.join(manual)))
+
+    # --check 门禁：只校验不写盘不改基线，凡存在待改写项（js bump / 入口同步）即失败退出
+    if check:
+        if bumped or entry_synced:
+            print('校验失败：%d 个 js 待 bump、%d 处入口待同步（运行 python tools/bump-versions.py 修复）' % (len(bumped), len(entry_synced)))
+            for line in bumped + entry_synced:
+                print('  ! ' + line)
+            return 1
+        if seeded:
+            print('提示：%d 个 js 尚无 hash 基线（建档不产生改写，不影响校验结果）' % len(seeded))
+        print('校验通过：所有版本号均为最新')
+        return 0
 
     # 写回 html（仅写入内容有变化的文件，按字节写避免换行符被改写）
     for html, data in html_bytes.items():

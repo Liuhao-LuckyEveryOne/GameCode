@@ -403,7 +403,7 @@
         <span class="awt-caption"><span class="awt-label">成就墙</span><span class="awt-key">V</span></span>
     </button>
     <button id="soundToggle" class="sound-toggle" type="button" title="单击：静音/恢复（快捷键 M）&#10;长按 / 右键：音量设置">♪ 声音 · 关</button>
-    <button id="fullscreenToggle" class="fs-toggle" onclick="FS.toggle(this)" title="切换全屏（快捷键 F）">全屏 · 开</button>
+    <button id="fullscreenToggle" class="fs-toggle" title="切换全屏（快捷键 F）">全屏 · 开</button>
     <h1 class="title">
         <span style="color:#ffd23e">P</span><span style="color:#ff3ea5">A</span><span style="color:#35e0ff">C</span><span style="color:#39ff6a">-</span><span style="color:#ffb8de">M</span><span style="color:#ff3b3b">A</span><span style="color:#ffb347">N</span>
     </h1>
@@ -430,7 +430,7 @@
                     <button class="difficulty-btn active" data-fright="8" data-ghspeed="95" data-mult="2">中等</button>
                     <button class="difficulty-btn" data-fright="6" data-ghspeed="110" data-mult="3">困难</button>
                 </div>
-                <button onclick="startGame()">开始游戏</button>
+                <button id="startBtn">开始游戏</button>
             </div>
             <!-- 暂停遮罩：P 键或空格暂停时由 pac.js 显示；restoreNote 仅快照恢复成功时追加显示 -->
             <div id="pauseScreen" style="display: none;">
@@ -443,7 +443,7 @@
                 <h2>游戏结束</h2>
                 <p>最终分数: <span id="finalScore">0</span></p>
                 <p id="newRecord" style="display: none;">新纪录！</p>
-                <button onclick="startGame()">重新开始</button>
+                <button id="againBtn">重新开始</button>
             </div>
         </div>
         <!-- 侧边信息栏：LIVES 剩余生命（150×36 Canvas）/ STATS 实时统计 / KEYS 键位与得分说明 -->
@@ -477,10 +477,10 @@
     <!-- 成就墙：全屏 DOM 覆盖层锚元素（默认隐藏），V/Esc 开合与整墙 DOM 构建由共享库 ach-common.js 运行时完成 -->
     <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，依赖前述 SFX/FX/Arcade) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → pac.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261119-1"></script>
-    <script src="audio.js?v=20261120-1"></script>
-    <script src="fx.js?v=20261120-1"></script>
-    <script src="fullscreen.js?v=20261120-1"></script>
+    <script src="arcade-common.js?v=20261120-2"></script>
+    <script src="audio.js?v=20261120-2"></script>
+    <script src="fx.js?v=20261120-2"></script>
+    <script src="fullscreen.js?v=20261120-3"></script>
     <script src="ach-common.js?v=20261120-1"></script>
     <script src="snap-common.js?v=20261120-1"></script>
     <script src="pause-common.js?v=20261120-1"></script>
@@ -488,6 +488,6 @@
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261120-2"></script>
     <script src="ach-trigger.js?v=20261120-1"></script>
-    <script src="pac.js?v=20261120-1"></script>
+    <script src="pac.js?v=20261120-2"></script>
 </body>
 </html>

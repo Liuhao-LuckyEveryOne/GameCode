@@ -163,6 +163,11 @@ const highEl = document.getElementById('highVal');
 const startScreen = document.getElementById('startScreen');
 const pauseScreen = document.getElementById('pauseScreen');
 const gameOverScreen = document.getElementById('gameOverScreen');
+const startBtnEl = document.getElementById('startBtn'); // 开始面板开始按钮
+const againBtnEl = document.getElementById('againBtn'); // 结算面板重开按钮
+/* 控制按钮接线：原 HTML 内联 onclick 收编为 JS 监听，触发行为等价 */
+startBtnEl.addEventListener('click', startGame);
+againBtnEl.addEventListener('click', startGame);
 const finalScoreEl = document.getElementById('finalScore');
 const newRecordEl = document.getElementById('newRecord');
 const achHud = Arcade.createAchHud(); // 成就墙 HUD 六件套（共享工厂：六个 id 的 DOM 查询单点收敛到公共库）
@@ -555,6 +560,12 @@ function finishClear() {
     Ach.trackRunStat('lines', totalLines);
     Ach.trackRunStat('maxRows', rows.length);
     Ach.trackRunStat('level', level);
+    // 连击 / T-Spin / B2B 维度上报：comboCount 经 lockPiece 自增后到此已含本次消行（连续消行第
+    // N 次时值为 N）；无 T-Spin / 未触发 B2B 时上报 0——best 只增不减不会被 0 覆盖，
+    // target 均 ≥1 故 0 不会误解锁
+    Ach.trackRunStat('maxCombo', comboCount);
+    Ach.trackRunStat('maxTspinRows', spin ? rows.length : 0);
+    Ach.trackRunStat('b2bClears', b2bNow ? 1 : 0);
     updateHud();
     spawnPiece();
 }
@@ -1495,15 +1506,17 @@ bindTouchRepeatButton('touchBtnRight', () => tryMoveH(1)); // 右移连发
 bindTouchRepeatButton('touchBtnDown', softDrop);           // 软降连发（键盘 ↓/S 同源）
 
 // ---------- 成就系统（v2：共享库 ach-common.js 驱动，与 snake 机台同一套 DOM 成就墙） ----------
-// 结构说明：ACHIEVEMENTS 为 8 条成就定义（普通/稀有/史诗/传说四档稀有度）；
+// 结构说明：ACHIEVEMENTS 为 11 条成就定义（普通/稀有/史诗/传说四档稀有度）；
 // Ach.trackRunStat 上报本局实时数据并按维度记录历史最佳（只增不减、立即持久化），
 // 达到 target 即解锁 → 右上角 toast 堆叠提示 + 破纪录音效，史诗/传说追加金色烟花庆典；
 // 成就墙（#achWall）打开期间局面冻结：与手动暂停共用 paused 闸门（主循环 / DAS / 触屏连发
 // 全部以 paused 为闸门，逻辑与特效一并定格），由下方闭包标记记录冻结来源以便精准还原。
 /** 历史最佳默认值：level 从 1 起步（等级基数），其余维度从 0 累计 */
-const BEST_DEFAULTS = { score: 0, lines: 0, level: 1, maxRows: 0 };
-/** 成就定义清单（8 条）：id 为存档标识——旧三条（lines40/tetris4/level5）id 原样保留，
- *  老玩家存档迁移后成就不丢失；stat/target 用于卡片历史最佳进度条 */
+const BEST_DEFAULTS = { score: 0, lines: 0, level: 1, maxRows: 0, maxCombo: 0, maxTspinRows: 0, b2bClears: 0 };
+/** 成就定义清单（11 条）：id 为存档标识——旧三条（lines40/tetris4/level5）id 原样保留，
+ *  老玩家存档迁移后成就不丢失；新增三条（combo5/tspin2/b2b1）覆盖连击 / T-Spin / B2B 维度，
+ *  新统计键经 bestDefaults 前向补齐老存档（v2 装载时自动合并默认值），无需迁移钩子；
+ *  stat/target 用于卡片历史最佳进度条 */
 const ACHIEVEMENTS = [
     { id: 'score10000',  name: '得分好手',   icon: '🎯', rarity: 'rare',      cat: '得分', desc: '单局得分达到 10,000',   stat: 'score',   target: 10000 },
     { id: 'score30000',  name: '得分专家',   icon: '💠', rarity: 'epic',      cat: '得分', desc: '单局得分达到 30,000',   stat: 'score',   target: 30000 },
@@ -1512,7 +1525,10 @@ const ACHIEVEMENTS = [
     { id: 'lines100',    name: '消行大师',   icon: '🏗️', rarity: 'epic',      cat: '成长', desc: '累计消除 100 行',       stat: 'lines',   target: 100 },
     { id: 'level5',      name: '高速运转',   icon: '⚡', rarity: 'common',    cat: '成长', desc: '等级达到 5',            stat: 'level',   target: 5 },
     { id: 'level10',     name: '十级高手',   icon: '🌟', rarity: 'legendary', cat: '成长', desc: '等级达到 10',           stat: 'level',   target: 10 },
-    { id: 'tetris4',     name: 'TETRIS！',   icon: '💥', rarity: 'rare',      cat: '技巧', desc: '单次消除 4 行',         stat: 'maxRows', target: 4 }
+    { id: 'tetris4',     name: 'TETRIS！',   icon: '💥', rarity: 'rare',      cat: '技巧', desc: '单次消除 4 行',         stat: 'maxRows', target: 4 },
+    { id: 'combo5',      name: '连击达人',   icon: '🔥', rarity: 'rare',      cat: '技巧', desc: '单局连续消行 5 次',     stat: 'maxCombo', target: 5 },
+    { id: 'tspin2',      name: '回旋妙手',   icon: '🌀', rarity: 'epic',      cat: '技巧', desc: '单次 T-Spin 消除 2 行及以上', stat: 'maxTspinRows', target: 2 },
+    { id: 'b2b1',        name: '连锁反应',   icon: '⛓️', rarity: 'rare',      cat: '技巧', desc: '触发一次 B2B 连锁加成', stat: 'b2bClears', target: 1 }
 ];
 
 // 墙面冻结来源标记（闭包内私有）：true = 当前 paused 由成就墙打开引起，关闭时据此

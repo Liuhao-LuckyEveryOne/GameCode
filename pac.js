@@ -167,6 +167,11 @@ const highVal = document.getElementById('highVal');
 const startScreen = document.getElementById('startScreen');
 const pauseScreen = document.getElementById('pauseScreen');
 const gameOverScreen = document.getElementById('gameOverScreen');
+const startBtn = document.getElementById('startBtn'); // 开始面板开始按钮
+const againBtn = document.getElementById('againBtn'); // 结算面板重开按钮
+/* 控制按钮接线：原 HTML 内联 onclick 收编为 JS 监听，触发行为等价 */
+startBtn.addEventListener('click', startGame);
+againBtn.addEventListener('click', startGame);
 const finalScore = document.getElementById('finalScore');
 const newRecord = document.getElementById('newRecord');
 /** 暂停遮罩中的"已恢复上次进度"提示行（仅快照恢复成功时显示） */
