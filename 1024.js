@@ -555,7 +555,8 @@ function addScore(points, refreshHud = true) {
     if (refreshHud) updateHud();
 }
 
-/** 执行一次方向滑动（本游戏的核心回合逻辑）
+/** 执行一次方向滑动（本游戏的核心回合逻辑入口）
+ *  编排四个内聚子步骤：落点探测 → 滑动/合并 → 撞墙反馈 → 步末结算；
  *  遍历顺序保证靠近方向一侧的块先移动/合并；每块沿方向滑至
  *  边界/异值块前，若前方为同值且未合并块则合二为一。
  *  @param {string} dir 方向：up / down / left / right
@@ -568,11 +569,14 @@ function move(dir, announceBlock = true) {
     const prevScore = score;
     const prevCombo = combo;
     const prevIsNewRecord = isNewRecord; // 新纪录标记随快照入栈：撤销时同步回退，防"救回死局仍播报新纪录"
-    const mergedIds = new Set();  // 本次已参与合并的新块 id，防止一拖二二次合并
-    let moved = false;            // 是否发生任何位移/合并（决定是否补新块）
-    let mergeIndex = 0;           // 多重合并的音效错峰序号
-    let winTriggered = false;     // 本次合并是否达成 1024
-    let mergesThisMove = 0;       // 本步合并次数（>0 连击 +1，否则清零）
+    // 本步滑动过程的可变累计状态（探测/合并子步骤写入，步末结算子步骤消费）
+    const step = {
+        mergedIds: new Set(),  // 本次已参与合并的新块 id，防止一拖二二次合并
+        moved: false,          // 是否发生任何位移/合并（决定是否补新块）
+        mergeIndex: 0,         // 多重合并的音效错峰序号
+        winTriggered: false,   // 本次合并是否达成 1024
+        mergesThisMove: 0,     // 本步合并次数（>0 连击 +1，否则清零）
+    };
 
     // 按方向构造遍历顺序：向下滑先处理最底行，向右滑先处理最右列
     const rows = Array.from({ length: SIZE }, (_, i) => i);
@@ -584,118 +588,161 @@ function move(dir, announceBlock = true) {
         for (const c of cols) {
             const tile = grid[r][c];
             if (!tile) continue;
-
-            // 沿方向逐格探测：空格前进，同值未合并块标记为合并目标，异值停住
-            let nr = r, nc = c;
-            let mergeTarget = null;
-            for (;;) {
-                const tr = nr + v.dr;
-                const tc = nc + v.dc;
-                if (tr < 0 || tr >= SIZE || tc < 0 || tc >= SIZE) break; // 出界：就地停住
-                const occupant = grid[tr][tc];
-                if (!occupant) { nr = tr; nc = tc; continue; }           // 空格：继续前进
-                if (occupant.value === tile.value && !mergedIds.has(occupant.id)) {
-                    mergeTarget = occupant;                              // 可合并：记下目标
-                    nr = tr; nc = tc;
-                }
-                break;                                                   // 异值或已合并：停住
-            }
-            if (nr === r && nc === c) continue;                          // 原地不动
-
-            if (mergeTarget) {
-                // ---- 合并：两源块转幽灵滑行，目标格生成双倍值新块延迟弹出 ----
-                grid[r][c] = null;
-                grid[nr][nc] = null;
-                tiles.delete(tile.id);
-                tiles.delete(mergeTarget.id);
-                const newValue = tile.value * 2;
-                const newTile = {
-                    id: nextId++,
-                    value: newValue,
-                    r: nr,
-                    c: nc,
-                    x: cellX(nc),
-                    y: cellY(nr),
-                    popDelay: SLIDE_DUR,   // 等源块滑到位后再弹出
-                    pop: 0,
-                };
-                grid[nr][nc] = newTile;
-                tiles.set(newTile.id, newTile);
-                mergedIds.add(newTile.id);
-                // 两个幽灵残影从各自当前位置滑向合并点
-                const tx = cellX(nc), ty = cellY(nr);
-                ghosts.push({ value: tile.value, x: tile.x, y: tile.y, tx, ty, t: 0 });
-                ghosts.push({ value: mergeTarget.value, x: mergeTarget.x, y: mergeTarget.y, tx, ty, t: 0 });
-                // 得分 = 合并结果值，飘字与粒子落在目标格中心（HUD 延后到步末统一刷新一次）
-                addScore(newValue, false);
-                const style = getTileStyle(newValue);
-                const cx = tx + CELL / 2;
-                const cy = ty + CELL / 2;
-                addFloatText('+' + newValue, cx, cy);
-                mergesThisMove++;
-                // 本局统计：合并次数推进 + 最大方块增量同步
-                statMerges++;
-                if (newValue > statMaxTile) statMaxTile = newValue;
-                // 成就埋点：最大方块增量先记入 statMaxTile，统一由本步末尾 checkRunAchievements 上报判定
-                // （merge256 / max512 / merge1024 三条成就均由 best.maxTile 历史最佳驱动）
-                // 连击加成：本步连击将达 comboNext，×2 起按 10%×(comboNext-1) 追加奖励分
-                const comboNext = combo + 1;
-                if (comboNext >= 2) {
-                    const bonus = Math.round(newValue * 0.1 * (comboNext - 1));
-                    if (bonus > 0) {
-                        addScore(bonus, false); // 连击加成同样延后刷新，避免单步两次强制回流重播跳动
-                        addFloatText('+' + bonus, cx, cy - 18, '#ff3ea5', 10); // 粉色小字标于主飘字上方
-                    }
-                }
-                spawnBurst(cx, cy, style.bg, 10, 150);
-                spawnRing(cx, cy, style.bg); // 冲击波圆环随合并同步扩散
-                // 大合并微震：≥128 起按数值档位抬升震动强度（128:2 / 256:3.5 / 512:5 / 1024:6.5）
-                if (newValue >= 128) shake = Math.max(shake, 2 + (Math.log2(newValue) - 7) * 1.5);
-                // 里程碑：本局首次合并出 128/256/512/2048/4096 给更大爆发 + 双冲击波 + 闪光 + 专属音效
-                if (!milestones.has(newValue) && MILESTONE_VALUES.indexOf(newValue) !== -1) {
-                    milestones.add(newValue);
-                    spawnBurst(cx, cy, style.bg, 24, 230);
-                    spawnRing(cx, cy, style.bg, 0.08); // 第二道冲击波延迟错峰
-                    addFloatText(newValue + '!', cx, cy - CELL / 2 - 12, style.bg, 16);
-                    flash = { t: 0, dur: 0.4, color: style.bg }; // 全屏闪光强化仪式感
-                    shake = Math.max(shake, 5);
-                    SFX.n1024Milestone();
-                    // 超级里程碑（≥2048）：追加三波全屏烟花秀，仪式感拉满
-                    if (newValue >= 2048) spawnFireworks();
-                }
-                // 大合并卡帧：≥64 的合并按数值档位瞬时定格（hitstop），强化打击感
-                if (newValue >= HITSTOP_MIN_VALUE) FX.hitstop(20 + Math.min(40, Math.log2(newValue) * 4));
-                // 音高随合并值档位递升，多重合并按 60ms 错峰
-                SFX.n1024Merge(newValue, mergeIndex * 0.06);
-                mergeIndex++;
-                // 首次达成目标值即触发胜利
-                if (!hasWon && newValue >= WIN_VALUE) winTriggered = true;
-            } else {
-                // ---- 纯滑动：逻辑位置立即更新，绘制坐标交由渲染层 lerp 追赶 ----
-                grid[r][c] = null;
-                grid[nr][nc] = tile;
-                tile.r = nr;
-                tile.c = nc;
-            }
-            moved = true;
+            const dest = probeTileDestination(tile, r, c, v, step.mergedIds);
+            if (!dest) continue; // 原地不动
+            if (dest.mergeTarget) mergeTiles(tile, dest.mergeTarget, r, c, dest.nr, dest.nc, step);
+            else slideTile(tile, r, c, dest.nr, dest.nc);
+            step.moved = true;
         }
     }
 
-    if (!moved) {
-        // 撞墙演出（摇头 + 闷响）仅手动出招触发：连滑补发撞墙静默，防长按期间演出连击
-        if (announceBlock) {
-            // 摇头提示：±3px 水平抖动强化"此路不通"（减弱动效时跳过）
-            if (!FX.prefersReduced) headShake = HEAD_SHAKE_DUR;
-            SFX.n1024Block(); // 无效滑动：低频闷响，撞墙反馈
-        }
-        return;          // 不补块、不判胜负
+    if (!step.moved) {
+        announceBlockedSlide(announceBlock); // 撞墙演出（摇头 + 闷响）：不补块、不判胜负
+        return;
     }
+    settleMove(dir, prevBoard, prevScore, prevCombo, prevIsNewRecord, step);
+}
 
+/** 沿方向逐格探测单个方块的落点：空格前进，同值未合并块标记为合并目标，异值停住
+ *  @param {object} tile 待移动方块
+ *  @param {number} r 方块当前行
+ *  @param {number} c 方块当前列
+ *  @param {{dr: number, dc: number}} v 方向行列增量
+ *  @param {Set<number>} mergedIds 本次已参与合并的新块 id 表（一块一步只并一次）
+ *  @returns {?{nr: number, nc: number, mergeTarget: ?object}} 落点（行/列/合并目标），原地不动返回 null */
+function probeTileDestination(tile, r, c, v, mergedIds) {
+    let nr = r, nc = c;
+    let mergeTarget = null;
+    for (;;) {
+        const tr = nr + v.dr;
+        const tc = nc + v.dc;
+        if (tr < 0 || tr >= SIZE || tc < 0 || tc >= SIZE) break; // 出界：就地停住
+        const occupant = grid[tr][tc];
+        if (!occupant) { nr = tr; nc = tc; continue; }           // 空格：继续前进
+        if (occupant.value === tile.value && !mergedIds.has(occupant.id)) {
+            mergeTarget = occupant;                              // 可合并：记下目标
+            nr = tr; nc = tc;
+        }
+        break;                                                   // 异值或已合并：停住
+    }
+    if (nr === r && nc === c) return null;                       // 原地不动
+    return { nr, nc, mergeTarget };
+}
+
+/** 执行合并：两源块转幽灵滑行，目标格生成双倍值新块延迟弹出；
+ *  同步完成计分、连击加成、粒子/冲击波/微震/里程碑/卡帧/音效与胜负埋点
+ *  @param {object} tile 滑动中的源块
+ *  @param {object} mergeTarget 被合并的同值块
+ *  @param {number} r 源块当前行
+ *  @param {number} c 源块当前列
+ *  @param {number} nr 合并落点行
+ *  @param {number} nc 合并落点列
+ *  @param {object} step 本步累计状态（写入 mergedIds/mergeIndex/mergesThisMove/winTriggered） */
+function mergeTiles(tile, mergeTarget, r, c, nr, nc, step) {
+    grid[r][c] = null;
+    grid[nr][nc] = null;
+    tiles.delete(tile.id);
+    tiles.delete(mergeTarget.id);
+    const newValue = tile.value * 2;
+    const newTile = {
+        id: nextId++,
+        value: newValue,
+        r: nr,
+        c: nc,
+        x: cellX(nc),
+        y: cellY(nr),
+        popDelay: SLIDE_DUR,   // 等源块滑到位后再弹出
+        pop: 0,
+    };
+    grid[nr][nc] = newTile;
+    tiles.set(newTile.id, newTile);
+    step.mergedIds.add(newTile.id);
+    // 两个幽灵残影从各自当前位置滑向合并点
+    const tx = cellX(nc), ty = cellY(nr);
+    ghosts.push({ value: tile.value, x: tile.x, y: tile.y, tx, ty, t: 0 });
+    ghosts.push({ value: mergeTarget.value, x: mergeTarget.x, y: mergeTarget.y, tx, ty, t: 0 });
+    // 得分 = 合并结果值，飘字与粒子落在目标格中心（HUD 延后到步末统一刷新一次）
+    addScore(newValue, false);
+    const style = getTileStyle(newValue);
+    const cx = tx + CELL / 2;
+    const cy = ty + CELL / 2;
+    addFloatText('+' + newValue, cx, cy);
+    step.mergesThisMove++;
+    // 本局统计：合并次数推进 + 最大方块增量同步
+    statMerges++;
+    if (newValue > statMaxTile) statMaxTile = newValue;
+    // 成就埋点：最大方块增量先记入 statMaxTile，统一由本步末尾 checkRunAchievements 上报判定
+    // （merge256 / max512 / merge1024 三条成就均由 best.maxTile 历史最佳驱动）
+    // 连击加成：本步连击将达 comboNext，×2 起按 10%×(comboNext-1) 追加奖励分
+    const comboNext = combo + 1;
+    if (comboNext >= 2) {
+        const bonus = Math.round(newValue * 0.1 * (comboNext - 1));
+        if (bonus > 0) {
+            addScore(bonus, false); // 连击加成同样延后刷新，避免单步两次强制回流重播跳动
+            addFloatText('+' + bonus, cx, cy - 18, '#ff3ea5', 10); // 粉色小字标于主飘字上方
+        }
+    }
+    spawnBurst(cx, cy, style.bg, 10, 150);
+    spawnRing(cx, cy, style.bg); // 冲击波圆环随合并同步扩散
+    // 大合并微震：≥128 起按数值档位抬升震动强度（128:2 / 256:3.5 / 512:5 / 1024:6.5）
+    if (newValue >= 128) shake = Math.max(shake, 2 + (Math.log2(newValue) - 7) * 1.5);
+    // 里程碑：本局首次合并出 128/256/512/2048/4096 给更大爆发 + 双冲击波 + 闪光 + 专属音效
+    if (!milestones.has(newValue) && MILESTONE_VALUES.indexOf(newValue) !== -1) {
+        milestones.add(newValue);
+        spawnBurst(cx, cy, style.bg, 24, 230);
+        spawnRing(cx, cy, style.bg, 0.08); // 第二道冲击波延迟错峰
+        addFloatText(newValue + '!', cx, cy - CELL / 2 - 12, style.bg, 16);
+        flash = { t: 0, dur: 0.4, color: style.bg }; // 全屏闪光强化仪式感
+        shake = Math.max(shake, 5);
+        SFX.n1024Milestone();
+        // 超级里程碑（≥2048）：追加三波全屏烟花秀，仪式感拉满
+        if (newValue >= 2048) spawnFireworks();
+    }
+    // 大合并卡帧：≥64 的合并按数值档位瞬时定格（hitstop），强化打击感
+    if (newValue >= HITSTOP_MIN_VALUE) FX.hitstop(20 + Math.min(40, Math.log2(newValue) * 4));
+    // 音高随合并值档位递升，多重合并按 60ms 错峰
+    SFX.n1024Merge(newValue, step.mergeIndex * 0.06);
+    step.mergeIndex++;
+    // 首次达成目标值即触发胜利
+    if (!hasWon && newValue >= WIN_VALUE) step.winTriggered = true;
+}
+
+/** 执行纯滑动（无合并）：逻辑位置立即更新，绘制坐标交由渲染层 lerp 追赶
+ *  @param {object} tile 滑动方块
+ *  @param {number} r 方块当前行
+ *  @param {number} c 方块当前列
+ *  @param {number} nr 落点行
+ *  @param {number} nc 落点列 */
+function slideTile(tile, r, c, nr, nc) {
+    grid[r][c] = null;
+    grid[nr][nc] = tile;
+    tile.r = nr;
+    tile.c = nc;
+}
+
+/** 无效滑动撞墙演出（摇头 + 闷响）仅手动出招触发：连滑补发撞墙静默，防长按期间演出连击
+ *  @param {boolean} announceBlock 是否播演出 */
+function announceBlockedSlide(announceBlock) {
+    if (!announceBlock) return;
+    // 摇头提示：±3px 水平抖动强化"此路不通"（减弱动效时跳过）
+    if (!FX.prefersReduced) headShake = HEAD_SHAKE_DUR;
+    SFX.n1024Block(); // 无效滑动：低频闷响，撞墙反馈
+}
+
+/** 有效滑动的步末结算：HUD 收口 → 连击推进 → 统计/成就上报 → 多重合并演出 →
+ *  撤销快照入栈 → 滑动音/补新块 → 胜负判定 → 常规续玩存档
+ *  @param {string} dir 本次滑动方向（立体声按方向分配声道）
+ *  @param {number[][]} prevBoard 本步之前的值矩阵快照
+ *  @param {number} prevScore 本步之前的分数
+ *  @param {number} prevCombo 本步之前的连击数
+ *  @param {boolean} prevIsNewRecord 本步之前的新纪录标记
+ *  @param {object} step 本步滑动累计状态（读取 mergesThisMove/winTriggered） */
+function settleMove(dir, prevBoard, prevScore, prevCombo, prevIsNewRecord, step) {
     // 分数 HUD 收口：本步的合并加分与连击加成合并为一次 updateHud（一次数字滚动 + 一次跳动重播回流）
-    if (mergesThisMove > 0) updateHud();
+    if (step.mergesThisMove > 0) updateHud();
 
     // 连击推进：本步有合并连击 +1，无合并连击清零，并刷新 HUD
-    if (mergesThisMove > 0) combo++;
+    if (step.mergesThisMove > 0) combo++;
     else combo = 0;
     if (combo >= 2) SFX.n1024Combo(combo); // 连击音：音高随档位递升
     updateComboHud();
@@ -704,18 +751,18 @@ function move(dir, announceBlock = true) {
     // 必须置于下方胜负结算 return 分支之前——胜利合成 1024 的路径同样能触发判定
     checkRunAchievements();
     // 成就埋点：跨局累计合并数累加（merges1000 以 best.mergesTotal 持久化累计值）
-    trackCumulativeStat(mergesThisMove);
+    trackCumulativeStat(step.mergesThisMove);
     // 一步多重合并演出：中央大字喝彩 + 强化震闪 + 华彩琶音（合并次数越多字样逐级升级）
-    if (mergesThisMove >= 2) {
+    if (step.mergesThisMove >= 2) {
         const labels = ['DOUBLE!', 'TRIPLE!', 'QUAD!', 'PENTA!', 'MEGA!'];
         // 喝彩大字落点按画布逻辑尺寸比例定位：水平 0.5（居中）、垂直 0.49，
         // 乘回 500×500 逻辑画布即旧硬编码 (250, 245)，像素完全一致视觉不变；
         // 后续画布尺寸若随 DPR/布局调整，比例定位仍保持居中与纵向位置稳定
-        addFloatText(labels[Math.min(mergesThisMove - 2, labels.length - 1)],
+        addFloatText(labels[Math.min(step.mergesThisMove - 2, labels.length - 1)],
             BOARD_W * 0.5, BOARD_H * 0.49, '#35e0ff', 20);
-        shake = Math.max(shake, 3 + mergesThisMove);
+        shake = Math.max(shake, 3 + step.mergesThisMove);
         flash = { t: 0, dur: 0.35, color: '#35e0ff' };
-        SFX.n1024Multi(mergesThisMove);
+        SFX.n1024Multi(step.mergesThisMove);
     }
     // 撤销快照入栈（保存本步之前的状态）并刷新撤销按钮可用态
     history.push({ board: prevBoard, score: prevScore, combo: prevCombo, isNewRecord: prevIsNewRecord });
@@ -728,38 +775,47 @@ function move(dir, announceBlock = true) {
     SFX.n1024Move();
     spawnTile(true);
 
-    if (winTriggered) {
-        // 胜利：短暂停顿展示局面后弹出胜利面板
-        hasWon = true;
-        completeDailyChallenge(); // 每日挑战：首次达成 1024 时落盘当日标记并庆祝
-        playing = false;
-        // 胜利面板待决：对局节点已完成，清除进行中存档（契约规定仅对局进行中落盘；
-        // 玩家「继续挑战」后的首次有效滑动会重新落盘，「重新开始」亦由 startGame 清档兜底）
-        clearProgress();
-        SFX.bgm.stop(); // 胜利演出期间静音 BGM，突出烟花与胜利号角（继续挑战时重新响起）
-        SFX.n1024Win();
-        spawnFireworks(); // 全屏三波烟花秀
-        panelTimers.push(setTimeout(() => {
-            winScoreEl.textContent = score;
-            showOverlay(winScreen);
-        }, 600)); // 拉长到 600ms，给烟花秀留足演出时间
+    if (step.winTriggered) {
+        finishWin();
         return;
     }
     updateDanger(); // 危险预警：空格告急时升档播警报音，驱动棋盘红色脉冲边框
     // 失败判定：棋盘填满且任意方向均无可合并
     if (!emptyCells().length && !canMergeAnywhere()) {
-        playing = false;
-        clearProgress(); // 死局终局：对局已完结，清除自动存档（下次进入从新局开始）
-        SFX.bgm.stop(); // 终局静音 BGM，突出熄灭演出（结算面板下撤销救回时重新响起）
-        SFX.n1024Fade(); // 熄灭演出伴奏：长下滑音（灯火渐暗的坠落感）
-        deathFade = { t: 0, dur: DEATH_FADE_DUR }; // 全盘渐暗遮罩启动
-        panelTimers.push(setTimeout(() => {
-            SFX.n1024Over(); // 面板弹出时接失败琶音，与熄灭音错峰两段式
-            showGameOver();
-        }, 750)); // 等熄灭遮罩播完再出面板（熄灭音 0.7s 略短于遮罩 0.75s，收尾近似同步）
+        finishGameOver();
         return;
     }
     saveSnapshot(); // 常规有效滑动：镜像当前局面到存档，随时退出页面都能续玩
+}
+
+/** 胜利收尾：短暂停顿展示局面后弹出胜利面板（本局首次合成 1024 触发） */
+function finishWin() {
+    hasWon = true;
+    completeDailyChallenge(); // 每日挑战：首次达成 1024 时落盘当日标记并庆祝
+    playing = false;
+    // 胜利面板待决：对局节点已完成，清除进行中存档（契约规定仅对局进行中落盘；
+    // 玩家「继续挑战」后的首次有效滑动会重新落盘，「重新开始」亦由 startGame 清档兜底）
+    clearProgress();
+    SFX.bgm.stop(); // 胜利演出期间静音 BGM，突出烟花与胜利号角（继续挑战时重新响起）
+    SFX.n1024Win();
+    spawnFireworks(); // 全屏三波烟花秀
+    panelTimers.push(setTimeout(() => {
+        winScoreEl.textContent = score;
+        showOverlay(winScreen);
+    }, 600)); // 拉长到 600ms，给烟花秀留足演出时间
+}
+
+/** 失败收尾：全盘熄灭渐暗演出，遮罩播完再弹结算面板（死局结算，撤销可救回） */
+function finishGameOver() {
+    playing = false;
+    clearProgress(); // 死局终局：对局已完结，清除自动存档（下次进入从新局开始）
+    SFX.bgm.stop(); // 终局静音 BGM，突出熄灭演出（结算面板下撤销救回时重新响起）
+    SFX.n1024Fade(); // 熄灭演出伴奏：长下滑音（灯火渐暗的坠落感）
+    deathFade = { t: 0, dur: DEATH_FADE_DUR }; // 全盘渐暗遮罩启动
+    panelTimers.push(setTimeout(() => {
+        SFX.n1024Over(); // 面板弹出时接失败琶音，与熄灭音错峰两段式
+        showGameOver();
+    }, 750)); // 等熄灭遮罩播完再出面板（熄灭音 0.7s 略短于遮罩 0.75s，收尾近似同步）
 }
 
 /* ---------- 成就系统 glue（存档/解锁/渲染/开合由共享库 ach-common.js 承担） ---------- */
@@ -1308,6 +1364,9 @@ function build1024Snapshot() {
         milestones: Array.from(milestones),                          // 已触发里程碑集合（Set 序列化为数组）
         daily: dailyMode,                                            // 本局是否每日挑战（续玩时按日期校验，见 apply1024Snapshot）
         dailyDate: dailyMode ? dailyDateKey : null,                  // 每日挑战开局归属日期（进入每日模式时缓存，非每日局为 null）
+        statMoves,                                                   // 本局有效滑动步数（宽容缺省按 0，旧格式兼容）
+        statMerges,                                                  // 本局合并次数（宽容缺省按 0，旧格式兼容）
+        statTime,                                                    // 本局累计游玩秒数（宽容缺省按 0，旧格式兼容）
         // 撤销栈镜像：只保留最近 HISTORY_MAX 步（slice 负索引从尾部截取），与内存栈及恢复端上限一致
         history: history.slice(-HISTORY_MAX).map((h) => ({ board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true })),
     };
@@ -1341,6 +1400,7 @@ const snapPipe = Snap.create({
  *   hasWon      是否已达成过 1024（恢复后不再重复触发胜利演出）
  *   isNewRecord 本局是否刷新过最高分（结算面板「新纪录」标记用）
  *   milestones  已触发里程碑档位数组
+ *   statMoves / statMerges / statTime  本局统计（步数 / 合并次数 / 累计秒数，旧格式缺省按 0）
  *   history     撤销栈镜像（仅保留最近 HISTORY_MAX 步，防止极端长局存档膨胀）
  * @returns {void}
  */
@@ -1362,7 +1422,8 @@ function clearProgress() {
  * 结构版本号（v !== 1 立即视为无效）、难度归属、棋面矩阵（SIZE×SIZE 且
  * 每格为 0 或 2 的幂）、分数/连击为非负整数、剩余撤销次数范围、
  * hasWon/isNewRecord 布尔类型、棋面至少一个方块、撤销栈逐条结构
- * （超长截断至最近 HISTORY_MAX 步）。里程碑为纯表现层标记，宽容处理不参与失效判定。
+ * （超长截断至最近 HISTORY_MAX 步）。里程碑为纯表现层标记，宽容处理不参与失效判定；
+ * 本局统计字段（statMoves/statMerges/statTime）同样宽容缺省，存在时须为非负值。
  * @param {*} snap 待校验快照对象
  * @returns {boolean} 快照合法返回 true；任一校验失败返回 false（存档由管线统一清除）
  */
@@ -1377,6 +1438,10 @@ function validate1024Snapshot(snap) {
     // 每日挑战标记宽容校验（旧格式快照可缺省）：存在时 daily 须为布尔、dailyDate 须为 8 位日期串或 null
     if (snap.daily !== undefined && typeof snap.daily !== 'boolean') return false;
     if (snap.dailyDate !== undefined && snap.dailyDate !== null && !/^\d{8}$/.test(snap.dailyDate)) return false;
+    // 本局统计宽容缺省（旧格式快照可缺省）：存在时须为非负数（步数/合并次数为整数，累计秒数可为小数）
+    if (snap.statMoves !== undefined && (!Number.isInteger(snap.statMoves) || snap.statMoves < 0)) return false;
+    if (snap.statMerges !== undefined && (!Number.isInteger(snap.statMerges) || snap.statMerges < 0)) return false;
+    if (snap.statTime !== undefined && (!Number.isFinite(snap.statTime) || snap.statTime < 0)) return false;
     // 棋面上至少要有一个方块（空棋面必为损坏数据）
     let tileCount = 0;
     for (const row of snap.board) for (const v of row) if (v) tileCount++;
@@ -1394,7 +1459,7 @@ function validate1024Snapshot(snap) {
 
 /**
  * 将合法快照应用为续玩状态（供共享库 Snap.restore 管线调用）：按快照重建
- * 棋面 / 分数 / 连击 / 撤销栈并收起开始面板直接续玩（恢复后直接可操作，
+ * 棋面 / 分数 / 连击 / 撤销栈 / 本局统计并收起开始面板直接续玩（恢复后直接可操作，
  * 无需等待确认），并在操作提示行展示「已恢复上次进度」标记。
  * @param {object} snap 已通过 validate1024Snapshot 校验的快照对象
  * @returns {boolean} 应用成功返回 true
@@ -1422,6 +1487,9 @@ function apply1024Snapshot(snap) {
     undosLeft = snap.undosLeft;
     hasWon = snap.hasWon;
     milestones = new Set(milestoneSaved);
+    statMoves = Number.isInteger(snap.statMoves) && snap.statMoves >= 0 ? snap.statMoves : 0; // 旧格式缺省按 0
+    statMerges = Number.isInteger(snap.statMerges) && snap.statMerges >= 0 ? snap.statMerges : 0;
+    statTime = Number.isFinite(snap.statTime) && snap.statTime >= 0 ? snap.statTime : 0;
     updateUndoHud(); // restoreBoard 执行时 undosLeft 尚未恢复，此处补刷撤销按钮态
     playing = true;
     SFX.bgm.start('n1024'); // 续玩存档：BGM 跟随恢复（AudioContext 未激活时挂起等待，首次手势后自动补启）
@@ -1589,7 +1657,11 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
     onChange: (btn, idx, key) => {
         // 清掉上一局尚未到点的面板定时器：死亡渐暗(750ms)/胜利烟花(600ms)窗口内 playing 已置 false
         // 可切难度，旧定时器若不清会在新局棋盘上弹出过期的"得分 0"结算面板
+        const hadPendingPanels = panelTimers.length > 0; // 延迟窗口标记：清前确有未到点的面板/烟花定时器
         clearPanelTimers();
+        // 延迟窗口孤悬态兜底：窗口内对局已终结而面板尚未弹出，清掉定时器后 R/Enter/撤销救回全部失效
+        // （撤销栈亦被下方 resetBoard 清空），补弹开始面板作为唯一出口，防止无入口软锁
+        if (hadPendingPanels && !playing && !visiblePanel) showOverlay(startScreen);
         currentDifficulty = key;
         SIZE = DIFFICULTIES[key].size;
         // 重算单元格边长，保证棋盘总尺寸仍为 BOARD_W×BOARD_H（CSS 锁定 500×500）

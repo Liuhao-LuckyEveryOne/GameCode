@@ -33,7 +33,8 @@
      * 创建一款游戏的暂停切换引擎（每游戏一实例；暂停/恢复的唯一出入口）。
      * 序列：setPaused 写游戏标志与专属落点 → 遮罩显隐（传入 overlay 时由库统一
      * 直写 display，bee 等动态文案遮罩不传、由 setPaused 内自行同步）→ BGM
-     * pause/resume（恢复侧可选 resumeBgmStart 幂等补起播）→ 暂停/恢复音效
+     * pause/resume（恢复侧可选 resumeBgmStart 幂等补起播，完成后可选 onResume
+     * 后置回调）→ 暂停/恢复音效
      * （autoPause 静默跳过暂停音，对齐 klotski/bee 失焦无声的既有行为）。
      * @param {{
      *   isPaused: Function,
@@ -42,14 +43,18 @@
      *   overlay: (Element|null)=,
      *   pauseSfx: (Function)=,
      *   resumeSfx: (Function)=,
-     *   resumeBgmStart: (string)=
+     *   resumeBgmStart: (string)=,
+     *   onResume: (Function)=
      * }} opts 引擎选项：isPaused 读当前暂停态（bee 双标记游戏返回合并读取）/
      *   canToggle 三入口共用准入守卫（游戏状态机 + 成就墙冻结检查）/ setPaused
      *   (paused, byBlur) 落点：写游戏暂停标志 + 专属反馈（提示行撤下、计时基准
      *   重置、手势终止、键鼠清空等；byBlur=true 表示失焦自动暂停来源）/ overlay
      *   暂停遮罩元素（可省略，省略时显隐归 setPaused 自理）/ pauseSfx·resumeSfx
      *   暂停与恢复音效（缺省 SFX.uiPause / SFX.uiResume）/ resumeBgmStart 恢复侧
-     *   幂等补起播的 BGM 曲名（仅 snake/tetris 需要，start 同名幂等不重启）
+     *   幂等补起播的 BGM 曲名（仅 snake/tetris 需要，start 同名幂等不重启）/
+     *   onResume 恢复侧后置回调（BGM 补起播与接续完成后调用——start 重启会重置
+     *   BGM 自适应分层等曲内状态，需在起播后重新对齐的游戏在此收口，如 snake
+     *   重申危险分层）
      * @returns {{toggle: Function, autoPause: Function, resume: Function}}
      *   引擎 API：toggle 手动切换（canToggle 守卫 + 有声，键盘 P/空格、遮罩点击
      *   与有声失焦共用）/ autoPause 静默自动暂停（canToggle 不放行或已暂停时
@@ -78,6 +83,7 @@
             } else {
                 if (opts.resumeBgmStart) SFX.bgm.start(opts.resumeBgmStart); // 快照续玩局未起播时补起播（幂等）
                 SFX.bgm.resume(); // 恢复背景音乐接续暂停前进度
+                if (opts.onResume) opts.onResume(); // 后置回调：BGM 起播/接续完成后执行（start 重启重置曲内状态，游戏在此重新对齐）
                 (opts.resumeSfx || SFX.uiResume)(); // 恢复：上行启动音
             }
         }

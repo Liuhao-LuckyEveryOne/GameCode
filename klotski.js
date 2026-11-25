@@ -831,7 +831,7 @@ function checkAchievements(rank) {
     const before = Object.keys(Ach.getStore().unlocked); // 结算前快照：用于识别「本次新增」
     // 累计通关 +1：wins 为累计型统计，借共享库 max 通道等价实现加法（旧值+1 必然破纪录）
     Ach.trackRunStat('wins', Ach.getStore().best.wins + 1);
-    Ach.trackRunStat('moves', moves); // 本局步数兜底上报（键盘走子已实时上报，拖拽走子仅经此处上报）
+    Ach.trackRunStat('moves', moves); // 本局步数兜底上报（键盘/拖拽走子路径均已实时上报，此处对两条路径统一兜底）
     // 神机妙算：本次评级达 S 即解锁（历史 S 不重判，以本次为准保持即时性）
     if (rank === 'S') Ach.unlock('rankS');
     // 兵贵神速：单局 5 分钟（300 秒）内通关
@@ -1060,6 +1060,7 @@ function loadLayout(index) {
  *   diff    难度标识（DIFF_IDS 的 id，辅助规则与存档棋面绑定）
  *   pieces  全部棋子当前位置数组 [[x, y]...]（与布局棋子表顺序一一对应）
  *   moves   当前步数
+ *   hints   本局提示使用计数（评级封顶依据，旧版快照无此键按 0 兜底）
  * @returns {object} 快照数据对象
  */
 function buildKlotskiSnapshot() {
@@ -1069,6 +1070,7 @@ function buildKlotskiSnapshot() {
         diff: currentDiffId(), // 难度标识：辅助规则不同，存档与难度绑定
         pieces: pieces.map(p => [p.x, p.y]), // 全部棋子当前位置（按布局棋子表顺序对应）
         moves: moves, // 当前步数
+        hints: hintsUsed, // 本局提示使用计数：评级封顶依据，续玩接续防止刷新归零绕过封顶
         elapsed: elapsed, // 本局已用时：续玩接续计时，防止分段游玩把长局刷成"5 分钟内通关"
         daily: dailySessionKey // 本局每日一题归属日：跨天恢复续玩昨日局完成仍落昨日键（旧版快照无此键时仅同题才按当日续，口径见恢复侧）
     };
@@ -1096,7 +1098,8 @@ function clearSnapshot() {
 /**
  * 校验进度快照逐字段（键 arcade_save_klotski）：版本号 / 布局与难度标识可解析 /
  * 棋子数量与该布局棋子表一致 / 各棋子整数坐标且在棋盘界内 / 所有棋子两两互不重叠 /
- * 步数为非负整数 / 用时（可选字段，旧版快照兼容）为非负有限数。返回布尔风格：任一校验不通过返回 false，
+ * 步数为非负整数 / 用时（可选字段，旧版快照兼容）为非负有限数 / 提示计数（可选字段，旧版快照兼容）
+ * 为非负整数。返回布尔风格：任一校验不通过返回 false，
  * 由快照管线（snap-common.js）统一清除快照并回退默认新开局流程，绝不因脏数据抛错。
  * @param {object} snap 待校验的快照对象（Arcade.loadJSON 产出，可能为任意脏数据）
  * @returns {boolean} 校验全部通过返回 true；任一不通过返回 false
@@ -1136,6 +1139,8 @@ function validateKlotskiSnapshot(snap) {
     if (!Number.isInteger(snap.moves) || snap.moves < 0) return false;
     // 用时：可选字段（旧版快照无此键，兼容按 0 起算），携带时必须为非负有限数
     if (snap.elapsed !== undefined && (!Number.isFinite(snap.elapsed) || snap.elapsed < 0)) return false;
+    // 提示使用计数：可选字段（旧版快照无此键，兼容按 0 起算），携带时必须为非负整数
+    if (snap.hints !== undefined && (!Number.isInteger(snap.hints) || snap.hints < 0)) return false;
     return true;
 }
 
@@ -1176,6 +1181,10 @@ function applyKlotskiSnapshot(snap) {
     // 恢复本局已用时（旧版快照无此键按 0 起算）：计时接续而非归零，堵住
     // "分段游玩把长局刷成 5 分钟内通关"的成就漏洞
     elapsed = Number.isFinite(snap.elapsed) && snap.elapsed >= 0 ? snap.elapsed : 0;
+    // 恢复本局提示使用计数（旧版快照无此键按 0 兜底）：续玩接续评级封顶依据，
+    // 堵住分段游玩刷新归零配额、绕过评级封顶拿 S 的漏洞；进阶配额按恢复值重算
+    hintsUsed = Number.isInteger(snap.hints) && snap.hints >= 0 ? snap.hints : 0;
+    if (currentDiffId() === 'normal') hintLeft = Math.max(0, NORMAL_HINT_QUOTA - hintsUsed);
     // 本局每日一题归属覆写：新快照携带开局日，跨天恢复续玩昨日局完成落昨日键；
     // 旧版快照无此键（或脏数据）时不再笼统按当日归属——仅当恢复布局恰为今日
     // 每日一题布局（同题同局，通关落盘语义与当日直开一致）才保留 loadLayout 的

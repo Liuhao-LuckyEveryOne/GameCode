@@ -960,6 +960,7 @@ function startGame() {
     level = 1;
     lives = 3;
     highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10); // 存储不可用（隐私模式/禁用站点数据）时静默保持默认 0，不中断开局流程
+    if (Number.isNaN(highScore)) highScore = 0; // 脏数据兜底（与难度读取的 isNaN 防御同口径）：非数字串 parseInt 得 NaN，否则永不破纪录且 HUD 显示 HI NaN
     recordBase = highScore;
     // 本局一次性标志复位：1UP 奖励与破纪录庆祝每局仅触发一次
     oneUpGiven = false;
@@ -1658,7 +1659,9 @@ function draw(now) {
     ctx.save();
     // 反杀 / 死亡的画布震动（随剩余时间线性衰减；reduced-motion 用户跳过）
     if (shakeTime > 0 && !FX.prefersReduced) {
-        const amp = Math.min(1, shakeTime / 0.3) * 5;
+        // 归一化基准取 0.25：与赋值上限一致（0.1 + ghostCombo 上限 3 × 0.05 = 0.25），
+        // 写 0.3 会让满幅 5px 永远达不到（新震动赋值时旧计时未叠加，峰值仅 0.25/0.3 ≈ 4.17px）
+        const amp = Math.min(1, shakeTime / 0.25) * 5;
         ctx.translate((Math.random() - 0.5) * 2 * amp, (Math.random() - 0.5) * 2 * amp);
     }
     drawMaze(now);
@@ -1794,8 +1797,17 @@ FS.onCrtAudio({ on: () => SFX.crtOn(), off: () => SFX.crtOff() });
 // 快照触发点 a（父页游戏厅关闭 iframe 覆盖层前下发 arcade:save 消息 → 立即镜像当前局进度）
 // 与触发点 b（页面卸载兜底：关闭标签页 / 刷新 / 父页移除 iframe 均触发 pagehide）两处
 // 接线收口于 snap-common.js（Snap.bindAutoSave）：进行中/暂停中镜像当前局进度，
-// 未开始/已结束则清除残留快照
-Snap.bindAutoSave(snapPipe);
+// 未开始/已结束则清除残留快照。例外：死亡/清版演出窗口（~1.5s）跳过写入——此时蛇已碎/豆已清，
+// 磁盘保留演出开始前最后一次 save 的一致镜像（与 tetris 消行演出期守卫同策略）；
+// 跳过时返回 undefined 走兼容路径照发 ACK（返回 false 才交父页超时兜底）
+Snap.bindAutoSave({
+    save: () => {
+        if (state === 'dying' || state === 'clear') return; // 过场跳过：不写入也不清除
+        return snapPipe.save();
+    },
+    restore: snapPipe.restore,
+    clear: snapPipe.clear
+});
 
 /* ===================== 输入处理 ===================== */
 
@@ -1954,6 +1966,7 @@ if (!Number.isNaN(savedDifficultyIndex) && savedDifficultyIndex !== 2) {
 buildGrid();
 resetPositions();
 highScore = parseInt(Arcade.loadRaw(KEYS.highScore) || '0', 10); // 存储不可用（隐私模式/禁用站点数据）时静默保持默认 0，不中断初始化
+if (Number.isNaN(highScore)) highScore = 0; // 脏数据兜底：存档被写坏为非数字串时回退 0，防止 HUD 显示 HI NaN
 // 进度镜像恢复：核心状态已创建、默认新局逻辑之前尝试续玩；
 // 成功则停在暂停遮罩等待玩家按 P 继续（此时也可按 R 弃局重开），失败/无快照则保持原开始界面新开局
 restoreSnapshot();

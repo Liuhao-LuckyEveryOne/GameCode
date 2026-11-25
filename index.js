@@ -430,7 +430,9 @@ let trophyClosedAt = -1e9;
     const RING_LEN = 2 * Math.PI * 56; // 进度环周长（r=56 与 SVG 圆一致）
     /** 奖杯 SVG 图标（material emoji_events 24×24 路径，currentColor 继承行状态色：完成金亮/未完成暗灰） */
     const CUP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.73 1.75 2.29 3.05 4.11 3.4V19H9v2h6v-2h-2.5v-2.66c1.82-.35 3.38-1.65 4.11-3.4C18.08 12.63 20 10.55 20 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>';
-    /** 各游戏主题霓虹色（与大厅卡片呼应）：行铭牌文字色与进度条渐变起点 */
+    /** 各游戏殿堂主题色：行铭牌文字色与进度条渐变起点。snake/tetris/pac/bee 四款与
+     *  大厅卡片 --glow 同源；pinball/klotski/1024 三款为殿堂专属配色，与卡片色不一致
+     *  （卡片依次为 #c17bff / #ff5540 / #ff9a3e），本表保持现值不动 */
     const HUES = {
         snake: '#39ff6a', tetris: '#35e0ff', pac: '#ffd23e', bee: '#ff3ea5',
         pinball: '#ff9a3e', klotski: '#b06cff', '1024': '#6ea8ff'
@@ -1657,9 +1659,11 @@ document.addEventListener('keydown', e => {
             refreshBest();
             // 游玩时长角标同步刷新：子页 arcade:playtime 上报的累计秒数已随游玩落盘
             refreshTimeBadges();
-            // 总分上涨（本次游玩刷新了某款最高分）：播放破纪录号角庆祝
+            // 总分上涨（本次游玩刷新了某款最高分）才播破纪录号角庆祝；
+            // 基准为 null（打开时六款全无纪录）不视作 0 涨分——首次游玩建立的首个
+            // 纪录没有"被打破"的旧基准，不触发号角
             const totalNow = readTotal();
-            if ((totalBeforeOpen || 0) < (totalNow || 0)) SFX.newRecord();
+            if (totalBeforeOpen !== null && (totalNow || 0) > totalBeforeOpen) SFX.newRecord();
             // 仅当被移除局仍是当前目标局才清快照：0.55s 关机窗口内若已新开局（B 局），
             // 此处清掉会把 B 局的涨分基准抹成 null，关 B 时误播破纪录号角
             if (frame === curGameFrame) totalBeforeOpen = null;

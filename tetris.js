@@ -129,6 +129,9 @@ let dasTimer = 0;      // DAS 初段延迟计时（毫秒）
 let arrTimer = 0;      // ARR 自动重复计时（毫秒）
 let downHeld = false;  // 下方向键是否按住（软降连发驱动标记）
 let softDropTimer = 0; // 软降连发计时累加器（毫秒）
+/** 按住的移动键集合（按 e.code 记账）：←/A、→/D、↓/S 同方向双键时任一松开，
+ *  以集合余量重算该方向按住状态，避免只松其一就把仍按住的另一键的 DAS/软降一并停摆 */
+const heldMoveKeys = new Set();
 
 // ---------- 特效状态 ----------
 const CLEAR_FX_TIME = 0.35; // 消行闪白演出时长（秒）
@@ -142,6 +145,7 @@ const particlePool = new FX.Pool(240, () => ({ x: 0, y: 0, vx: 0, vy: 0, life: 0
 let trails = [];            // 硬降残影 { matrix, x, y0, typeIndex, t }
 let shakeTime = 0;          // 台面震动剩余时间（秒）
 let flashTime = 0;          // 全屏白闪剩余时间（秒）
+const FLASH_TIME = 0.35;    // 全屏白闪的赋值时长与归一化基准（秒）：TETRIS!/ALL CLEAR 两处赋值与绘制衰减共用，避免赋值 0.35 却按 0.3 归一化导致透明度超出设计峰值
 let bigText = null;         // 中央大字 { text, t }（TETRIS! / LEVEL UP / ALL CLEAR）
 const DANGER_ROWS = 4;      // 堆叠最高点进入顶部该行数范围内即触发危险警报
 const DANGER_EDGE_PX = 42;  // 危险警报光带厚度（像素）：四边向内渐隐红色光带的宽度
@@ -251,6 +255,7 @@ function spawnPiece(forcedType) {
  */
 function clearBoard() {
     board = board.map(row => new Array(COLS).fill(0));
+    topRowDirty = true; // 棋盘已写：堆叠最高点缓存失效（下一次读取重扫）
 }
 
 /**
@@ -286,6 +291,7 @@ function merge() {
             if (by >= 0) board[by][piece.x + c] = piece.typeIndex + 1;
         }
     }
+    topRowDirty = true; // 棋盘已写：堆叠最高点缓存失效（下一次读取重扫）
 }
 
 /**
@@ -474,7 +480,7 @@ function lockPiece() {
             // 一次消 4 行（TETRIS）：台面震动 + 全屏白闪（减弱动效时跳过）+ 中央大字庆祝
             if (!FX.prefersReduced) {
                 shakeTime = 0.25;
-                flashTime = 0.3;
+                flashTime = FLASH_TIME; // 全屏白闪（时长与绘制归一化共用常量）
             }
             bigText = { text: 'TETRIS!', t: BIGTEXT_TIME };
         }
@@ -512,6 +518,7 @@ function finishClear() {
     const sorted = [...rows].sort((a, b) => b - a);
     for (const r of sorted) board.splice(r, 1);
     for (let i = 0; i < sorted.length; i++) board.unshift(new Array(COLS).fill(0));
+    topRowDirty = true; // 棋盘已写：堆叠最高点缓存失效（下一次读取重扫）
     // 基础分：T-Spin 消行走专属计分表，普通消行走消行表（均 × 等级 × 难度倍率）
     let gained = (spin
         ? (spin.mini ? MINI_TSPIN_SCORES[rows.length] : TSPIN_SCORES[rows.length])
@@ -544,7 +551,7 @@ function finishClear() {
     clearText = { text: `+${gained}` + (b2bNow ? ' B2B' : ''), t: CLEARTEXT_TIME }; // 得分飘字（B2B 触发时追加标注）
     if (isAllClear) {
         bigText = { text: 'ALL CLEAR', t: BIGTEXT_TIME };
-        if (!FX.prefersReduced) flashTime = Math.max(flashTime, 0.35); // 全屏白闪（减弱动效时跳过）
+        if (!FX.prefersReduced) flashTime = Math.max(flashTime, FLASH_TIME); // 全屏白闪（减弱动效时跳过；max 不缩短进行中的 TETRIS! 白闪）
         SFX.allClear();
     }
     totalLines += rows.length;
@@ -777,13 +784,14 @@ function startDAS(dir) {
 }
 
 /**
- * 松开方向键：更新按住状态；若松开的是 DAS 驱动方向，
+ * 松开方向键：更新按住状态；若松开的是 DAS 驱动方向且该方向已无同向键按住，
  * 则切回另一按住方向重新计时，否则停止自动重复
  * @param {number} dir 松开的方向（-1 左 / 1 右）
+ * @param {boolean} stillHeld 松开后该方向是否仍有按键按住（同方向双键场景由 keyup 按集合余量传入）
  */
-function releaseDir(dir) {
-    if (dir < 0) leftHeld = false; else rightHeld = false;
-    if (activeDir === dir) {
+function releaseDir(dir, stillHeld) {
+    if (dir < 0) leftHeld = stillHeld; else rightHeld = stillHeld;
+    if (activeDir === dir && !stillHeld) {
         if (leftHeld) startDAS(-1);
         else if (rightHeld) startDAS(1);
         else activeDir = 0;
@@ -832,7 +840,7 @@ function updateSoftDrop(deltaMs) {
  * @param {number} now 当前帧时间戳（毫秒，与 rAF 时间戳同源）
  */
 function checkDangerAlarm(now) {
-    const top = stackTopRow();
+    const top = stackTop();
     let lvl = 0;
     if (top <= 1) lvl = 2;             // 堆到顶部 2 行以内：2 级（急迫）
     else if (top < DANGER_ROWS) lvl = 1; // 进入顶部 4 行：1 级（警示）
@@ -969,6 +977,54 @@ function stackTopRow() {
     return ROWS;
 }
 
+/** 缓存的堆叠最高点行号（stackTop 惰性重扫的结果值） */
+let cachedTopRow = ROWS;
+/** 棋盘脏标记：任一持久写入（锁定合并/消行删行/清盘/快照恢复）后置位，下一次读取时重扫 */
+let topRowDirty = true;
+
+/**
+ * 读取堆叠最高点（stackTopRow 的脏标记缓存包装）：棋盘仅在锁定/删行/清盘/恢复等
+ * 离散时刻变化，危险警报判定与危险光带绘制每帧的读取共享同一次扫描结果，
+ * 消除危险态逐帧两遍全盘扫描
+ * @returns {number} 从顶部数第一个含方块的行号；空棋盘返回 ROWS
+ */
+function stackTop() {
+    if (topRowDirty) {
+        cachedTopRow = stackTopRow();
+        topRowDirty = false;
+    }
+    return cachedTopRow;
+}
+
+/** 危险光带四边渐变缓存（惰性单建）：几何固定（VIEW_W/H × DANGER_EDGE_PX），
+ *  色标按满强度（1→0）定义，实际呼吸透明度绘制时经 globalAlpha 缩放，
+ *  等价替代危险态逐帧新建 4 个渐变对象的热路径分配 */
+let dangerGradCache = null;
+
+/**
+ * 惰性构建四条向内渐隐的红色光带（渐变 + 各自填充矩形）
+ * @returns {Array<{grad: CanvasGradient, rx: number, ry: number, rw: number, rh: number}>} 渐变与矩形四元组列表
+ */
+function dangerGrads() {
+    if (!dangerGradCache) {
+        const edge = DANGER_EDGE_PX; // 光带厚度（像素）：四边向内渐隐红色光带的宽度（常量区单点定义）
+        // [渐变起止坐标, 填充矩形]：左 / 右 / 上 / 下
+        const defs = [
+            [[0, 0, edge, 0], [0, 0, edge, VIEW_H]],
+            [[VIEW_W, 0, VIEW_W - edge, 0], [VIEW_W - edge, 0, edge, VIEW_H]],
+            [[0, 0, 0, edge], [0, 0, VIEW_W, edge]],
+            [[0, VIEW_H, 0, VIEW_H - edge], [0, VIEW_H - edge, VIEW_W, edge]]
+        ];
+        dangerGradCache = defs.map(([[x0, y0, x1, y1], [rx, ry, rw, rh]]) => {
+            const g = ctx.createLinearGradient(x0, y0, x1, y1);
+            g.addColorStop(0, 'rgba(255,50,50,1)');
+            g.addColorStop(1, 'rgba(255,50,50,0)');
+            return { grad: g, rx, ry, rw, rh };
+        });
+    }
+    return dangerGradCache;
+}
+
 /**
  * 绘制整帧（含全部特效，自底向上分层）：
  * 震动 → 背景/网格 → 固定块 → 消行闪白 → 硬降残影 → 粒子 → 当前方块（含幽灵投影）→
@@ -1076,7 +1132,7 @@ function draw() {
     }
     // 全屏白闪（TETRIS / ALL CLEAR 庆祝时触发，快速衰减）
     if (flashTime > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${(flashTime / 0.3) * 0.5})`;
+        ctx.fillStyle = `rgba(255,255,255,${(flashTime / FLASH_TIME) * 0.5})`;
         ctx.fillRect(-10, -10, VIEW_W + 20, VIEW_H + 20);
     }
     // 堆顶死亡演出：整屏灰暗渐入，渐隐播完后由主循环弹出结算面板
@@ -1085,31 +1141,15 @@ function draw() {
         ctx.fillRect(-10, -10, VIEW_W + 20, VIEW_H + 20);
     }
     // 危险警报：堆叠最高点进入顶部 DANGER_ROWS 行范围内时，四边红色渐变呼吸警示
-    if (running && stackTopRow() < DANGER_ROWS) {
+    // （渐变对象惰性单建，呼吸透明度经 globalAlpha 缩放）
+    if (running && stackTop() < DANGER_ROWS) {
         const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160); // 呼吸脉冲 0 → 1
-        const a = 0.08 + pulse * 0.16;                               // 透明度随呼吸起伏
-        const edge = DANGER_EDGE_PX; // 光带厚度（像素）：四边向内渐隐红色光带的宽度（常量区单点定义）
-        // 左右上下四条向内渐隐的红色光带
-        let g = ctx.createLinearGradient(0, 0, edge, 0);
-        g.addColorStop(0, `rgba(255,50,50,${a})`);
-        g.addColorStop(1, 'rgba(255,50,50,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, edge, VIEW_H);
-        g = ctx.createLinearGradient(VIEW_W, 0, VIEW_W - edge, 0);
-        g.addColorStop(0, `rgba(255,50,50,${a})`);
-        g.addColorStop(1, 'rgba(255,50,50,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(VIEW_W - edge, 0, edge, VIEW_H);
-        g = ctx.createLinearGradient(0, 0, 0, edge);
-        g.addColorStop(0, `rgba(255,50,50,${a})`);
-        g.addColorStop(1, 'rgba(255,50,50,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, VIEW_W, edge);
-        g = ctx.createLinearGradient(0, VIEW_H, 0, VIEW_H - edge);
-        g.addColorStop(0, `rgba(255,50,50,${a})`);
-        g.addColorStop(1, 'rgba(255,50,50,0)');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, VIEW_H - edge, VIEW_W, edge);
+        ctx.globalAlpha = 0.08 + pulse * 0.16;                       // 透明度随呼吸起伏
+        for (const { grad, rx, ry, rw, rh } of dangerGrads()) {
+            ctx.fillStyle = grad;
+            ctx.fillRect(rx, ry, rw, rh);
+        }
+        ctx.globalAlpha = 1; // 显式复位透明度（帧尾 restore 亦会还原，此处防状态外泄）
     }
     ctx.restore();
 }
@@ -1218,6 +1258,7 @@ function startGame() {
     // 移除按钮焦点，防止空格误触按钮
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     board = createBoard();
+    topRowDirty = true; // 棋盘已重置：堆叠最高点缓存失效（下一次读取重扫）
     score = 0;
     level = 1;
     totalLines = 0;
@@ -1354,12 +1395,15 @@ document.addEventListener('keydown', e => {
         // 方向键与 WASD 双通道支持（左手操作）；e.code 不受大写锁定影响；
         // 自实现 DAS/ARR：忽略系统 e.repeat 事件，按住期间的重复移动由 updateDAS 驱动
         case 'ArrowLeft': case 'KeyA':
+            heldMoveKeys.add(e.code); // 按 code 记账：同向双键只松其一不停摆
             if (!e.repeat && !leftHeld) { leftHeld = true; startDAS(-1); }
             break;
         case 'ArrowRight': case 'KeyD':
+            heldMoveKeys.add(e.code);
             if (!e.repeat && !rightHeld) { rightHeld = true; startDAS(1); }
             break;
         case 'ArrowDown': case 'KeyS':
+            heldMoveKeys.add(e.code);
             // 立即软降一格并置按住标记：连发由 updateSoftDrop 驱动（与左右 DAS 同构，
             // 修正此前按住仅降 1 格、无按住连发的问题）
             if (!e.repeat) { downHeld = true; softDropTimer = 0; softDrop(); }
@@ -1379,11 +1423,13 @@ document.addEventListener('keydown', e => {
     }
 });
 
-// 松开方向键：更新 DAS 按住状态（终止自动重复或换向）
+// 松开方向键：按集合余量重算按住状态（终止自动重复、换向或同向双键交棒）
 document.addEventListener('keyup', e => {
-    if (e.code === 'ArrowLeft' || e.code === 'KeyA') releaseDir(-1);
-    else if (e.code === 'ArrowRight' || e.code === 'KeyD') releaseDir(1);
-    else if (e.code === 'ArrowDown' || e.code === 'KeyS') downHeld = false; // 松开下键：终止软降连发
+    heldMoveKeys.delete(e.code);
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') releaseDir(-1, heldMoveKeys.has('ArrowLeft') || heldMoveKeys.has('KeyA'));
+    else if (e.code === 'ArrowRight' || e.code === 'KeyD') releaseDir(1, heldMoveKeys.has('ArrowRight') || heldMoveKeys.has('KeyD'));
+    // 松开下键：同向双键余键仍按住则维持软降连发，否则终止
+    else if (e.code === 'ArrowDown' || e.code === 'KeyS') downHeld = heldMoveKeys.has('ArrowDown') || heldMoveKeys.has('KeyS');
 });
 
 /**
@@ -1392,6 +1438,7 @@ document.addEventListener('keyup', e => {
  * （visibilitychange 兜底移动端切应用不触发 blur 的场景，双触发经暂停守卫天然幂等）
  */
 function handleFocusLoss() {
+    heldMoveKeys.clear(); // 同向双键记账一并清空（切回后以新 keydown 重新入账）
     leftHeld = false;
     rightHeld = false;
     downHeld = false;
@@ -1655,6 +1702,7 @@ function isValidSnapshot(s) {
 function applyTetrisSnapshot(s) {
     // —— 覆盖核心状态：棋盘 + 按保存的旋转态从初始矩阵旋转出当前姿态 ——
     board = s.board.map(row => row.slice());
+    topRowDirty = true; // 棋盘已替换：堆叠最高点缓存失效（下一次读取重扫）
     let matrix = PIECES[s.piece.type].matrix;
     for (let i = 0; i < s.piece.rot; i++) matrix = rotate(matrix);
     piece = { x: s.piece.x, y: s.piece.y, rot: s.piece.rot, typeIndex: s.piece.type, matrix };
@@ -1704,7 +1752,7 @@ function restoreSnapshot() {
 // 跳过（不写入也不清除）——此时锁定块已并入棋盘而 piece 仍指向它，写入必产组合碰撞
 // 坏档、按管线分流走清除又会误删 lockPiece 开头已落盘的一致镜像，跳过即回退锁定前
 Snap.bindAutoSave({
-    save: () => { if (!clearing) snapPipe.save(); }, // 演出期跳过，其余状态照常分流保存/清除
+    save: () => { if (!clearing) return snapPipe.save(); }, // 演出期跳过（undefined 走兼容路径照发 ACK），其余状态照常分流保存/清除，写入失败 false 照常传导交父页超时兜底
     restore: snapPipe.restore, // 完整镜像传参：恢复/清除不经演出守卫（游戏结束清档仍直连 snapPipe）
     clear: snapPipe.clear
 });

@@ -244,6 +244,24 @@ function registerRecord() {
     FX.recordBurst();
 }
 
+/**
+ * 分数超过历史最高时实时刷新最高分并持久化（金苹果与普通食物两条进食分支共用）——
+ * 首次超越触发 registerRecord 破纪录庆祝（幂等），此后逐次同步 HUD 与存档
+ */
+function syncHighScore() {
+    if (score > highScore) {
+        highScore = score;
+        registerRecord();
+        Arcade.saveRaw(KEYS.HIGH_SCORE, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
+        highScoreElement.textContent = `HI ${highScore}`;
+    }
+}
+
+/** 暂停切换准入谓词：运行中且非死亡演出且成就墙未开（键盘空格与 Pause 共用同一收口） */
+const canTogglePause = () => isRunning && !isDying && !Ach.isOpen();
+/** 操作准入谓词：在暂停切换准入之上再加"非暂停"——游戏输入通道（转向/手势）在暂停期间一律冻结 */
+const canAct = () => canTogglePause() && !isPaused;
+
 // 页面加载即恢复上次最高分显示
 highScoreElement.textContent = `HI ${highScore}`;
 // 初始 DPR 适配 + 窗口尺寸变化时重算（iframe 嵌入与独立打开均生效）
@@ -629,6 +647,14 @@ function segRenderPos(i, t) {
     };
 }
 
+/** 蛇头朝向单位向量表（drawSnake 眼睛定位用）：渲染热路径每帧查表，避免每帧新建字面量对象 */
+const DIR_VECTORS = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+/** 蛇身颜色表缓存：蛇身长度仅在吃食成长/新开局/快照恢复时变化，变化时按
+ *  "头亮尾暗 74%→42%"整批重建 HSL 颜色串，渲染热路径只查表不再逐节拼字符串 */
+let bodyColors = [];
+/** bodyColors 已构建时对应的蛇身长度（与当前长度比对判断是否需重建） */
+let bodyColorsLen = 0;
+
 /**
  * 绘制蛇身：头亮尾暗的绿色渐变 + 直角方块（每节四周留 1px 缝隙）+ 蛇头朝向眼睛；
  * 每节按插值进度 t 在上一 tick 位置与当前位置间平滑滑动；
@@ -640,6 +666,11 @@ function drawSnake(t) {
     // 死亡演出进度 0→1，换算为已熄灭的节数（尾部先灭，收尾时全部熄灭）
     const deathK = isDying ? 1 - deathTimer / DEATH_DURATION : 0;
     const extinguished = isDying ? Math.min(len, Math.floor(deathK * (len + 1))) : 0;
+    if (bodyColorsLen !== len) { // 长度变化才重建颜色表（行为等价的预构建，替代每帧逐节拼串）
+        bodyColors = [];
+        for (let i = 0; i < len; i++) bodyColors.push(`hsl(143, 100%, ${74 - 32 * (i / Math.max(1, len - 1))}%)`);
+        bodyColorsLen = len;
+    }
 
     for (let i = len - 1; i >= 0; i--) {
         // 逐节插值：从上一逻辑 tick 位置滑向当前位置（t ∈ [0,1]）
@@ -656,9 +687,8 @@ function drawSnake(t) {
             // 蛇头：吃到食物瞬间闪白，否则亮绿
             ctx.fillStyle = headFlash > 0 ? '#ffffff' : '#7dffa4';
         } else {
-            // 身体：按节数从头到尾做 HSL 亮度渐变（74% → 42%）
-            const light = 74 - 32 * (i / Math.max(1, len - 1));
-            ctx.fillStyle = `hsl(143, 100%, ${light}%)`;
+            // 身体：查预构建颜色表（按节数从头到尾的 HSL 亮度渐变，74% → 42%）
+            ctx.fillStyle = bodyColors[i];
         }
         ctx.fillRect(px + 1, py + 1, gridSize - 2, gridSize - 2);
     }
@@ -670,7 +700,7 @@ function drawSnake(t) {
         const cx = hp.x * gridSize + gridSize / 2;
         const cy = hp.y * gridSize + gridSize / 2;
         // 沿运动方向前推 + 垂直方向两侧分开，确定双眼位置
-        const d = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } }[direction];
+        const d = DIR_VECTORS[direction];
         const fx = d.x, fy = d.y;
         const sx = -fy, sy = fx; // 垂直方向
         for (const side of [-1, 1]) {
@@ -811,12 +841,7 @@ function moveSnake() {
         syncDangerLayer(); // 长身完成：同步 BGM 危险分层（≥15 节叠加鼓点层）
 
         // 分数超过历史最高时实时刷新最高分并持久化（首次触发破纪录庆祝）
-        if (score > highScore) {
-            highScore = score;
-            registerRecord();
-            Arcade.saveRaw(KEYS.HIGH_SCORE, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
-            highScoreElement.textContent = `HI ${highScore}`;
-        }
+        syncHighScore();
     } else if (head.x === food.x && head.y === food.y) {
         // 吃到普通食物：先计入连击（决定加成倍率），再计算加成后的得分
         const fx = food.x * gridSize + gridSize / 2;
@@ -847,12 +872,7 @@ function moveSnake() {
         syncDangerLayer(); // 长身完成：同步 BGM 危险分层（≥15 节叠加鼓点层）
 
         // 分数超过历史最高时实时刷新最高分并持久化（首次触发破纪录庆祝）
-        if (score > highScore) {
-            highScore = score;
-            registerRecord();
-            Arcade.saveRaw(KEYS.HIGH_SCORE, String(highScore)); // 存储不可用时静默放弃，不中断进食/结算流程
-            highScoreElement.textContent = `HI ${highScore}`;
-        }
+        syncHighScore();
 
         // 概率刷新一枚限时金苹果（场上没有时才判定），提供抢分目标
         if (!goldApple && Math.random() < GOLD_CHANCE) generateGoldApple(head);
@@ -947,7 +967,7 @@ const difficultyCtl = Arcade.bindDifficultyButtons({
  * 游戏侧只注入差异件（守卫、落点、恢复补起播曲名） */
 const pausePipe = Pause.create({
     // 仅在游戏进行中生效（开始前 isRunning=false，死亡演出中 isDying=true，成就墙打开时不接管）
-    canToggle: () => isRunning && !isDying && !Ach.isOpen(),
+    canToggle: canTogglePause,
     isPaused: () => isPaused,
     setPaused: (paused) => {
         isPaused = paused;
@@ -956,7 +976,10 @@ const pausePipe = Pause.create({
     },
     overlay: pauseScreen,
     // 快照续玩局此前从未起播 BGM（恢复流程不经 startGame）：恢复侧 start 同名幂等补起播
-    resumeBgmStart: 'snake'
+    resumeBgmStart: 'snake',
+    // 库序列中恢复侧 bgm.start（补起播）发生在 setPaused 之后，重启会重置 BGM 危险
+    // 分层；BGM 恢复完成后回调重新对齐，长蛇续玩局即刻叠加鼓点声部（普通局为幂等重申）
+    onResume: syncDangerLayer
 });
 
 /**
@@ -1123,8 +1146,9 @@ function applySnakeSnapshot(snap) {
     score = snap.score;
     eatenCount = snap.eaten;
     syncDangerLayer(); // 续玩长蛇直接进入危险分层，与恢复后的局面匹配
-    // 按恢复后的速度等级重新推导移动计时节奏（与局内每吃 SPEED_STEP 个提速一档的公式一致）
-    gameSpeed = Math.max(SPEED_MIN, Math.round(baseSpeed * Math.pow(SPEED_FACTOR, eatenCount / SPEED_STEP)));
+    // 按恢复后的速度等级重新推导移动计时节奏：与局内"每吃满 SPEED_STEP 个提速一档"
+    // 的整档节奏一致——非整倍数的尾数不计档（局内速度要等下一整档才变），故向下取整档数
+    gameSpeed = Math.max(SPEED_MIN, Math.round(baseSpeed * Math.pow(SPEED_FACTOR, Math.floor(eatenCount / SPEED_STEP))));
     // 复位特效与瞬态状态：恢复出的是"干净的进行中局面"
     moveAcc = 0;        // 累加器清零：续玩后先等满一个完整 gameSpeed 再迈第一步
     foodAge = 1;        // 跳过食物出生弹入动画（foodAge≥0.2 后恒为满尺寸）
@@ -1190,7 +1214,7 @@ document.addEventListener('keydown', (event) => {
     // 空格切换暂停：仅对局进行中 / 暂停态接管（守卫口径与 pausePipe.canToggle 一致）；
     // 面板态（开始 / 结束等）不拦截默认行为，放行空格激活焦点按钮
     if (event.code === 'Space') {
-        if (isRunning && !isDying && !Ach.isOpen()) {
+        if (canTogglePause()) {
             event.preventDefault();
             if (!event.repeat) togglePause(); // 防长按连发：系统按键重复率下反复切换暂停
         }
@@ -1209,7 +1233,7 @@ document.addEventListener('keydown', (event) => {
     if (!newDirection) return;
     event.preventDefault(); // 阻止方向键滚动页面
     if (event.repeat) return; // 防御：按住方向的系统重复键不再入队（队列同向去重已兜底，此处显式拦截语义更清晰）
-    if (!isRunning || isPaused || Ach.isOpen() || isDying) return; // 未开始 / 暂停（含切窗自动暂停）/ 成就墙 / 死亡演出期间蛇不可操作：不入队、不播转向音，与触屏手势通道守卫对齐
+    if (!canAct()) return; // 未开始 / 暂停（含切窗自动暂停）/ 成就墙 / 死亡演出期间蛇不可操作：不入队、不播转向音，与触屏手势通道守卫对齐
     queueDirection(newDirection); // 压入预输入队列：拐双弯的两个意图分属两个 tick 依次生效
 });
 
@@ -1246,7 +1270,7 @@ function endSwipe() {
 canvas.addEventListener('pointerdown', (event) => {
     // 仅对局进行中启动手势：未开始/已结束（遮罩面板接管交互）/暂停（含切窗自动暂停）/
     // 死亡演出/成就面板期间均不接管，与键盘通道的暂停守卫语义一致
-    if (!isRunning || isPaused || Ach.isOpen() || isDying) return;
+    if (!canAct()) return; // 与键盘通道同一准入谓词
     event.preventDefault(); // 阻止画布默认的触屏滚动 / 鼠标拖选行为
     Arcade.capturePointer(canvas, event.pointerId); // 按住后拖出画布仍持续跟踪至松手（守卫见 arcade-common.js）
     swipeActive = true;
@@ -1256,7 +1280,7 @@ canvas.addEventListener('pointerdown', (event) => {
 
 canvas.addEventListener('pointermove', (event) => {
     if (!swipeActive) return; // 未按下时的悬浮移动直接忽略
-    if (!isRunning || isPaused || Ach.isOpen() || isDying) return; // 暂停 / 演出期间冻结手势
+    if (!canAct()) return; // 暂停 / 演出期间冻结手势
     const dx = event.clientX - swipeX;
     const dy = event.clientY - swipeY;
     // 位移不足阈值视为尚未成招，继续等待指针划动

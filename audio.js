@@ -153,9 +153,15 @@ const SFX = (() => {
     function ensure() {
         if (muted) return null;
         if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-        // resume() 返回 Promise：无用户手势等场景被浏览器拒绝时静默吞掉，
-        // 避免 unhandled rejection 反复刷控制台（下次手势 ensure 会再次尝试恢复）
-        if (ctx.state === 'suspended') ctx.resume().catch(() => { /* 恢复失败不致命，留待下一次手势重试 */ });
+        // resume() 现代实现返回 Promise（老 webkitAudioContext 返回 undefined，故先判返回值再挂 catch）：
+        // 无用户手势等场景被浏览器拒绝时静默吞掉，避免 unhandled rejection 反复刷控制台
+        //（下次手势 ensure 会再次尝试恢复）
+        if (ctx.state === 'suspended') {
+            const p = ctx.resume();
+            if (p && typeof p.catch === 'function') {
+                p.catch(() => { /* 恢复失败不致命，留待下一次手势重试 */ });
+            }
+        }
         return ctx;
     }
 

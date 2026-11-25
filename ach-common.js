@@ -3,7 +3,7 @@
  * ----------------------------------------------------------------------------
  * 全站七游戏成就逻辑的唯一实现（v3.0 起由各游戏 js 内的七份同构实现下沉而来）：
  *   存档装载与三代格式迁移（v1 数组 → v2 { unlocked, best }）
- *   → trackRunStat 历史最佳追踪（只增不减，超越即落盘；每次上报均扫描挂靠成就）
+ *   → trackRunStat 历史最佳追踪（只增不减，超越标脏防抖落盘；每次上报均扫描挂靠成就）
  *   → unlockAchievement 幂等解锁（toast + 解锁音 + 史诗/传说金色烟花）
  *   → 成就墙渲染（卡片网格 canonical 标记 + 完成度补间）
  *   → 开合控制（V 开 / Esc 关 / 遮罩与关闭按钮 / 主循环查询 isOpen）
@@ -261,6 +261,33 @@
             Arcade.saveJSON(opts.storageKey, store);
         }
 
+        /* ---- best 维度防抖落盘：热路径只标脏，2s 尾沿统一冲刷；页面隐藏/卸载兜底 ---- */
+        let bestDirty = false;  // best 表是否有未落盘改动
+        let bestFlushTimer = 0; // 防抖定时器句柄（0 = 未挂起）
+
+        /** 挂起/顺延 2 秒尾沿冲刷：高频上报路径内仅置标志 + 重置定时器，不同步写存储 */
+        function scheduleBestFlush() {
+            if (bestFlushTimer) clearTimeout(bestFlushTimer);
+            bestFlushTimer = setTimeout(flushBest, 2000);
+        }
+
+        /** 立即冲刷脏 best 表（无改动或无挂起定时器时为空操作） */
+        function flushBest() {
+            if (bestFlushTimer) {
+                clearTimeout(bestFlushTimer);
+                bestFlushTimer = 0;
+            }
+            if (!bestDirty) return;
+            bestDirty = false;
+            saveStore();
+        }
+
+        // 页面隐藏 / 卸载兜底：防抖窗口内关页时定时器尾沿不可靠，必须立即冲刷防丢档
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) flushBest();
+        });
+        window.addEventListener('pagehide', flushBest);
+
         /* ---- 成就解锁 toast ---- */
         /**
          * 弹出一条解锁 toast（canonical 标记写入 mount.toasts）：播放完
@@ -311,7 +338,7 @@
 
         /* ---- 历史最佳追踪 ---- */
         /**
-         * 追踪一项历史最佳（只增不减）：超越旧值时立即落盘；每次上报均扫描挂靠在
+         * 追踪一项历史最佳（只增不减）：超越旧值时标脏延迟落盘（防抖 2s，页面隐藏/卸载兜底冲刷）；每次上报均扫描挂靠在
          * 该统计项上的全部成就（如 score 同时驱动百分俱乐部/得分大师两档）——
          * 解锁扫描不做 best-guard，成就 target 下调或新增成就 target 低于现有 best
          * 时也能按本局值补解锁（unlock 幂等，重复扫描代价可接受）
@@ -324,9 +351,10 @@
                 console.warn('[Ach] trackRunStat 未注册统计项：' + stat);
                 return;
             }
-            if (value > store.best[stat]) { // 只增不减：超越旧 best 才落盘
+            if (value > store.best[stat]) { // 只增不减：超越旧 best 才标脏（防抖统一落盘）
                 store.best[stat] = value;
-                saveStore();
+                bestDirty = true;
+                scheduleBestFlush();
             }
             // 解锁扫描位于 best-guard 之外：目标达成的成就逐个解锁（unlock 幂等，跨档重扫安全）
             for (const a of defs) {

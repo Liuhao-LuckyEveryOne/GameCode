@@ -281,6 +281,8 @@ let diffCfg = DIFFICULTIES[difficulty];
 
 /** 当前分数 */
 let score = 0;
+/** 最近一次已上报成就层的分数快照（去重基线）：分数未变化时跳过 trackRunStat，消除逐帧重复上报 */
+let lastScoreReported = -1;
 /** 剩余生命数（初始值随难度：无敌/简单 4 / 普通 3 / 困难 2） */
 let lives = diffCfg.lives;
 /** 当前波次（每清空一波 +1，蜂群随之加速，每 5 波为 Boss 战） */
@@ -361,8 +363,6 @@ let comboTimer = 0;
 let comboMult = 1;
 /** 下一次里程碑奖励生命所需的分数 */
 let nextLifeScore = EXTRA_LIFE_STEP;
-/** 本波开始时的生命数，用于"完美防御"判定（随难度初始化） */
-let livesAtWaveStart = diffCfg.lives;
 /** 本波掉命次数：波开始清零、受击累加，清波时为 0 才算完美防御（不受 1UP 回补到相等生命的干扰） */
 let livesLostInWave = 0;
 /** 按键按下状态表：code → true，用于支持持续按住移动/射击 */
@@ -695,7 +695,7 @@ function initGame() {
     comboTimer = 0;
     comboMult = 1;
     nextLifeScore = EXTRA_LIFE_STEP;
-    livesAtWaveStart = diffCfg.lives;
+    lastScoreReported = -1; // 开局重置成就上报去重基线
     livesLostInWave = 0; // 新局首波同样从零计数
     freezeTimer = 0;
     shakeTime = 0;
@@ -1541,7 +1541,6 @@ function nextWave() {
     wave++;
     // 成就：波次最佳值回写（挂靠的 wave10 由共享层扫描连带解锁；wave 已自增为即将开始的波次）
     Ach.trackRunStat('wave', wave);
-    livesAtWaveStart = lives;
     livesLostInWave = 0; // 新一波开始：掉命计数清零，完美防御按新波重新判定
     spawnWave();
     updateHud();
@@ -1644,8 +1643,12 @@ function updatePlayer(dt) {
         dashGhosts[i].t += dt;
         if (dashGhosts[i].t >= dashGhosts[i].life) dashGhosts.splice(i, 1);
     }
-    // 成就：单局分数最佳值实时回写（超越历史最佳才落盘，挂靠的 score10k 由共享层连带解锁）
-    Ach.trackRunStat('score', Math.floor(score));
+    // 成就：单局分数最佳值实时回写（超越历史最佳才落盘，挂靠的 score10k 由共享层连带解锁）；
+    // 分数未变化时跳过上报，消除逐帧重复扫描（分数只在拾取/击杀事件时变动）
+    if (score !== lastScoreReported) {
+        lastScoreReported = score;
+        Ach.trackRunStat('score', Math.floor(score));
+    }
 }
 
 /**
@@ -2465,7 +2468,6 @@ function buildBeeSnapshot() {
         comboTimer,
         comboMult,
         nextLifeScore,
-        livesAtWaveStart,
         livesLostInWave, // 本波已掉命数：跨刷新恢复后清波完美防御判定不被抹掉（可选字段，v 保持 1）
         waveEvent,
         bullets: bullets.map(b => ({ x: b.x, y: b.y, vx: b.vx })),
@@ -2527,7 +2529,7 @@ function validateBeeSnapshot(s) {
         !snapIsNum(s.laserTimer, 0, 3600) || !snapIsNum(s.laserTickTimer, 0, 3600)) return false;
     // ---- 连击与里程碑字段校验 ----
     if (!snapIsInt(s.comboCount, 0, 1e6) || !snapIsNum(s.comboTimer, 0, 3600) || !snapIsInt(s.comboMult, 1, COMBO_MAX_MULT)) return false;
-    if (!snapIsNum(s.nextLifeScore, 1, 1e9) || !snapIsInt(s.livesAtWaveStart, 0, MAX_LIVES)) return false;
+    if (!snapIsNum(s.nextLifeScore, 1, 1e9)) return false;
     // 本波已掉命数为可选字段（旧版 v1 快照无此键）：出现时须为 0~MAX_LIVES 整数，缺省按 0 兼容
     if (s.livesLostInWave !== undefined && !snapIsInt(s.livesLostInWave, 0, MAX_LIVES)) return false;
     // ---- 事件波枚举校验 ----
@@ -2615,7 +2617,6 @@ function applyBeeSnapshot(s) {
     comboTimer = s.comboTimer;
     comboMult = s.comboMult;
     nextLifeScore = s.nextLifeScore;
-    livesAtWaveStart = s.livesAtWaveStart;
     livesLostInWave = snapIsInt(s.livesLostInWave, 0, MAX_LIVES) ? s.livesLostInWave : 0; // 旧版快照无此字段按 0 起算
     waveEvent = s.waveEvent;
     bullets.length = 0;
@@ -2930,6 +2931,7 @@ if (restoreSnapshot()) {
         syncPauseOverlay(); // 恢复快照成功：显示暂停遮罩（含「已恢复上次进度」提示行）
         startScreen.style.display = 'none';
         SFX.bgm.start('bee');
+        if (boss) SFX.bgm.setIntensity(true); // Boss 波快照恢复：补齐危险鼓点层（与 spawnBoss 置位口径一致）
         SFX.bgm.pause();
     } catch (e) {
         // 恢复分支兜底：此时尚未启动渲染循环，一旦抛错将中断初始化链导致页面白屏

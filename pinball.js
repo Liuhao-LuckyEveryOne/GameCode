@@ -1168,10 +1168,10 @@ function validatePinballSnapshot(s) {
     if (!Number.isFinite(s.gravity) || s.gravity <= 0 || s.gravity > 5000) return false;
     if (!Number.isFinite(s.flipperLen) || s.flipperLen <= 0 || s.flipperLen > WORLD_W) return false;
     if (typeof s.invincible !== 'boolean' || typeof s.jackpotArmed !== 'boolean') return false;
-    // 连击状态：累计次数非负整数、倍率 1 ~ 封顶、窗口剩余时长非负有限
+    // 连击状态：累计次数非负整数、倍率 1 ~ 封顶、窗口剩余时长非负且不超窗口上限（防脏数据恢复后进度条溢出）
     if (!Number.isInteger(s.comboHits) || s.comboHits < 0) return false;
     if (!Number.isInteger(s.comboMult) || s.comboMult < 1 || s.comboMult > COMBO_MAX_MULT) return false;
-    if (!Number.isFinite(s.comboTimer) || s.comboTimer < 0) return false;
+    if (!Number.isFinite(s.comboTimer) || s.comboTimer < 0 || s.comboTimer > COMBO_WINDOW) return false;
     // 目标灯：布尔数组且长度与台面目标数一致
     if (!Array.isArray(s.targetLit) || s.targetLit.length !== targets.length ||
         !s.targetLit.every(x => typeof x === 'boolean')) return false;
@@ -1778,9 +1778,10 @@ function draw(now) {
     // 连击倍率 HUD：倍率 >1 时在画布顶部留白带常驻显示 ×N 与窗口剩余进度条
     // （震动复位后绘制，不跟随抖动；窗口将尽时文字变淡、进度条缩短提示即将断连）
     if (comboMult > 1 && state === 'play') {
-        const ratio = Math.max(0, comboTimer / COMBO_WINDOW);
+        const ratio = Math.max(0, Math.min(1, comboTimer / COMBO_WINDOW)); // 上界钳制：脏数据恢复超窗时进度条不溢出
         const full = comboMult >= COMBO_MAX_MULT; // 满级转红色示警"已封顶"
         ctx.textAlign = 'center';
+        const prevBaseline = ctx.textBaseline; // 暂存基线：绘制后还原，防泄漏污染后续 drawFloatTexts 等绘制
         ctx.textBaseline = 'middle';
         ctx.font = '700 15px system-ui, sans-serif';
         ctx.fillStyle = full ? '#ff5a5a' : '#ffd23e';
@@ -1794,6 +1795,7 @@ function draw(now) {
         ctx.fillStyle = full ? '#ff5a5a' : '#7ef3ff';
         ctx.fillRect(VIEW_CX - barW / 2, 29, barW * ratio, 3);
         ctx.globalAlpha = 1;
+        ctx.textBaseline = prevBaseline;
     }
     // JACKPOT 金色大字演出：在最上层绘制放大渐隐的 JACKPOT 字样
     if (jackpotFxTimer > 0) drawJackpotFx();
