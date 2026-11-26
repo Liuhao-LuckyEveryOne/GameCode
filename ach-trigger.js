@@ -48,19 +48,28 @@
         '<path d="M46.5 13.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff8d9" opacity="0.9"/>' +
         '</svg>';
 
-    // 逐个处理触发器：注入金杯 SVG（防重复）+ 绑定点击派发合成 V 键
-    document.querySelectorAll('.achWallTrigger').forEach(el => {
-        // 防重复注入守卫：Wave1 期页面仍有内联 SVG 副本，已有则跳过，不能双份
-        if (!el.querySelector('svg.aw-cup')) {
-            el.insertAdjacentHTML('afterbegin', CUP_SVG);
-        }
-        // 点击即派发合成按键事件
-        el.addEventListener('click', () => {
-            // 合成键与真实按键同构：code/key 取 V 键值，bubbles 冒泡至 window，
-            // 使监听在 document 或 window 上的游戏均能响应
-            document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'v', bubbles: true }));
-            // 立即补发同 code 的 keyup：只发 keydown 会使键帽高亮 .pressed 永久残留
-            document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyV', key: 'v', bubbles: true }));
+    // 逐个处理触发器：注入金杯 SVG（防重复）+ 绑定点击派发合成 V 键。
+    // 本脚本可能先于 DOM 就绪装载（<head> 内引用）：就绪中挂 DOMContentLoaded 兜底，
+    // 已就绪（页尾引用/动态装载）则立即接线，两种路径恰好执行一次
+    const wire = () => {
+        document.querySelectorAll('.achWallTrigger').forEach(el => {
+            // 防重复注入守卫：Wave1 期页面仍有内联 SVG 副本，已有则跳过，不能双份
+            if (!el.querySelector('svg.aw-cup')) {
+                el.insertAdjacentHTML('afterbegin', CUP_SVG);
+            }
+            // 点击即派发合成按键事件
+            el.addEventListener('click', () => {
+                // 合成键与真实按键同构：code/key 取 V 键值，bubbles 冒泡至 window，
+                // 使监听在 document 或 window 上的游戏均能响应
+                document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyV', key: 'v', bubbles: true }));
+                // 立即补发同 code 的 keyup：只发 keydown 会使键帽高亮 .pressed 永久残留
+                document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyV', key: 'v', bubbles: true }));
+            });
         });
-    });
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wire);
+    } else {
+        wire();
+    }
 }());

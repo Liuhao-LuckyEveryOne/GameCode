@@ -428,10 +428,11 @@
             }
             opts.mount.grid.innerHTML = html;
             // 头部完成度：已解锁计数滚动补间 + 总数 + 总进度条
-            // FX 为软依赖（fx.js 未装载时跳过补间，总数/进度条直接落到终值不受影响）
-            if (typeof FX !== 'undefined') FX.tweenNumber(opts.mount.count, gotCount, COUNT_TWEEN_MS, (v) => String(Math.round(v)));
-            opts.mount.total.textContent = String(defs.length);
-            opts.mount.barFill.style.width = Math.round((gotCount / defs.length) * 100) + '%';
+            // FX 为软依赖（fx.js 未装载时跳过补间，总数/进度条直接落到终值不受影响）；
+            // 头部三件套为可选挂载点（缺失时跳过对应写入，不阻断网格渲染与开合）
+            if (typeof FX !== 'undefined' && opts.mount.count) FX.tweenNumber(opts.mount.count, gotCount, COUNT_TWEEN_MS, (v) => String(Math.round(v)));
+            if (opts.mount.total) opts.mount.total.textContent = String(defs.length);
+            if (opts.mount.barFill) opts.mount.barFill.style.width = Math.round((gotCount / defs.length) * 100) + '%';
         }
 
         /* ---- 开合控制 ---- */

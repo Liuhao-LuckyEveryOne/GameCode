@@ -425,10 +425,14 @@ let trophyClosedAt = -1e9;
     const gridEl = document.getElementById('thGrid');
     const awtKeyEl = btn.querySelector('.awt-key'); // 入口按钮角标（展示全站成就总数）
     const footLineEl = document.getElementById('thFootTotal'); // 页脚满环文案整句占位
+    const closeBtn = document.getElementById('thClose'); // 面板右上角 ✕ 关闭按钮
+    const resetBtn = document.getElementById('thReset'); // 页脚全站重置进度按钮
+    const veilEl = hall.querySelector('.th-veil'); // 暗幕遮罩（点击关闭殿堂）
     // 殿堂与渲染链子元素齐全性守卫：任一缺失即整段跳过，避免 render() 中途抛错
     // 中断本 IIFE 后续接线，也不影响其余大厅功能（上方两个注入目标一并纳入守卫口径）
     if (!hall || !btn || !totalEl || !ringFg || !ringText || !rankEl
-        || !rankBarEl || !rankHintEl || !mileEl || !gridEl || !awtKeyEl || !footLineEl) return;
+        || !rankBarEl || !rankHintEl || !mileEl || !gridEl || !awtKeyEl || !footLineEl
+        || !closeBtn || !resetBtn || !veilEl) return;
     // 静态文案里的全站成就总数（入口按钮 title/角标、面板总数占位、页脚整句）统一由
     // ACH_TOTAL 派生注入：ACH_DEFS 增删成就后只改定义表，消除 HTML 侧数字副本的手工同步
     btn.title = '全站成就殿堂（' + ACH_TOTAL + ' 项，快捷键 V）';
@@ -591,12 +595,11 @@ let trophyClosedAt = -1e9;
         if (document.body.classList.contains('game-open')) return;
         if (e.code === 'KeyV' && !e.repeat) toggle();
     });
-    document.getElementById('thClose').addEventListener('click', close);
+    closeBtn.addEventListener('click', close);
     // ---------- 全站重置进度（th-foot 入口）：武装态二次点击确认，不使用弹窗 ----------
     // 完整恢复出厂：清空 61 项成就 + 七游戏最高分/评级 + 每日挑战达成标记 + 进行中快照 +
     // 游玩时长 + 「上次游玩」记录；音控/演出强度/难度/布局等设置类存档不在清除清单内，
     // 天然保留。监听置于殿堂模块内：确认后可直接 render(false) 重渲染殿堂零进度状态
-    const resetBtn = document.getElementById('thReset');
     let resetArmed = false, resetTimer = 0;
     /** 退出武装态：摘红色警示样式、还原按钮文案、撤销超时回落定时器 */
     function disarmReset() {
@@ -632,7 +635,7 @@ let trophyClosedAt = -1e9;
         render(false);
     });
     // 点击暗幕（veil）关闭；点击殿堂与入口按钮之外的区域也关闭（pointerdown 覆盖鼠标/触屏）
-    hall.querySelector('.th-veil').addEventListener('pointerdown', close);
+    veilEl.addEventListener('pointerdown', close);
     document.addEventListener('pointerdown', e => {
         if (hall.hidden) return;
         // 游戏打开期间不因点击覆盖层误关殿堂（与导航/投币模块同款 game-open 守卫）
@@ -1860,6 +1863,10 @@ document.addEventListener('keydown', e => {
         card.addEventListener('click', e => {
             e.preventDefault();
             if (overlay) return; // 防重入早退：覆盖层已存在（游戏打开中/快速连点/长按 Enter 键系统重复激活）时忽略本次点击，避免重复写 localStorage 与刷新角标
+            // 殿堂打开守卫：键盘 Enter/Space 激活卡片不经过 pointerdown 关殿堂路径，放行会让
+            // 游戏覆盖层盖在殿堂上（只剩 Esc 可恢复）；鼠标路径 pointerdown 已先行关殿堂，不受影响
+            const th = document.getElementById('trophyHall');
+            if (th && !th.hidden) return;
             // 点亮过渡守卫：点击卡片的 pointerdown 投币已同步摘除 pre-coin 门禁，同一手势
             // 后续派发的 click 若放行会立刻启动游戏（卡带过渡盖住金币演出）。lights-on 类
             // 存续期间（投币后约 6.0 秒 = 金币飞行 2.7s + 分层点亮波浪最长约 3.0s）静默吞掉本次点击——只投币，不启动
@@ -2310,15 +2317,17 @@ document.addEventListener('keydown', e => {
 
     /**
      * 当前是否允许进入演示：大厅动效总开关接通（CRT 开机完成、非游戏覆盖层期）、
-     * 页面可见、且已完成投币并结束点亮演出（黑白待机期以投币引导为唯一主视觉；
+     * 成就殿堂未打开、页面可见、且已完成投币并结束点亮演出（黑白待机期以投币引导为唯一主视觉；
      * 点亮演出期主视觉为通电波浪，聚光轮播不闯入避免两套演出打架）
      * @returns {boolean} 允许进入返回 true
      */
     function canStart() {
+        const th = document.getElementById('trophyHall');
         return lobbyFx.active && !document.body.classList.contains('game-open')
             && !document.hidden
             && !document.body.classList.contains('pre-coin')
-            && !document.body.classList.contains('lights-on'); // 点亮演出期间不进入：避免聚光演出闯入通电序列
+            && !document.body.classList.contains('lights-on') // 点亮演出期间不进入：避免聚光演出闯入通电序列
+            && (!th || th.hidden); // 殿堂打开期间不进入：聚光演示被遮罩盖住白跑，横幅音效悬空
     }
 
     /**

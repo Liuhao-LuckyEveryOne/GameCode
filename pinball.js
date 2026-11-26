@@ -639,7 +639,7 @@ function stepBall(dt, b) {
  * 倒序遍历便于失球时移除——无敌档换新球从初始位置自动落下继续，
  * 普通档仅移除丢失的球（多球期间其余球得分照常），场上无球才进入失球演出；
  * 坐标非法（NaN/Infinity）的球所有难度统一回置安全点防永久滞留；
- * 无敌档另带兜底检测，球经侧缝逃出台面（坐标合法但越界）时同样换新球继续
+ * 各档另带越界兜底检测，球经侧缝逃出台面（坐标合法但越界）时：无敌档换新球继续，普通档按失球结算
  * @param {number} dt 帧时间步长（秒）
  */
 function updatePhysics(dt) {
@@ -662,12 +662,20 @@ function updatePhysics(dt) {
         // 永久滞留场上无法收局，统一回置安全点续玩（观感与无敌档 respawnBall 一致）
         if (!Number.isFinite(b.x) || !Number.isFinite(b.y)) {
             respawnBall(b);
-        } else if (invincibleMode) {
-            // 无敌档兜底：球经侧缝逃出台面（坐标合法但越界，未被触底判定捕获）时，
-            // 同样初始化新球落回初始位置，保证游戏永不中断（updatePhysics 仅在 play 状态被调用）
+        } else {
+            // 越界兜底：球经侧缝逃出台面（坐标合法但越界，未被触底判定捕获）——
+            // 无敌档初始化新球落回初始位置保证永不中断；普通档按失球结算（多球期间其余球照常），
+            // 防逃逸球长时间滞留场外、观感异常（updatePhysics 仅在 play 状态被调用）
             const gone = b.x < -BALL_R * 2 || b.x > WORLD_W + BALL_R * 2 ||
                 b.y < -WORLD_H;
-            if (gone) respawnBall(b);
+            if (gone) {
+                if (invincibleMode) {
+                    respawnBall(b);
+                } else {
+                    balls.splice(i, 1); // 仅移除丢失的球，其余球继续（多球期间得分照常）
+                    loseBall(b);        // 场上仍有余球时不扣球数，全部丢失才进入失球演出
+                }
+            }
         }
     }
     // 球-球弹性碰撞：全部球完成本步移动后统一对查（每物理步一次；

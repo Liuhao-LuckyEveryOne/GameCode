@@ -15,8 +15,8 @@
 用法：
     python tools/bump-versions.py          # 检测变更并 bump
     python tools/bump-versions.py --seed   # 首次运行/重置基线：仅记录当前 hash，不 bump
-    python tools/bump-versions.py --check  # 门禁校验：只检测不改写（存在待 bump js 或
-                                           # 待同步入口即退出码 1），供 CI/verify_all 使用
+    python tools/bump-versions.py --check  # 门禁校验：只检测不改写（存在待 bump js、
+                                           # 待同步入口或缺失 js 即退出码 1），供 CI/verify_all 使用
 """
 import hashlib
 import json
@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE = Path(__file__).resolve().parent / '.js-versions.json'
 REF_RE = re.compile(rb'([\w./-]+\.js)\?v=([\w-]+)')
 ENTRY_RE = re.compile(rb'([\w./-]+\.html)\?v=([\w-]+)')
+COMMENT_RE = re.compile(rb'<!--.*?-->', re.S)  # HTML 注释区间：其中的示例引用不参与替换
 
 
 def parse_ver(v):
@@ -68,6 +69,7 @@ def main():
     # 扫描全部引用：{js 文件名: 当前版本号}（同一 js 多处引用取首个版本号，bump 时全文替换）
     refs = {}       # {js 引用名: 版本号}
     ref_owner = {}  # {js 引用名: 首次引用它的 html 所在目录}，相对路径按此解析
+    all_vs = {}     # {js 解析后绝对路径: [各处引用版本号]}，bump 基准取最大值防版本漂移
     html_bytes = {}   # 内存中的最新内容
     html_orig = {}    # 磁盘原始内容，用于写回时判断是否有变化
     for html in htmls:
@@ -79,6 +81,7 @@ def main():
             if key not in refs:
                 refs[key] = ver.decode('utf-8')
                 ref_owner[key] = html.parent
+            all_vs.setdefault((html.parent / key).resolve(), []).append(ver.decode('utf-8'))
 
     cache = {}
     if CACHE.exists():
@@ -94,9 +97,17 @@ def main():
     today = date.today().strftime('%Y%m%d')
     bumped, seeded, missing = [], [], []
 
-    # js 物理路径 -> 当前最新版本号（初始化取各处引用值，bump 后同步更新；
-    # 卡片入口同步以此为准，保证入口对齐到 js bump 之后的最新版本）
-    cur_v = {(ref_owner[n] / n).resolve(): refs[n] for n in refs}
+    # js 物理路径 -> 当前最新版本号（初始化取各处引用的最大可解析版本，bump 后同步更新；
+    # 卡片入口同步以此为准，保证入口对齐到 js bump 之后的最新版本。
+    # 多页引用版本漂移时取最大值，避免入口同步以偏旧的"最后引用"为基准造成进一步分裂）
+    cur_v = {}
+    for vpath, vlist in all_vs.items():
+        best = None
+        for v in vlist:
+            pv = parse_ver(v)
+            if pv is not None and (best is None or pv > best[0]):
+                best = (pv, v)
+        cur_v[vpath] = best[1] if best else vlist[0]
 
     for name in sorted(process):
         path = ref_owner[name] / name
@@ -114,13 +125,17 @@ def main():
         if old == h:
             continue  # 内容未变
 
-        # 内容有变：计算新版本号（当日递增 N，跨日重置为 1）
+        # 内容有变：计算新版本号（当日递增 N，跨日重置为 1）。
+        # bump 基准取该 js 全部引用中可解析的最大版本：同一 js 多页引用版本漂移时，
+        # 保证新版本不低于任一已有引用，避免只升部分页面、漂移被固化
         old_v = refs[name]
-        if old_v.startswith(today + '-'):
-            try:
-                n = int(old_v.rsplit('-', 1)[1]) + 1
-            except ValueError:
-                n = 1
+        top = None
+        for v in all_vs.get(path.resolve(), []):
+            pv = parse_ver(v)
+            if pv is not None and (top is None or pv > top):
+                top = pv
+        if top is not None and top[0] == int(today):
+            n = top[1] + 1
         else:
             n = 1
         new_v = '%s-%d' % (today, n)
@@ -134,8 +149,12 @@ def main():
         manual = []
         for html, data in html_bytes.items():
             hits = []
+            # 注释区间按当前数据现算：前序 bump 可能已改变本页字节长度，坐标必须对齐现值
+            spans = [m.span() for m in COMMENT_RE.finditer(data)]
 
-            def upgrade(m, owner=html.parent, hits=hits):
+            def upgrade(m, owner=html.parent, hits=hits, spans=spans):
+                if any(s <= m.start() < e for s, e in spans):
+                    return m.group(0)  # HTML 注释中的示例引用不参与替换
                 rname, rver = m.group(1).decode('utf-8'), m.group(2).decode('utf-8')
                 if (owner / rname).resolve() != js_abs:
                     return m.group(0)  # 其它 js 的引用不动
@@ -188,8 +207,11 @@ def main():
         count = 0
         for html, data in html_bytes.items():
             hits = []
+            spans = [m.span() for m in COMMENT_RE.finditer(data)]  # 注释区间现算，坐标对齐当前数据
 
-            def upgrade_entry(m, epath=epath, owner=html.parent, hits=hits):
+            def upgrade_entry(m, epath=epath, owner=html.parent, hits=hits, spans=spans):
+                if any(s <= m.start() < e for s, e in spans):
+                    return m.group(0)  # HTML 注释中的示例引用不参与替换
                 rname, rver = m.group(1).decode('utf-8'), m.group(2).decode('utf-8')
                 if (owner / rname).resolve() != epath:
                     return m.group(0)  # 其它入口的引用不动
@@ -212,8 +234,13 @@ def main():
         if manual:
             print('提示：入口 %s 存在手写非标版本引用，未自动覆盖：%s' % (ename, '、'.join(manual)))
 
-    # --check 门禁：只校验不写盘不改基线，凡存在待改写项（js bump / 入口同步）即失败退出
+    # --check 门禁：只校验不写盘不改基线，凡存在缺失 js 或待改写项（js bump / 入口同步）即失败退出
     if check:
+        if missing:
+            print('校验失败：%d 个 js 文件缺失（核对引用或恢复文件）：%s' % (len(missing), ', '.join(missing)))
+            for name in missing:
+                print('  ! 缺失 ' + name)
+            return 1
         if bumped or entry_synced:
             print('校验失败：%d 个 js 待 bump、%d 处入口待同步（运行 python tools/bump-versions.py 修复）' % (len(bumped), len(entry_synced)))
             for line in bumped + entry_synced:

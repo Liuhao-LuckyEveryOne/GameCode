@@ -1059,7 +1059,6 @@ function loadLayout(index) {
         if (gen !== solveGen) return; // 已换局/重开：过期结果丢弃
         optimalMoves = path ? path.length : 0;
     });
-    hintPath = null;
     const fromWon = state === 'won'; // 通关结算态换局需重新起播 BGM（进入 won 时已被 stop）
     if (state !== 'ready') state = 'playing';
     if (fromWon) SFX.bgm.start('klotski'); // 新局沿用进行中 BGM，不因换局入口停留在静音态
@@ -3050,7 +3049,11 @@ canvas.addEventListener('pointerup', e => {
     const n = Math.round(d.off);
     p.dragOffX = 0;
     p.dragOffY = 0;
-    setCursor('grab'); // 松手恢复悬停手型（随后 pointermove 会按所指刷新）
+    // 松手按当前指针所指刷新光标：与 pointermove 同口径（不在棋子上恢复 default），
+    // 防拖拽移出棋子后松手残留手型光标（不能依赖随后必有的 pointermove 纠正）
+    const upPos = toCanvasPos(e);
+    hoverPiece = state === 'playing' && !isPaused && !demoActive ? pieceAt(upPos.x, upPos.y) : null;
+    setCursor(hoverPiece ? 'grab' : 'default');
     if (n >= 1) {
         // 有效滑动：直接结算（跳过 trySlide 的可滑复查——off 已被 k 限制）；
         // 补间起点取松手时的视觉偏移位置，避免先弹回原格的视觉跳变
@@ -3237,8 +3240,9 @@ if (!Number.isNaN(savedLayoutIndex) && savedLayoutIndex >= 0 && savedLayoutIndex
 if (readDailyDone(dailyKey()) === 0) {
     layoutIndex = dailyIndex();
 }
-// 今日布局按钮打上「今」角标（日期→布局映射会话内恒定，标记一次即可）
-document.querySelectorAll('.layout-btn')[dailyIndex()].classList.add('daily');
+// 今日布局按钮打上「今」角标（日期→布局映射会话内恒定，标记一次即可；按钮缺失防御性跳过）
+const dailyBtn = document.querySelectorAll('.layout-btn')[dailyIndex()];
+if (dailyBtn) dailyBtn.classList.add('daily');
 // 先清空 HTML 默认高亮再点亮恢复项，避免上次选择非首个时出现双高亮
 document.querySelectorAll('.layout-btn').forEach(b => b.classList.remove('active'));
 document.querySelectorAll('.layout-btn')[layoutIndex].classList.add('active');

@@ -68,7 +68,9 @@
      无头运行：经 CDP 实时驱动直跑真实时钟（tools/verify_all.py 每 0.5s 轮询
      document.title 直至出现结论，测试页零特殊适配；曾用的 --virtual-time-budget
      + --dump-dom 管线在 Chrome 132+ 新无头 rAF 密集页结构性挂死，已弃用）；
-     本页与 tests/behavior.html 的 TIMEOUT_MS=9000 为两处需同步调整的看门狗阈值。
+     看门狗：本页 TIMEOUT_MS=120000 总看门狗超时强制出「冒烟失败」结论
+     （早于 verify_all 的 REAL_TIMEOUT_S=180 兜底）；tests/behavior.html 的
+     TIMEOUT_MS=9000 为逐轮看门狗——两阈值调整时须连同 tools/verify_all.py 一并核对。
      一键全量验证：python tools/verify_all.py（重建分享包 → 十八项静态检查 →
        无头冒烟 → 无头行为回归 → 计数口径单测；自动起随机端口临时服 / 探测本机
        Chrome 或 Edge）。
@@ -109,13 +111,15 @@
 <div id="stage"></div>
 <script src="../arcade-common.js?v=20261126-1"></script>
 <script src="../fx.js?v=20261120-2"></script>
-<script src="../ach-common.js?v=20261126-1"></script>
+<script src="../ach-common.js?v=20261126-2"></script>
 <script>
 'use strict';
 // ---------- 结果收集与呈现：RESULTS 同步暴露给 window 供自动化读取 ----------
 const RESULTS = [];          // 全部场景结果 { name, pass, detail }
 let restored = false;        // localStorage 恢复幂等标记（finally 与 pagehide 双路只恢复一次）
 let running = false;         // 防重复运行标记
+// 总看门狗阈值：超时强制出「冒烟失败」结论，须早于 tools/verify_all.py 的 REAL_TIMEOUT_S=180 兜底
+const TIMEOUT_MS = 120000;
 
 /**
  * 记录并渲染一条场景结果
@@ -1258,6 +1262,15 @@ async function main() {
     if (running) return;
     running = true;
     restored = false;
+    // 总看门狗：任一场景等待永不落定（Promise 永不 resolve/reject）时强制出「冒烟失败」结论，
+    // 防自动化轮询 document.title 永久空等；restoreLS 幂等，主流程事后收尾不会重复归还
+    const watchdog = setTimeout(() => {
+        record('全局看门狗', false, '总耗时超过 ' + Math.round(TIMEOUT_MS / 1000) + 's 仍未出结论，已强制收尾');
+        clearStage();
+        restoreLS();
+        finish();
+        running = false;
+    }, TIMEOUT_MS);
     document.getElementById('summary').textContent = '运行中…';
     document.getElementById('summary').className = 'pending';
     document.getElementById('results').innerHTML = '';
@@ -1302,6 +1315,7 @@ async function main() {
             ['S22 成就统计项守护（未注册项警告/拒入档）', s22_achTrackStatGuard],
         ]);
     } finally {
+        clearTimeout(watchdog); // 正常收尾撤哨：事后完成的场景不再触发强制出结论
         clearStage();
         restoreLS(); // 无论成败归还真实存档
         finish();

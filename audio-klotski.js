@@ -6,9 +6,14 @@
  * 内部约定键取用（仅面向分册，业务代码禁止调用下划线键）
  */
 (() => {
-    const tone = SFX._tone;
-    const noise = SFX._noise;
-    const arpeggio = SFX._arpeggio;
+    // 防御性降级：audio.js 未加载（脚本顺序错误/加载失败）时 SFX 与合成原语可能缺失，
+    // 引擎缺失整体跳过注册、原语以空函数兜底，保证本分册加载与音效调用不抛错中断游戏逻辑
+    const noop = () => {};
+    if (typeof SFX === 'undefined' || SFX === null) return;
+    const pickPrimitive = (key) => (typeof SFX[key] === 'function' ? SFX[key] : noop);
+    const tone = pickPrimitive('_tone');
+    const noise = pickPrimitive('_noise');
+    const arpeggio = pickPrimitive('_arpeggio');
     Object.assign(SFX, {
         /* ---------- 华容道音效 ---------- */
         /** 滑块滑动：低沉木质滑音，音高随一次滑过格数递增（连滑越远音越高昂） */

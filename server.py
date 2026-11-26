@@ -76,14 +76,22 @@ if __name__ == "__main__":
     # 两条绑定路径均仅监听本机回环（::1 / 127.0.0.1），开发服务不暴露到局域网/公网
     try:
         server = DualStackServer(("::1", PORT), NoCacheHandler)
+        host_tip = "localhost"  # 双栈绑定成功：localhost 通常优先解析 ::1，直达
     except OSError as e:
         # 端口被占用（如重复起服）时双栈与 IPv4 回退都绑不上，直接给友好提示退出而非裸抛堆栈
         if e.errno == errno.EADDRINUSE:
             print(f"启动失败：端口 {PORT} 已被占用——可能有另一个街机厅服务器正在运行，请先关闭它或更换 PORT")
             raise SystemExit(1) from e
-        # 无 IPv6 栈等场景回退纯 IPv4 环回
-        server = ThreadingHTTPServer(("127.0.0.1", PORT), NoCacheHandler)
-    print(f"街机厅开发服务器运行中：http://localhost:{PORT}/index.html （禁缓存模式，仅本机可访问）")
+        # 无 IPv6 栈等场景回退纯 IPv4 环回（回退自身失败同样按占用口径提示退出，不裸抛堆栈）
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", PORT), NoCacheHandler)
+        except OSError as e4:
+            if e4.errno == errno.EADDRINUSE:
+                print(f"启动失败：端口 {PORT} 已被占用——可能有另一个街机厅服务器正在运行，请先关闭它或更换 PORT")
+                raise SystemExit(1) from e4
+            raise
+        host_tip = "127.0.0.1"  # IPv4-only 回退：localhost 可能解析到不可达的 ::1，显式给出 127.0.0.1
+    print(f"街机厅开发服务器运行中：http://{host_tip}:{PORT}/index.html （禁缓存模式，仅本机可访问）")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

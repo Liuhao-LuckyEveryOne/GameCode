@@ -1330,7 +1330,7 @@ function loop(t) {
             } else {
                 // 空守卫与 keydown 同口径：正常流程 piece 恒存在（startGame / 快照恢复后 spawnPiece），
                 // 此处消除循环内隐式不变量，异常态直接返回（下一帧已由函数开头前置排程预约）
-                if (!piece) return;
+                if (!piece) { lastTime = t; return; } // 异常态同样刷新 lastTime，防滞留旧值令恢复后首帧 delta 暴涨
                 const deltaMs = Math.min(t - lastTime, 50); // 毫秒，与特效 dt 同按 50ms 封顶：卡顿/切页回帧不会连移 DAS、连发软降或瞬间击穿锁延迟
                 dropCounter += deltaMs;
                 if (dropCounter > dropInterval) {

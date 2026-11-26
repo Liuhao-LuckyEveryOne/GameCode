@@ -879,8 +879,9 @@ function moveSnake() {
         // 概率刷新一枚限时金苹果（场上没有时才判定），提供抢分目标
         if (!goldApple && Math.random() < GOLD_CHANCE) generateGoldApple(head);
 
-        // 蛇占满全场时无法生成食物，直接结算（通关，无演出）；传入新头格补排（此刻尚未入列）
+        // 蛇占满全场时无法生成食物，直接结算（通关，无演出）；传入新头格补排（排除尚未入列的新头占位）
         if (!generateFood(head)) {
+            snake.unshift(head); // 结算前先把新头入列：终局画面定格完整蛇形，而非差一格的半步姿态
             gameOver(true);
             return;
         }

@@ -111,9 +111,10 @@ const FS = (() => {
         return null;
     }
 
-    /** 标题原位锚点表：搬出前的 nextSibling 是节点引用，dataset 只能存字符串，故经 WeakMap 持有
-     *  （键为标题元素、弱引用不阻碍 GC）；"已搬出"状态判定则走 dataset.fsRef 字符串标志，
-     *  与 fx.js 的 canvas.dataset.dpr 同一存取风格，不再往 DOM 上挂自定义属性 */
+    /** 标题原位锚点表：存 { parent, next }（搬出前的父容器与 nextSibling 节点引用，
+     *  dataset 只能存字符串，故经 WeakMap 持有，键为标题元素、弱引用不阻碍 GC）；
+     *  "已搬出"状态判定则走 dataset.fsRef 字符串标志，与 fx.js 的 canvas.dataset.dpr
+     *  同一存取风格，不再往 DOM 上挂自定义属性 */
     const titleAnchorMap = new WeakMap();
 
     /**
@@ -126,7 +127,7 @@ const FS = (() => {
      */
     function detachTitleDom(title) {
         if (!title || title.dataset.fsRef) return;
-        titleAnchorMap.set(title, title.nextSibling); // 记住原位锚点，还原时插回
+        titleAnchorMap.set(title, { parent: title.parentNode, next: title.nextSibling }); // 记住原位父容器与锚点，还原时插回
         title.dataset.fsRef = '1'; // 已搬出标志：幂等判定与还原后清理统一走它
         if (title.parentNode) title.parentNode.removeChild(title);
         document.body.appendChild(title);
@@ -139,9 +140,11 @@ const FS = (() => {
      */
     function restoreTitleDom(title) {
         if (!title) return;
-        const anchor = titleAnchorMap.get(title);
-        if (anchor && anchor.parentNode) {
-            anchor.parentNode.insertBefore(title, anchor);
+        const rec = titleAnchorMap.get(title);
+        if (rec && rec.next && rec.next.parentNode) {
+            rec.next.parentNode.insertBefore(title, rec.next);
+        } else if (rec && rec.parent) {
+            rec.parent.appendChild(title); // 兜底：无 nextSibling（原为末节点）或锚点已被移除时，退回原父容器末尾，避免标题滞留 body
         }
         titleAnchorMap.delete(title);
         delete title.dataset.fsRef; // 清除已搬出标志（delete 而非置空串，避免残留空属性）
@@ -283,7 +286,7 @@ const FS = (() => {
             const gapToBtn = fsBtn.getBoundingClientRect().left - 8 - window.innerWidth / 2;
             // 标题未缩放布局半宽（offsetWidth 同样不受 transform 影响）
             const halfW = (title.offsetWidth || 0) / 2;
-            if (halfW > 0 && gapToBtn > 0) titleScale = Math.min(titleScale, gapToBtn / halfW);
+            if (halfW > 0 && gapToBtn > 0) titleScale = Math.max(0.1, Math.min(titleScale, gapToBtn / halfW)); // 下限与初始缩放一致：极窄视口下不被宽度约束压到不可见
         }
         // fixed 锚定视口：水平锚点视口中线、垂直锚点安全区中线，
         // 配合 translate(-50%,-50%) 围绕自身中心精确居中，scale 围绕中心不破坏居中。

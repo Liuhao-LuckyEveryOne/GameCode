@@ -193,8 +193,15 @@ function maybeFinish() {
 }
 
 window.addEventListener('message', (e) => {
+    // 同源 + 报文形状校验：上报方为本仓 iframe 子页（同源，file:// 下两侧 origin 同为 "null"），
+    // 拒绝跨源投递与畸形载荷（非对象 / 未知游戏名 / 计数非有限数 / fails 非数组），防脏数据混入统计
+    if (e.origin !== location.origin) return;
     const d = e.data;
-    if (!d || d.type !== 'arcade:behavior') return;
+    if (!d || typeof d !== 'object' || d.type !== 'arcade:behavior') return;
+    // 合法名按 GAMES 白名单校验（不能用 in results 判合法性：归账表惰性建键，
+    // 先于附加断言落账到达的首条报文必然未建键，用 in 判会将其误拒丢失）
+    if (typeof d.name !== 'string' || GAMES.indexOf(d.name) === -1) return;
+    if (!Number.isFinite(d.pass) || !Number.isFinite(d.total) || !Array.isArray(d.fails)) return;
     const cur = results[d.name];
     if (cur) {
         // 附加断言装置先行完成时已建占位统计，此处合并报文计数而非覆盖

@@ -721,6 +721,8 @@ def check_packages_problems():
       b. 包内条目必须逐个映射到仓库真实源文件且字节一致（源码改后忘同步即红）
       c. 条目不得越出仓库根（防临时产物 / 绝对路径混入）
       d. 不得存在期望之外的孤儿 zip（页面删除后遗留即红）
+      e. 包内条目必须涵盖仓库当前源文件清单（与 snapshot_items/tests_items 同口径）——
+         新增文件后未重跑同步时旧包缺条目，规则 b 探不到，此规则补盲区
 
     返回:
         失败明细列表（空列表 = 通过）
@@ -728,6 +730,19 @@ def check_packages_problems():
     pkg = ROOT / ".trae-html-share-packages"
     if not pkg.is_dir():
         return [".trae-html-share-packages 目录缺失（运行 tools/sync_packages.py 生成）"]
+    # 期望条目集（与 tools/sync_packages.py snapshot_items/tests_items 同口径，
+    # 不 import 耦合）：根页面包 = 根非点文件 + docs/ + tests/ 全部文件；tests 包 = tests/ 文件
+    root_items, tests_only = [], []
+    for f in sorted(ROOT.iterdir()):
+        if f.is_file() and not f.name.startswith("."):
+            root_items.append(f.name)
+    for d, sink in (("docs", root_items), ("tests", tests_only)):
+        base = ROOT / d
+        if base.is_dir():
+            for f in sorted(base.iterdir()):
+                if f.is_file():
+                    sink.append(f"{d}/{f.name}")
+    root_items.extend(tests_only)  # 全站快照 = 根文件 + docs + tests
     # 期望包集合：根页面 × 1 + tests 页面 × 1
     expected = {f"{p.name}.zip" for p in ROOT.glob("*.html")}
     expected |= {f"tests/{p.name}.zip" for p in (ROOT / "tests").glob("*.html")}
@@ -739,7 +754,12 @@ def check_packages_problems():
     for orphan in sorted(actual - expected):
         problems.append(f"多余分享包 {orphan}（对应页面已不存在，请删除后重跑 tools/sync_packages.py）")
     for rel in sorted(actual & expected):
+        need = set(tests_only) if rel.startswith("tests/") else set(root_items)
         with zipfile.ZipFile(pkg / rel) as zf:
+            names = set(zf.namelist())
+            # 规则 e：覆盖守卫——包内条目必须涵盖当前仓库期望清单
+            for miss_item in sorted(need - names):
+                problems.append(f"{rel} 缺少条目: {miss_item}（源文件新增后未同步，运行 tools/sync_packages.py）")
             for name in zf.namelist():
                 # 规则 c：越根条目（绝对路径 / 上跳）直接拒绝
                 if name.startswith(("/", "\\")) or ".." in Path(name).parts:
@@ -1402,6 +1422,20 @@ DIFF_DOC_SPECS = [
 _NUM_TOKEN_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
+def _strip_b_anchors(pattern):
+    """展示用剥离正则首尾 \\b 词边界锚。
+
+    不能用 strip：strip 按字符集反复剥除，会把锚名首尾的 b 字符一并吃掉
+    （如 \\bBASE\\b 展示成 ASE）。仅剥严格的首尾锚序列。
+
+    参数:
+        pattern: 形如 r"\\bNAME\\b" 的断言模式
+    返回:
+        去锚后的展示文本（无锚时原样返回）
+    """
+    return pattern.removeprefix(r"\b").removesuffix(r"\b")
+
+
 def check_diff_values_problems():
     """难度数值校验：文档提取数值逐个在游戏 js 原文断言存在，具名常量防重命名
 
@@ -1425,7 +1459,7 @@ def check_diff_values_problems():
         # 具名常量断言：与数值解耦，常量缺失独立报（锚跳过不影响此断言）
         for c in consts:
             if not re.search(c, js):
-                problems.append(f"{js_name} 未找到具名常量 {c.strip(chr(92) + chr(98))}（被重命名/删除即难度接线失守）")
+                problems.append(f"{js_name} 未找到具名常量 {_strip_b_anchors(c)}（被重命名/删除即难度接线失守）")
         nums = []
         for pattern, purpose in anchors:
             m = re.search(pattern, doc)
@@ -1484,7 +1518,7 @@ def check_stage_presence_problems():
     for js_name, anchor, purpose in STAGE_JS_SPECS:
         path = ROOT / js_name
         if path.is_file() and not re.search(anchor, path.read_text(encoding="utf-8")):
-            problems.append(f"{js_name} 缺少 {purpose}（{anchor.strip(chr(92) + chr(98))}）——演出接线断裂")
+            problems.append(f"{js_name} 缺少 {purpose}（{_strip_b_anchors(anchor)}）——演出接线断裂")
     return problems
 
 

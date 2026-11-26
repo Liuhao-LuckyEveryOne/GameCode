@@ -395,6 +395,12 @@ function resetPositions() {
         frightened: false,
         releaseTimer: 0
     }));
+    // 出生格恰为出口格的幽灵（blinky）无需出屋：直接进入 roam。
+    // 否则 mode='exit' 依赖"抵达出口格心"才转 roam，而出生格心的格心穿越
+    // 永不触发（stepEntity 首步迈向下一格），会先以 0.7 倍速绕迷宫一圈
+    for (const g of ghosts) {
+        if (g.cell.x === EXIT.x && g.cell.y === EXIT.y) g.mode = 'roam';
+    }
     phaseIndex = 0;
     phaseTimer = 0;
     SFX.bgm.setIntensity(false); // 重开/新关相位归散开：脱离追击危险分层（start 换曲已重置，此处兜底同一页面内重置）
@@ -574,7 +580,7 @@ function ghostTarget(g) {
 
 /**
  * 幽灵在格心选择下一步方向：
- * 排除反向；惊惧且处于 roam 时随机；否则选距目标最近的选项（经典平局序）；死路才允许掉头
+ * 排除反向；惊惧且处于 roam/exit 时随机；否则选距目标最近的选项（经典平局序）；死路才允许掉头
  * @param {object} g 幽灵实体
  */
 function ghostChooseDir(g) {
@@ -588,8 +594,8 @@ function ghostChooseDir(g) {
     let choice;
     if (opts.length === 0) {
         choice = OPPOSITE[g.dir]; // 死路（例如惊惧掉头后的特殊情况）允许反向
-    } else if (g.frightened && g.mode === 'roam') {
-        choice = opts[(Math.random() * opts.length) | 0]; // 惊惧时慌不择路
+    } else if (g.frightened && (g.mode === 'roam' || g.mode === 'exit')) {
+        choice = opts[(Math.random() * opts.length) | 0]; // 惊惧时慌不择路（出屋途中同样乱走，避免变蓝却定向直线的矛盾）
     } else {
         const target = ghostTarget(g);
         let best = Infinity;
@@ -617,8 +623,8 @@ function ghostSpeed(g) {
     const pacSpeed = Math.min(PAC_BASE_SPEED + (level - 1) * 5, PAC_MAX_SPEED);
     const base = Math.min(ghBase * Math.pow(1.05, level - 1), pacSpeed * 0.95);
     if (g.mode === 'eyes') return Math.min(ghBase * EYES_SPEED_MULT, EYES_SPEED_MAX); // 眼睛飞速回巢（超上限钳制防失控）
-    if (g.mode === 'exit') return ghBase * 0.7; // 出屋缓慢
-    if (g.frightened) return base * 0.55;       // 惊惧减速
+    if (g.frightened) return base * 0.55;       // 惊惧减速（置于 exit 之前：出屋途中惊惧幽灵同样减速，与变蓝可反杀的外观一致）
+    if (g.mode === 'exit') return ghBase * 0.7; // 出屋缓慢（未受惊时）
     return base;
 }
 

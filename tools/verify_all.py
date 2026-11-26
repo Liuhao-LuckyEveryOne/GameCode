@@ -28,8 +28,9 @@
     预算永不耗尽、dump 永不触发（157 实测结构性挂死），--timeout 兜底同样无效
   - 结论判据为「通过前缀 + p == t + t > 0」——场景数增减无需改本脚本；
     失败前缀标题（冒烟失败/行为失败）同样收作结论，明确报告失败明细
-  - 页内看门狗 TIMEOUT_MS=9000（tests/behavior.html）必先于本工具 REAL_TIMEOUT_S
-    到期出结论，真实时钟单步上限仅作异常兜底
+  - 页内看门狗必先于本工具 REAL_TIMEOUT_S 到期出结论（tests/behavior.html 逐轮
+    TIMEOUT_MS=9000、tests/smoke.html 总看门狗 TIMEOUT_MS=120000），
+    真实时钟单步上限仅作异常兜底
   - 本地静态服务器以随机空闲端口在守护线程内自起自停（不占用 8765 常服端口）
   - 浏览器以一次性临时 user-data-dir 启动，不触碰用户默认配置文件；收尾整树
     杀进程（chrome 含多个子进程），杜绝孤儿进程与端口残留
@@ -58,9 +59,9 @@ from urllib.parse import urlparse
 # ---------- 路径基准：项目根 = 本脚本目录的上一级 ----------
 ROOT = Path(__file__).resolve().parent.parent
 
-# 无头单步真实时钟硬超时（秒）：测试页自身 9s 看门狗必先到期出结论，此值仅为异常兜底
+# 无头单步真实时钟硬超时（秒）：测试页自身看门狗（behavior 9s / smoke 120s）必先到期出结论，此值仅为异常兜底
 REAL_TIMEOUT_S = 180
-# CDP 轮询 document.title 的间隔（秒）：远小于页内 9s 看门狗，结论出现即刻可收
+# CDP 轮询 document.title 的间隔（秒）：远小于页内看门狗阈值，结论出现即刻可收
 POLL_INTERVAL_S = 0.5
 # 等待 CDP 调试通道就绪（DevToolsActivePort 写出 + target 注册）的上限（秒）
 DEVTOOLS_WAIT_S = 15
@@ -394,17 +395,21 @@ def run_headless(browser, url):
         shutil.rmtree(profile_dir, ignore_errors=True)
 
 
-def judge_title(title):
+def judge_title(title, prefix=None):
     """按「通过前缀 + p == t + t > 0」判据裁决标题结论。
 
     参数:
         title: 测试页 document.title 文本
+        prefix: 期望的通过前缀（"冒烟通过"/"行为通过"）；None 表示任一通过前缀均可
     返回:
         (ok, passed, total) 三元组——ok 为判据结果；passed/total 为解析计数
         （标题不匹配时均为 -1）
     """
     m = TITLE_PASS_RE.match(title)
     if not m:
+        return False, -1, -1
+    # 前缀与当前步骤不符（如冒烟页跑到行为步的标题）同样判负，防跨页结论串位
+    if prefix is not None and m.group(1) != prefix:
         return False, -1, -1
     passed, total = int(m.group(2)), int(m.group(3))
     return passed == total and total > 0, passed, total
@@ -452,7 +457,7 @@ def main():
             if TITLE_FAIL_RE.match(title):
                 print(f"[FAIL] 测试页自报失败：「{title}」")
                 return 1
-            ok, passed, total = judge_title(title)
+            ok, passed, total = judge_title(title, prefix)
             if not ok:
                 print(f"[FAIL] 结论标题不符预期：「{title}」（期望「{prefix} p/t」且 p == t > 0）")
                 return 1
