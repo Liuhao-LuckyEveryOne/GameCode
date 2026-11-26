@@ -115,9 +115,8 @@ const FX = (() => {
      */
     function setFxLevel(idx, fromRemote, remoteMode) {
         // 幂等短路：请求档与当前模式一致时早退，不重开 200ms 粒子宽限期（子页广播
-        // 路径需按报文目标态比对，在下方应用分支内短路）
+        // 路径需按报文目标态比对，在下方应用分支内短路）；宽限期只在真实切档的应用点开启
         if (!(EMBED && fromRemote) && idx === fxMode) return;
-        graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
         // 子页角色：状态权威在大厅，不持久化、不本地广播
         if (EMBED) {
             if (!fromRemote) {
@@ -127,25 +126,31 @@ const FX = (() => {
             }
             // 广播静默应用：新版报文带 mode 字段——mode=3 表示父页自动档引擎裁决的实际档位，
             // 子页保持自动档记忆（fxMode=3）只跟随实际档位，面板「自动」高亮不失真；
-            // 旧版仅 idx 无 mode 字段，按固定档应用，两版兼容；
-            // 应用前对报文目标态幂等短路：与当前 (fxMode, fxLevel) 全等即早退，不重开宽限期
+            // 旧版仅 idx 无 mode 字段，按固定档应用，两版兼容。
+            // 先按报文形状解析目标态 (mode, level)：与当前 (fxMode, fxLevel) 全等即早退，
+            // 不重开宽限期；有实际变化才应用并开启 200ms 宽限期
+            let nextMode;
+            let nextLevel;
             if (remoteMode === 3) {
-                const lvl = (idx === 0 || idx === 1) ? idx : 2;
-                if (fxMode === 3 && fxLevel === lvl) return;
-                fxMode = 3; fxLevel = lvl;
+                nextMode = 3;
+                nextLevel = (idx === 0 || idx === 1) ? idx : 2;
             }
             else if (idx === 3) {
-                if (fxMode === 3 && fxLevel === 2) return;
-                fxMode = 3; fxLevel = 2;
+                nextMode = 3;
+                nextLevel = 2;
             }
             else {
-                const lvl = (idx === 0 || idx === 1) ? idx : 2;
-                if (fxMode === lvl && fxLevel === lvl) return;
-                fxMode = fxLevel = lvl;
+                nextMode = nextLevel = (idx === 0 || idx === 1) ? idx : 2;
             }
+            if (fxMode === nextMode && fxLevel === nextLevel) return;
+            fxMode = nextMode;
+            fxLevel = nextLevel;
+            graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
             return;
         }
         // 父页/独立运行角色：本地持久化 + 向页面内全部游戏 iframe 广播最新档位
+        // （能走到此处必为真实切档：入口幂等短路已排除同档请求）
+        graceUntil = performance.now() + 200; // 切档宽限：余粒自然衰减期，密度平滑过渡
         if (idx === 3) {
             fxMode = 3;
             fxLevel = 2; // 自动档开局按完整档试跑，引擎量出滚动帧率后再降级

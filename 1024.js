@@ -1753,8 +1753,10 @@ document.addEventListener('keydown', (event) => {
         case 'z': case 'Z': case 'u': case 'U': // 撤销上一步
             doUndo();
             break;
-        case 'r': case 'R': // 对局中立即重开（暂停态重开由 startGame 复位暂停）；结算面板下 R 与按钮/Enter 同效
-            if (playing || visiblePanel === gameOverScreen) startGame();
+        case 'r': case 'R': // 对局中立即重开（暂停态重开由 startGame 复位暂停）；熄灭演出期同样生效
+            // （startGame 首行清面板定时器，750ms 后的结算面板不会在重开后误弹；resetBoard 复位熄灭遮罩）；
+            // 结算面板下 R 与按钮/Enter 同效
+            if (playing || visiblePanel === gameOverScreen || deathFade) startGame();
             break;
         case 'p': case 'P': // 暂停/恢复（键位与 tetris/pinball 的 P 一致）
             if (playing) {

@@ -203,6 +203,9 @@
             display: block;
             /* 显式锁定 CSS 显示尺寸：snake.js 的 DPR 适配会把 width 属性放大为 CSS 尺寸×devicePixelRatio，
                若无此规则画布显示尺寸会跟随属性被撑大（布局爆裂），锁定后属性仅代表物理分辨率 */
+            /* 显式改回 content-box：clientWidth/Height 恒等于 500 逻辑坐标（抵消全局 border-box
+               与 3px 边框叠加的 6px 内容区偏差，网格 20 列×25 恰好铺满不裁切） */
+            box-sizing: content-box;
             width: 500px;
             height: 500px;
             border: 3px solid var(--neon-green);
@@ -471,7 +474,7 @@
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，成就墙开合/解锁/存档迁移由此驱动) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → gamepad.js / ach-trigger.js → snake.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
     <script src="arcade-common.js?v=20261126-1"></script>
     <script src="audio.js?v=20261125-1"></script>
-    <script src="fx.js?v=20261120-2"></script>
+    <script src="fx.js?v=20261126-1"></script>
     <script src="fullscreen.js?v=20261126-1"></script>
     <script src="ach-common.js?v=20261126-2"></script>
     <script src="snap-common.js?v=20261126-1"></script>
