@@ -2805,7 +2805,10 @@ document.addEventListener('mouseup', e => {
     if (e.button === 0) {
         mouseBtnDown = false; // 抬手释放鼠标按下标记
         // 仅当触屏无活跃触点时才停火：双通道并行时鼠标抬手只交还鼠标份额，
-        // 触屏按下的射击留给触屏全部抬起时的 pointerup 释放（与触屏侧 !mouseBtnDown 份额判定对称）
+        // 触屏按下的射击留给触屏全部抬起时的 pointerup 释放（与触屏侧 !mouseBtnDown 份额判定对称）。
+        // 已知取舍：份额释放依赖 mouseup 必达——极窄场景（拖出窗口由 OS 层释放）mouseup 可能
+        // 丢失致 mouseBtnDown 残留，表现为触屏全抬不停火；自愈链：窗口失焦由 handleFocusLoss
+        // 兜底清标记，任意后续左键 mouseup 即复位，不再加额外兜底监听（收益低于复杂度）
         if (!touchFireIds.size) mouseFire = false;
     }
 });

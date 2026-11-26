@@ -1390,7 +1390,13 @@ function build1024Snapshot() {
         statMerges,                                                  // 本局合并次数（宽容缺省按 0，旧格式兼容）
         statTime,                                                    // 本局累计游玩秒数（宽容缺省按 0，旧格式兼容）
         // 撤销栈镜像：只保留最近 HISTORY_MAX 步（slice 负索引从尾部截取），与内存栈及恢复端上限一致
-        history: history.slice(-HISTORY_MAX).map((h) => ({ board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true })),
+        // 镜像项同步携带统计回退字段（statMoves/statMerges/mergesTotal，settleMove push 时附带）：
+        // 序列化丢弃会让续玩后首次撤销弹出无镜像快照，跨会话「存档→刷新→撤销→再滑」仍可虚刷
+        // 累计统计；旧格式快照缺这三字段时恢复端按宽容缺省跳过回退（Number.isInteger 守卫）
+        history: history.slice(-HISTORY_MAX).map((h) => ({
+            board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true,
+            statMoves: h.statMoves, statMerges: h.statMerges, mergesTotal: h.mergesTotal
+        })),
     };
 }
 
@@ -1507,7 +1513,11 @@ function apply1024Snapshot(snap) {
     // 复用撤销重建逻辑应用棋面/分数/连击/新纪录标记，再补齐存档专属状态
     restoreBoard({ board: snap.board, score: snap.score, combo: snap.combo, isNewRecord: snap.isNewRecord });
     history.length = 0;
-    for (const h of historySaved) history.push({ board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true });
+    // 镜像项原样回拷（含统计回退字段；旧格式快照缺省为 undefined，restoreBoard 的宽容守卫会跳过）
+    for (const h of historySaved) history.push({
+        board: h.board, score: h.score, combo: h.combo, isNewRecord: h.isNewRecord === true,
+        statMoves: h.statMoves, statMerges: h.statMerges, mergesTotal: h.mergesTotal
+    });
     undosLeft = snap.undosLeft;
     hasWon = snap.hasWon;
     milestones = new Set(milestoneSaved);

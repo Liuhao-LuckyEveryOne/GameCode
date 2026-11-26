@@ -1579,7 +1579,9 @@ function drawFloatTexts() {
         const age = Math.max(1 - f.timer, 0); // 0 → 1 生命进度
         // 前 0.25 秒弹跳：字号从 1.8 倍缩至 1 倍，强调得分瞬间
         const scale = age < 0.25 ? 1.8 - (age / 0.25) * 0.8 : 1;
-        ctx.globalAlpha = Math.max(f.timer, 0);
+        // 透明度同步钳 0~1：timer 出生时可大于 1（1UP 1.6/水果 1.4），直接写入超有效域的
+        // alpha 会被画布规范忽略（保留上一绘制遗留值），钳制后生命周期恒随 timer 递减
+        ctx.globalAlpha = Math.min(Math.max(f.timer, 0), 1);
         ctx.fillStyle = '#7dffa4';
         ctx.font = `${Math.round(10 * scale)}px "Press Start 2P", monospace`;
         ctx.fillText(f.text, f.x, f.y - age * 18);

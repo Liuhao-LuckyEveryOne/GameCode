@@ -1110,6 +1110,9 @@ function validateSnakeSnapshot(snap) {
         let dy = Math.abs(cur.y - prev.y); if (dy > snap.rows / 2) dy = snap.rows - dy;
         if (dx + dy !== 1) return false; // 相邻节必须恰移一格且仅一轴
     }
+    // 方向枚举先行拒绝：脏 dir 不解引用 undefined，走统一的校验拒绝路径，
+    // 而非抛 TypeError 靠管线 try/catch 兜底（校验器自身承诺不抛错）
+    if (!DIR_VECTORS[snap.dir]) return false;
     // 方向方位：蛇头沿当前方向前进一格（含环绕取模）的落格不得是第二节，
     // 否则脏档续玩第一步即撞脖子死局，违背"恢复出的必为可继续游玩局面"的校验承诺
     const stepVec = DIR_VECTORS[snap.dir];
@@ -1131,14 +1134,16 @@ function validateSnakeSnapshot(snap) {
         seen.has(snap.food.x + ',' + snap.food.y)) {
         return false;
     }
-    // 分数与已吃食物数：有限非负整数
+    // 分数与已吃食物数：有限非负整数；金苹果计数同口径校验（build 自 v1 起恒写该字段，历史档全兼容）
     if (!Number.isFinite(snap.score) || !Number.isInteger(snap.score) || snap.score < 0 ||
-        !Number.isFinite(snap.eaten) || !Number.isInteger(snap.eaten) || snap.eaten < 0) {
+        !Number.isFinite(snap.eaten) || !Number.isInteger(snap.eaten) || snap.eaten < 0 ||
+        !Number.isInteger(snap.gold) || snap.gold < 0) {
         return false;
     }
-    // 蛇长一致性：局内不变式恒为"开局 3 节，每吃一个 +1"，eaten 与蛇长必须严格匹配，
-    // 否则按 eaten 推导的速度档位会与实际蛇长脱节（脏档防御）
-    if (snap.eaten !== snap.snake.length - 3) return false;
+    // 蛇长一致性：局内不变式恒为"开局 3 节，普通食物与金苹果各 +1 节"，即 蛇长 = 3 + eaten + gold
+    // （金苹果只增蛇长不增 eaten，只比 eaten 会把吃过金苹果的合法存档误判为脏档清掉）；
+    // 速度档位按 eaten 推导不受 gold 影响，口径与局内一致（脏档防御）
+    if (snap.eaten + snap.gold !== snap.snake.length - 3) return false;
     return true;
 }
 

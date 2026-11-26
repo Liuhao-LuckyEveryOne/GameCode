@@ -1962,7 +1962,7 @@
          拼接生成，index.js refreshTimeBadges/refreshBest 据此动态 getElementById 查找，改 id 须两侧同步 -->
     <div class="cards">
         <!-- 贪吃蛇卡片：预览 id=snakePreview，霓虹绿色 -->
-        <a class="card" href="snake.html?v=20261126-1" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
+        <a class="card" href="snake.html?v=20261126-2" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-snake" hidden></span>
             <canvas id="snakePreview" width="160" height="160"></canvas>
@@ -1982,7 +1982,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 吃豆人卡片：预览 id=pacPreview，霓虹黄色 -->
-        <a class="card" href="pac.html?v=20261126-1" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
+        <a class="card" href="pac.html?v=20261126-2" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pac" hidden></span>
             <canvas id="pacPreview" width="160" height="160"></canvas>
@@ -1992,7 +1992,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 小蜜蜂卡片：预览 id=beePreview，霓虹粉色 -->
-        <a class="card" href="bee.html?v=20261126-2" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
+        <a class="card" href="bee.html?v=20261126-3" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-bee" hidden></span>
             <canvas id="beePreview" width="160" height="160"></canvas>
@@ -2022,7 +2022,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 1024卡片：预览 id=n1024Preview，霓虹橙色（数字方块合并玩法，三档难度） -->
-        <a class="card" href="1024.html?v=20261126-1" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
+        <a class="card" href="1024.html?v=20261126-2" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-1024" hidden></span>
             <canvas id="n1024Preview" width="160" height="160"></canvas>
@@ -2083,7 +2083,7 @@
                 </div>
             </div>
             <div class="th-scroll"><div class="th-grid" id="thGrid"></div></div>
-            <div class="th-foot">集齐 <span id="thFootTotal"></span> 项成就点亮满环 · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂<button id="thReset" type="button" title="清除全部进度数据（成就/最高分/评级/每日挑战/进行中快照/游玩时长/上次游玩），声音、演出、难度等设置保留；点击后需再次点击确认">重置进度</button></div>
+            <div class="th-foot"><span id="thFootTotal">集齐全部成就点亮满环</span> · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂<button id="thReset" type="button" title="清除全部进度数据（成就/最高分/评级/每日挑战/进行中快照/游玩时长/上次游玩），声音、演出、难度等设置保留；点击后需再次点击确认">重置进度</button></div>
         </div>
     </div>
     <!-- 脚本加载顺序：arcade-common.js 提供 Arcade（跨帧消息统一来源守卫，其余公共库均依赖它）；
@@ -2104,6 +2104,6 @@
     <script src="audio-pinball.js?v=20261119-2"></script>
     <script src="audio-klotski.js?v=20261119-1"></script>
     <script src="audio-1024.js?v=20261118-1"></script>
-    <script src="index.js?v=20261126-1"></script>
+    <script src="index.js?v=20261126-2"></script>
 </body>
 </html>

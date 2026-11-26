@@ -423,16 +423,18 @@ let trophyClosedAt = -1e9;
     const rankHintEl = document.getElementById('thRankHint'); // 距更高阶称号差值提示
     const mileEl = document.getElementById('thMile');
     const gridEl = document.getElementById('thGrid');
+    const awtKeyEl = btn.querySelector('.awt-key'); // 入口按钮角标（展示全站成就总数）
+    const footLineEl = document.getElementById('thFootTotal'); // 页脚满环文案整句占位
     // 殿堂与渲染链子元素齐全性守卫：任一缺失即整段跳过，避免 render() 中途抛错
-    // 中断本 IIFE 后续接线，也不影响其余大厅功能
+    // 中断本 IIFE 后续接线，也不影响其余大厅功能（上方两个注入目标一并纳入守卫口径）
     if (!hall || !btn || !totalEl || !ringFg || !ringText || !rankEl
-        || !rankBarEl || !rankHintEl || !mileEl || !gridEl) return;
-    // 静态文案里的全站成就总数（入口按钮 title/角标、面板总数占位、页脚文案）统一由
+        || !rankBarEl || !rankHintEl || !mileEl || !gridEl || !awtKeyEl || !footLineEl) return;
+    // 静态文案里的全站成就总数（入口按钮 title/角标、面板总数占位、页脚整句）统一由
     // ACH_TOTAL 派生注入：ACH_DEFS 增删成就后只改定义表，消除 HTML 侧数字副本的手工同步
     btn.title = '全站成就殿堂（' + ACH_TOTAL + ' 项，快捷键 V）';
-    btn.querySelector('.awt-key').textContent = ACH_TOTAL;
+    awtKeyEl.textContent = ACH_TOTAL;
     totalEl.textContent = '-- / ' + ACH_TOTAL;
-    document.getElementById('thFootTotal').textContent = ACH_TOTAL;
+    footLineEl.textContent = '集齐 ' + ACH_TOTAL + ' 项成就点亮满环';
     const RING_LEN = 2 * Math.PI * 56; // 进度环周长（r=56 与 SVG 圆一致）
     /** 奖杯 SVG 图标（material emoji_events 24×24 路径，currentColor 继承行状态色：完成金亮/未完成暗灰） */
     const CUP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.73 1.75 2.29 3.05 4.11 3.4V19H9v2h6v-2h-2.5v-2.66c1.82-.35 3.38-1.65 4.11-3.4C18.08 12.63 20 10.55 20 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>';
