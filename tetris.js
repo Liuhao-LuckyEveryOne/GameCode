@@ -4,7 +4,7 @@
  * 机制：7-bag 随机袋 / Hold 暂存（C/Shift，每次落子限一次）/ NEXT 三块预览 /
  *      SRS 踢墙旋转（顺时针 ↑/W/X · 逆时针 Z）/ 触底锁定延迟 500ms（移动旋转可重置，上限 15 次）/
  *      DAS 150ms + ARR 30ms 自实现按键重复 / 危险分级警报音（冷却 2.5s）/
- *      连消 COMBO 加成（50×连击×等级）/ 累计成就八条（共享库 ach-common.js 驱动，V 键查看）/
+ *      连消 COMBO 加成（50×连击×等级）/ 累计成就十一条（共享库 ach-common.js 驱动，V 键查看）/
  *      T-Spin 判定（T 块旋入凹槽：四角占 3 + 最后动作为旋转，区分 FULL/MINI）/
  *      B2B 连锁（连续困难消行——Tetris 或 T-Spin 消行——得分 ×1.5）/
  *      All Clear 全消奖励（一次消行后棋盘清空追加高额奖励分）/
@@ -1769,6 +1769,10 @@ window.addEventListener('resize', () => {
     FX.setupCanvas(nextCanvas);
     FX.setupCanvas(holdCanvas);
     gridLayer.markDirty(); // 主画布物理分辨率/DPR 已变：下一帧重建静态网格层
+    // 设置 canvas.width 即使同值也会清空画布（HTML 规范行为）：主棋盘靠逐帧 draw() 自愈，
+    // Hold/Next 预览仅事件驱动重绘，须在此补绘，否则缩放一次后 Hold 空白到玩家下次按 Hold
+    drawHold();
+    drawNext();
 });
 
 // ---------- 初始化 ----------

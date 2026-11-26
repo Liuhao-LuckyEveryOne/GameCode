@@ -4,6 +4,7 @@
  * 全站七游戏成就逻辑的唯一实现（v3.0 起由各游戏 js 内的七份同构实现下沉而来）：
  *   存档装载与三代格式迁移（v1 数组 → v2 { unlocked, best }）
  *   → trackRunStat 历史最佳追踪（只增不减，超越标脏防抖落盘；每次上报均扫描挂靠成就）
+ *   → adjustBest 撤销回退通道（只承接负增量并钳制不低于 0，防抖落盘同一通道）
  *   → unlockAchievement 幂等解锁（toast + 解锁音 + 史诗/传说金色烟花）
  *   → 成就墙渲染（卡片网格 canonical 标记 + 完成度补间）
  *   → 开合控制（V 开 / Esc 关 / 遮罩与关闭按钮 / 主循环查询 isOpen）
@@ -351,6 +352,12 @@
                 console.warn('[Ach] trackRunStat 未注册统计项：' + stat);
                 return;
             }
+            // 非有限数值（NaN/±Infinity）拒绝入档：JSON.stringify 会把 Infinity 序列化为
+            // null 落盘，回读后 best 损坏（与 fx.js 数字入档的 isFinite 防御同口径）
+            if (!Number.isFinite(value)) {
+                console.warn('[Ach] trackRunStat 非有限数值：' + stat);
+                return;
+            }
             if (value > store.best[stat]) { // 只增不减：超越旧 best 才标脏（防抖统一落盘）
                 store.best[stat] = value;
                 bestDirty = true;
@@ -360,6 +367,25 @@
             for (const a of defs) {
                 if (a.stat === stat && value >= a.target) unlock(a.id);
             }
+        }
+
+        /* ---- 历史最佳回退 ---- */
+        /**
+         * 回退一项历史最佳（撤销等场景的减法通道）：只承接负增量并钳制不低于 0，
+         * 与 trackRunStat 同样标脏防抖落盘；不做解锁扫描——成就一经达成不因回退撤销，
+         * 回退后再次真实推进时经 trackRunStat 照常判定解锁
+         * @param {string} stat 统计项键（见游戏 bestDefaults）
+         * @param {number} delta 负数增量（撤销回退传差额负值；非有限值/非负值忽略）
+         */
+        function adjustBest(stat, delta) {
+            if (!hasOwn(store.best, stat)) {
+                console.warn('[Ach] adjustBest 未注册统计项：' + stat);
+                return;
+            }
+            if (!Number.isFinite(delta) || delta >= 0) return; // 仅承接负回退，正向推进走 trackRunStat
+            store.best[stat] = Math.max(0, (store.best[stat] || 0) + delta);
+            bestDirty = true;
+            scheduleBestFlush();
         }
 
         /* ---- 成就墙渲染 ---- */
@@ -476,6 +502,7 @@
             close: close,
             isOpen: () => state.open,
             trackRunStat: trackRunStat,
+            adjustBest: adjustBest,
             unlock: unlock,
             getStore: () => store,
             renderWall: renderWall

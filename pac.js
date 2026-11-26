@@ -9,7 +9,7 @@
  *      幽灵眼睛回巢拖尾 / 吃豆人移动残影 / 能量豆倒计时环（剩余反杀时间）/
  *      得分飘字弹跳放大
  * 体验升级：迷宫离屏缓存 + DPR 高清适配 / 左右穿墙隧道 /
- *      水果奖励（70/170 颗豆触发） / 幽灵随关提速 / 1UP 奖励命 /
+ *      水果奖励（70/140 颗豆触发） / 幽灵随关提速 / 1UP 奖励命 /
  *      反杀连吃音效 / BGM 接入 / 破纪录庆祝 / 精致 DOM 成就墙（共享库 ach-common.js 驱动，8 条成就四档稀有度）/
  *      CRT 开关机音 / prefers-reduced-motion 动效降级
  * ==================================================================== */
@@ -111,8 +111,9 @@ const READY_DURATION = 1.5;
 const FLICKER_DURATION = 2;
 /** 惊惧/清版闪烁间隔（毫秒）：reduced-motion 用户降低闪烁频率以减轻视觉刺激 */
 const FLICKER_MS = FX.prefersReduced ? 320 : 150;
-/** 水果出现所需的累计吃豆数（每关两次：首次与再次达到） */
-const FRUIT_DOT_GOALS = [70, 170];
+/** 水果出现所需的累计吃豆数（每关两次：首次 70 颗、再次累计 140 颗；本迷宫普通豆仅 168 颗，
+ *  经典街机 70/170 的第二档在本布局下不可达（168 < 170），故第二档取 140——与首档同为 70 颗间隔） */
+const FRUIT_DOT_GOALS = [70, 140];
 /** 水果存活时长（秒） */
 const FRUIT_LIFETIME = 9;
 /** 水果最后闪烁提醒的时长（秒） */
@@ -229,7 +230,7 @@ let invincibleMode = false;
 let ghostCombo = 0;
 /** waka 音交替标志（吃豆音高低交替，模拟经典 waka-waka） */
 let wakaAlt = false;
-/** 本局累计吃豆数（不含能量豆，驱动水果 70/170 触发） */
+/** 本局累计吃豆数（不含能量豆，驱动水果 70/140 触发） */
 let pacDotsEaten = 0;
 /** 水果已触发次数索引（对应 FRUIT_DOT_GOALS，取值 0/1/2，2 表示本关两次均已出过） */
 let fruitSpawned = 0;
@@ -593,7 +594,9 @@ function ghostChooseDir(g) {
         const target = ghostTarget(g);
         let best = Infinity;
         for (const d of opts) {
-            const nx = g.cell.x + DIRS[d].x;
+            // 候选格列号先按隧道规则取模折回对侧再算距离：隧道行跨界选路时
+            // 未折返会把对岸近邻算成横穿全图的远格，幽灵在隧道口选向失准
+            const nx = ((g.cell.x + DIRS[d].x) % COLS + COLS) % COLS;
             const ny = g.cell.y + DIRS[d].y;
             const dd = (nx - target.x) * (nx - target.x) + (ny - target.y) * (ny - target.y);
             if (dd < best) { best = dd; choice = d; }
@@ -717,7 +720,7 @@ function buildPacSnapshot() {
         ghostCombo,                    // 惊惧连锁计数（200/400/800/1600 分档）
         phaseIndex,                    // scatter/chase 相位索引
         phaseTimer,                    // 当前相位已持续时间（秒）
-        pacDotsEaten,                  // 本关累计吃豆数（驱动水果 70/170 触发）
+        pacDotsEaten,                  // 本关累计吃豆数（驱动水果 70/140 触发）
         fruitSpawned,                  // 水果已触发次数（0/1/2）
         fruit: fruit ? { timer: fruit.timer } : null, // 场上水果剩余存活时间
         pac: {                         // 吃豆人：像素坐标 / 所在格 / 方向 / 预输入队列 / 停止标志
@@ -1571,7 +1574,9 @@ function drawPacTrails() {
 function drawFloatTexts() {
     ctx.textAlign = 'center';
     for (const f of floatTexts) {
-        const age = 1 - f.timer; // 0 → 1 生命进度
+        // 生命进度钳 0 起（timer 初始可大于 1，如 1UP 飘字 1.6）：否则出生瞬间
+        // age 为负，弹跳字号越界放大、上浮位移反向向下
+        const age = Math.max(1 - f.timer, 0); // 0 → 1 生命进度
         // 前 0.25 秒弹跳：字号从 1.8 倍缩至 1 倍，强调得分瞬间
         const scale = age < 0.25 ? 1.8 - (age / 0.25) * 0.8 : 1;
         ctx.globalAlpha = Math.max(f.timer, 0);
@@ -1773,7 +1778,7 @@ function trackCumulativeStat(stat, delta) {
 }
 
 /**
- * 检查水果出场条件：本关吃豆数达到 70 / 170 颗时在迷宫中央刷新水果
+ * 检查水果出场条件：本关吃豆数达到 70 / 140 颗时在迷宫中央刷新水果
  * （fruitSpawned 记录已触发次数，每关在 resetPositions 中清零）
  */
 function checkFruitSpawn() {

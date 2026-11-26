@@ -546,7 +546,8 @@ function addScore(points, refreshHud = true) {
         // 此前无纪录的新手局不庆祝，结算面板另有正式的新纪录播报）
         if (!celebratedRecord && prevBest > 0) {
             celebratedRecord = true;
-            addFloatText('NEW RECORD!', 250, 230, '#ffd23e', 18);
+            // 按棋盘比例居中定位（0.5/0.46 与原硬编码 250/230 在 500×500 棋盘下等价，三档难度通用）
+            addFloatText('NEW RECORD!', BOARD_W * 0.5, BOARD_H * 0.46, '#ffd23e', 18);
             flash = { t: 0, dur: 0.5, color: '#ffd23e' };
             FX.recordBurst(); // 全屏金色烟花彩带庆祝（fx.js 自包含覆盖层，减弱动效时内部跳过）
             SFX.n1024Record();
@@ -764,8 +765,18 @@ function settleMove(dir, prevBoard, prevScore, prevCombo, prevIsNewRecord, step)
         flash = { t: 0, dur: 0.35, color: '#35e0ff' };
         SFX.n1024Multi(step.mergesThisMove);
     }
-    // 撤销快照入栈（保存本步之前的状态）并刷新撤销按钮可用态
-    history.push({ board: prevBoard, score: prevScore, combo: prevCombo, isNewRecord: prevIsNewRecord });
+    // 撤销快照入栈（保存本步之前的状态）并刷新撤销按钮可用态；附带三份统计镜像
+    // （本步上方累加后的统计回推本步之前的值），撤销经 restoreBoard 精确回退本局
+    // 步数/合并数与跨局累计合并数，杜绝「滑动→撤销→再滑」循环净增虚刷合并/步数成就
+    history.push({
+        board: prevBoard,
+        score: prevScore,
+        combo: prevCombo,
+        isNewRecord: prevIsNewRecord,
+        statMoves: statMoves - 1, // settleMove 开头已先行 statMoves++，此处回推一步
+        statMerges: statMerges - step.mergesThisMove,
+        mergesTotal: (Ach.getStore().best.mergesTotal || 0) - step.mergesThisMove, // trackCumulativeStat 已先行累加，回推本步增量
+    });
     if (history.length > HISTORY_MAX) history.shift(); // 超限从队头丢弃最旧快照：内存栈与存档镜像共用同一上限，长局内存不再无界累积
     updateUndoHud();
     updateGoalHud(); // 合并可能抬升最大方块，同步推进目标进度条
@@ -1285,8 +1296,11 @@ function doUndo() {
     SFX.n1024Undo(); // 两段下滑回溯音，时光倒流质感
 }
 
-/** 依据快照重建棋盘（撤销/存档恢复共用）：按值矩阵重建方块并恢复分数、连击与新纪录标记
- *  @param {{board: number[][], score: number, combo: number, isNewRecord?: boolean}} snap 撤销快照 */
+/** 依据快照重建棋盘（撤销/存档恢复共用）：按值矩阵重建方块并恢复分数、连击与新纪录标记；
+ *  撤销快照附带的统计镜像字段存在时一并回退本局步数/合并数与跨局累计合并数，
+ *  存档恢复路径缺省跳过（其统计由 apply1024Snapshot 按存档字段另行恢复）
+ *  @param {{board: number[][], score: number, combo: number, isNewRecord?: boolean,
+ *           statMoves?: number, statMerges?: number, mergesTotal?: number}} snap 撤销快照 */
 function restoreBoard(snap) {
     tiles.clear();
     ghosts.length = 0;
@@ -1319,6 +1333,14 @@ function restoreBoard(snap) {
     score = snap.score;
     combo = snap.combo;
     isNewRecord = snap.isNewRecord === true; // 新纪录标记随回退同步：旧格式快照缺字段时按 false 保守处理
+    // 统计镜像回退（仅撤销快照附带字段时）：存档恢复路径构造的快照无这些字段，
+    // 保持当前值不动（其统计由 apply1024Snapshot 按存档字段另行恢复）；累计合并数
+    // 差额经共享库 adjustBest 回写 best（钳制不低于 0，防抖落盘与正向推进同一通道）
+    if (Number.isInteger(snap.statMoves)) statMoves = Math.max(0, snap.statMoves);
+    if (Number.isInteger(snap.statMerges)) statMerges = Math.max(0, snap.statMerges);
+    if (Number.isInteger(snap.mergesTotal)) {
+        Ach.adjustBest('mergesTotal', snap.mergesTotal - (Ach.getStore().best.mergesTotal || 0));
+    }
     updateHud();
     updateComboHud();
     updateUndoHud();
@@ -1478,6 +1500,8 @@ function apply1024Snapshot(snap) {
     dailyMode = dailySameDay && !Arcade.loadRaw(dailyKey()); // 存储不可用时视为未达成
     if (dailyMode) {
         dailyDateKey = snap.dailyDate; // 同步归属日缓存：达成落盘与续存快照保持开局日口径
+        // 种子重建但不回放历史已消耗的次数：续玩局的后续新块序列与同日不间断新开局
+        // 不同，属预期——确定性承诺仅覆盖「同一天的新开局彼此一致」，续玩局不保证
         dailyRng = mulberry32(dateSeed(snap.dailyDate));
     }
     // 复用撤销重建逻辑应用棋面/分数/连击/新纪录标记，再补齐存档专属状态

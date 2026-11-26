@@ -87,7 +87,7 @@ let isNewRecord = false;
 /** 历史最高分（localStorage 持久化） */
 // 隐私模式 / 禁用站点数据时由 Arcade.loadRaw 静默兜底（返回 null 回退默认 0），不中断初始化
 let highScore = parseInt(Arcade.loadRaw(KEYS.HIGH_SCORE) || '0', 10);
-if (Number.isNaN(highScore)) highScore = 0; // 脏数据兜底（与难度读取的 isNaN 防御同口径）：非数字串 parseInt 得 NaN，否则永不破纪录且 HUD 显示 HI NaN
+if (!Number.isFinite(highScore) || highScore < 0) highScore = 0; // 脏数据兜底（与难度读取的防御同口径）：非数字串 parseInt 得 NaN 永不破纪录且 HUD 显示 HI NaN，负数档首吃即误触"破纪录"庆祝
 
 /* ===================== 特效状态 ===================== */
 
@@ -378,62 +378,70 @@ function initGame() {
 }
 
 /**
- * 随机生成食物：枚举全部蛇身之外的空闲格子并随机取其一
- * （避免随机重试在蛇身极长时反复碰撞导致效率低下或递归栈溢出）
+ * 收集棋盘上蛇身与给定占用格之外的全部空闲格并随机取其一
+ * （枚举而非随机重试：蛇身极长时避免反复碰撞效率低下或递归栈溢出）
+ * @param {Array<{x: number, y: number}>} excludeCells 需额外排除的格子
+ *        （食物/金苹果互斥占格、进食 tick 尚未入列的新蛇头格等；空位项由调用方过滤）
+ * @returns {{x: number, y: number}|null} 随机空闲格；null 表示无可生成位置
+ */
+function pickRandomFreeCell(excludeCells) {
+    const occupied = new Set(snake.map(s => `${s.x},${s.y}`));
+    for (const cell of excludeCells) occupied.add(`${cell.x},${cell.y}`);
+    const freeCells = [];
+    for (let x = 0; x < boardCols; x++) {
+        for (let y = 0; y < boardRows; y++) {
+            if (!occupied.has(`${x},${y}`)) {
+                freeCells.push({ x, y });
+            }
+        }
+    }
+    return freeCells.length ? freeCells[Math.floor(Math.random() * freeCells.length)] : null;
+}
+
+/**
+ * 随机生成食物：取蛇身/金苹果/额外排除格之外的随机空闲格
  * @param {{x: number, y: number}} [extraCell] 额外需排除的格子（进食 tick 传入即将入列的新蛇头：
  *        此刻蛇头尚未 unshift 入列，不排除会把食物生成在新头格下，满盘前一格误判空闲致通关不可达）
  * @returns {boolean} 是否成功放置；false 表示蛇已占满全场（无处可生成，通关）
  */
 function generateFood(extraCell) {
-    const cols = boardCols;
-    const rows = boardRows;
-
-    // 收集所有蛇身之外的空闲格子，随机取其一（避免递归重试导致的栈溢出）
-    const occupied = new Set(snake.map(s => `${s.x},${s.y}`));
-    if (extraCell) occupied.add(`${extraCell.x},${extraCell.y}`); // 新头未入列时补排（进食 tick 专用）
-    if (goldApple) occupied.add(`${goldApple.x},${goldApple.y}`); // 金苹果占格：避免普通食物生成其下被遮挡
-    const freeCells = [];
-    for (let x = 0; x < cols; x++) {
-        for (let y = 0; y < rows; y++) {
-            if (!occupied.has(`${x},${y}`)) {
-                freeCells.push({ x, y });
-            }
-        }
-    }
-
-    if (freeCells.length === 0) return false;
-    food = freeCells[Math.floor(Math.random() * freeCells.length)];
+    const cell = pickRandomFreeCell([goldApple, extraCell].filter(Boolean));
+    if (!cell) return false;
+    food = cell;
     foodAge = 0; // 重置食物出生计时，驱动缩放弹入动画
     return true;
 }
 
 /**
- * 随机生成限时金苹果：在蛇身与普通食物之外的空闲格随机取其一
+ * 随机生成限时金苹果：取蛇身/普通食物/额外排除格之外的随机空闲格
  * @param {{x: number, y: number}} [extraCell] 额外需排除的格子（进食 tick 传入即将入列的新蛇头：
  *        此刻蛇头尚未 unshift 入列，不排除会把金苹果生成在新头格下，下一格即被蛇身遮挡）
  * @returns {boolean} 是否成功放置（棋盘几乎没有空格时可能失败，静默放弃即可）
  */
 function generateGoldApple(extraCell) {
-    const cols = boardCols;
-    const rows = boardRows;
-
-    // 空闲格 = 蛇身 + 普通食物 + 额外排除格之外的全部格子
-    const occupied = new Set(snake.map(s => `${s.x},${s.y}`));
-    occupied.add(`${food.x},${food.y}`);
-    if (extraCell) occupied.add(`${extraCell.x},${extraCell.y}`); // 新头未入列时补排（进食 tick 专用）
-    const freeCells = [];
-    for (let x = 0; x < cols; x++) {
-        for (let y = 0; y < rows; y++) {
-            if (!occupied.has(`${x},${y}`)) {
-                freeCells.push({ x, y });
-            }
-        }
-    }
-
-    if (freeCells.length === 0) return false;
-    goldApple = { ...freeCells[Math.floor(Math.random() * freeCells.length)], t: 0 };
+    const cell = pickRandomFreeCell([food, extraCell].filter(Boolean));
+    if (!cell) return false;
+    goldApple = { ...cell, t: 0 };
     SFX.snakeSpawn4(); // 金苹果登场：稀有食物亮金双音（稀有物出场的专属提示）
     return true;
+}
+
+/**
+ * 进食反馈公共序列：吃点迸溅碎屑 + 得分飘字 + 蛇头闪白 + 40ms 卡帧顿挫
+ * （普通食物与金苹果共用同一"吃到"瞬间反馈，差异仅粒子量/初速与飘字颜色）
+ * @param {number} cx 吃点像素 x
+ * @param {number} cy 吃点像素 y
+ * @param {string} color 迸溅碎屑颜色
+ * @param {string} floatText 飘字文本（如 "+12"）
+ * @param {string} [floatColor] 飘字颜色（缺省 undefined 走默认色；金苹果/连击加成传金色）
+ * @param {number} [count=14] 粒子数量（金苹果加码到 20）
+ * @param {number} [speed] 粒子初速（金苹果 170；缺省走 spawnBurst 默认 130）
+ */
+function spawnEatFeedback(cx, cy, color, floatText, floatColor, count, speed) {
+    spawnBurst(cx, cy, color, count, speed);
+    floatTexts.push({ x: cx, y: cy - 6, text: floatText, t: 0, color: floatColor });
+    headFlash = 0.15;
+    FX.hitstop(40); // 40ms 卡帧顿挫，强化进食手感（FX 内部对 prefersReduced 自动跳过）
 }
 
 /**
@@ -825,13 +833,10 @@ function moveSnake() {
         FX.tweenNumber(scoreElement, score, 128, v => 'SCORE ' + v); // 分数滚动补间：从当前显示值平滑滚到新值（reduced-motion 自动降级直写）
         SFX.snakeGolden(); // 金苹果捕获：稀有食物专属上行三连音（区别于普通吃食的"啵"，匹配 5 倍高分的高光感）
 
-        // 金色迸溅 + 高分飘字 + 蛇头闪白 + 吃食卡帧
+        // 金色迸溅 + 高分飘字 + 蛇头闪白 + 吃食卡帧（公共序列，粒子量/初速按金苹果档位加码）
         const gx = goldApple.x * gridSize + gridSize / 2;
         const gy = goldApple.y * gridSize + gridSize / 2;
-        spawnBurst(gx, gy, '#ffd23e', 20, 170);
-        floatTexts.push({ x: gx, y: gy - 6, text: `+${pts}`, t: 0, color: '#ffd23e' });
-        headFlash = 0.15;
-        FX.hitstop(40); // 40ms 卡帧顿挫，强化进食手感（FX 内部对 prefersReduced 自动跳过）
+        spawnEatFeedback(gx, gy, '#ffd23e', `+${pts}`, '#ffd23e', 20, 170);
         flashTime = 0.25;   // 金苹果捕获全屏金闪
         flashColor = '255,210,62';
         goldApple = null;
@@ -852,12 +857,9 @@ function moveSnake() {
         FX.tweenNumber(scoreElement, score, 128, v => 'SCORE ' + v); // 分数滚动补间：从当前显示值平滑滚到新值（reduced-motion 自动降级直写）
         SFX.snakeEat();
 
-        // 在食物原位迸溅碎屑 + 弹出得分飘字 + 蛇头闪白 + 吃食卡帧（强化"吃到"的瞬间反馈）
-        spawnBurst(fx, fy, '#ff3ea5', 14);
+        // 在食物原位迸溅碎屑 + 弹出得分飘字 + 蛇头闪白 + 吃食卡帧（公共序列，强化"吃到"的瞬间反馈）
         // 连击加成生效（实际得分高于基础分）时飘字转金色提示
-        floatTexts.push({ x: fx, y: fy - 6, text: `+${pts}`, t: 0, color: pts > foodPoints ? '#ffd23e' : undefined });
-        headFlash = 0.15;
-        FX.hitstop(40); // 40ms 卡帧顿挫，强化进食手感（FX 内部对 prefersReduced 自动跳过）
+        spawnEatFeedback(fx, fy, '#ff3ea5', `+${pts}`, pts > foodPoints ? '#ffd23e' : undefined, 14);
 
         // 成长节奏：每吃 SPEED_STEP 个提速一档（×0.93，下限 SPEED_MIN）
         // （rAF 累加器下一帧自动按新间隔补帧，无需重启任何定时器）
@@ -1017,6 +1019,7 @@ function startGame() {
  */
 function gameOver(isWin) {
     isRunning = false; // 停摆逻辑 tick（updateLogic 检测后不再累加）
+    goldApple = null; // 结算后金苹果不再倒计时：防止面板弹出后最长 5 秒内突然播放消失音（SFX.snakeMiss）
     snapPipe.clear(); // 本局已结束：清除进行中的进度快照（快照仅服务于未打完的局；清除失败不中断结算流程）
     gameOverTitleElement.textContent = isWin ? '通关！' : '游戏结束'; // 通关与普通死亡共用面板，仅标题区分
     finalScoreElement.textContent = score;
@@ -1099,6 +1102,20 @@ function validateSnakeSnapshot(snap) {
         if (seen.has(key)) return false; // 蛇身存在重叠格属于非法状态
         seen.add(key);
     }
+    // 蛇身几何一致性：相邻两节须恰为一格环绕距离（无敌模式穿墙时头可跨边界瞬移，差值需环绕折算）；
+    // 破碎蛇身（脏档）会导致渲染错乱且移动判定不可预测，直接拒绝
+    for (let i = 1; i < snap.snake.length; i++) {
+        const prev = snap.snake[i - 1], cur = snap.snake[i];
+        let dx = Math.abs(cur.x - prev.x); if (dx > snap.cols / 2) dx = snap.cols - dx; // 环绕折算：差值超半边长视为跨边界一步
+        let dy = Math.abs(cur.y - prev.y); if (dy > snap.rows / 2) dy = snap.rows - dy;
+        if (dx + dy !== 1) return false; // 相邻节必须恰移一格且仅一轴
+    }
+    // 方向方位：蛇头沿当前方向前进一格（含环绕取模）的落格不得是第二节，
+    // 否则脏档续玩第一步即撞脖子死局，违背"恢复出的必为可继续游玩局面"的校验承诺
+    const stepVec = DIR_VECTORS[snap.dir];
+    const nextX = (snap.snake[0].x + stepVec.x + snap.cols) % snap.cols;
+    const nextY = (snap.snake[0].y + stepVec.y + snap.rows) % snap.rows;
+    if (nextX === snap.snake[1].x && nextY === snap.snake[1].y) return false;
     // 方向：当前方向须为合法枚举；预输入队列为数组时逐项校验，旧档缺该字段时回退校验单字段 nextDir
     const dirs = ['up', 'down', 'left', 'right'];
     if (!dirs.includes(snap.dir) ||
@@ -1119,6 +1136,9 @@ function validateSnakeSnapshot(snap) {
         !Number.isFinite(snap.eaten) || !Number.isInteger(snap.eaten) || snap.eaten < 0) {
         return false;
     }
+    // 蛇长一致性：局内不变式恒为"开局 3 节，每吃一个 +1"，eaten 与蛇长必须严格匹配，
+    // 否则按 eaten 推导的速度档位会与实际蛇长脱节（脏档防御）
+    if (snap.eaten !== snap.snake.length - 3) return false;
     return true;
 }
 

@@ -144,6 +144,7 @@
         let dead = false;
         Arcade.onTrustedMessage((e) => {
             if (dead) return; // 已解绑：短路空转，不再保存/回执
+            if (e.source !== window.parent) return; // 仅信任直接父页（与 audio/fx/fullscreen 三处子页守卫同口径）：file:// 下兄弟 iframe origin 同为 'null'，缺此校验可被伪造保存指令
             if (e.data && e.data.type === Arcade.MSG.SAVE) {
                 // 存档回执（ACK）：快照已落盘（保存/清除分支均算），父页收到后才摘除 iframe；
                 // save 回报 false（canSave/build 抛错，实际未写盘）时静默不发，父页走既有超时兜底

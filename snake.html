@@ -4,8 +4,10 @@
      结构：左上角成就墙入口 → 右上角固定按钮（音效开关 / 全屏）→ 标题 →
           主布局（游戏容器：500×500 画布 + 开始/暂停/结束三块遮罩 +
           右侧 STATS 记分面板 + KEYS 键位说明栏）
-     脚本：audio.js 公共音效库 / fx.js 画布与特效库 / fullscreen.js 全屏控制 /
-          ach-common.js 共享成就系统 / gamepad.js 手柄支持 / snake.js 游戏逻辑
+     脚本：arcade-common.js 安全存储公共库 / audio.js 公共音效库 / fx.js 画布与特效库 /
+          fullscreen.js 全屏控制 / ach-common.js 共享成就系统 / snap-common.js 进度快照管线 /
+          pause-common.js 共享暂停逻辑 / audio-snake.js 贪吃蛇音效包 / gamepad.js 手柄支持 /
+          snake.js 游戏逻辑
      共享：ach-trigger.css / ach-trigger.js 金杯成就墙触发器（点击等效按 V 开合成就墙）
      ================================================================== -->
 <html lang="zh-CN">
@@ -467,17 +469,17 @@
     <!-- ===================== 成就墙：DOM 全屏覆盖层（V/Esc 开合，打开时游戏逻辑冻结） ===================== -->
     <div id="achWall" hidden></div>
     <!-- 脚本加载顺序：arcade-common.js(Arcade 统一守卫/存档) → audio.js(SFX) fx.js(FX) → fullscreen.js(FS，仅供本页全屏按钮使用) → ach-common.js(共享成就系统，成就墙开合/解锁/存档迁移由此驱动) → snap-common.js(进度快照公共库) → pause-common.js(共享暂停引擎) → gamepad.js / ach-trigger.js → snake.js 游戏逻辑（依赖 audio.js 的 SFX 与 fx.js 的 FX） -->
-    <script src="arcade-common.js?v=20261120-2"></script>
+    <script src="arcade-common.js?v=20261126-1"></script>
     <script src="audio.js?v=20261125-1"></script>
     <script src="fx.js?v=20261120-2"></script>
     <script src="fullscreen.js?v=20261120-3"></script>
-    <script src="ach-common.js?v=20261125-1"></script>
-    <script src="snap-common.js?v=20261120-1"></script>
+    <script src="ach-common.js?v=20261126-1"></script>
+    <script src="snap-common.js?v=20261126-1"></script>
     <script src="pause-common.js?v=20261125-1"></script>
     <script src="audio-snake.js?v=20261119-1"></script>
     <!-- 手柄支持公共库：Gamepad API 轮询 → 边沿触发合成键盘事件，游戏键位零改动获得手柄支持 -->
     <script src="gamepad.js?v=20261120-2"></script>
     <script src="ach-trigger.js?v=20261120-1"></script>
-    <script src="snake.js?v=20261125-2"></script>
+    <script src="snake.js?v=20261126-1"></script>
 </body>
 </html>

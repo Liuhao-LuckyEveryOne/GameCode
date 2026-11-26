@@ -427,6 +427,12 @@ let trophyClosedAt = -1e9;
     // 中断本 IIFE 后续接线，也不影响其余大厅功能
     if (!hall || !btn || !totalEl || !ringFg || !ringText || !rankEl
         || !rankBarEl || !rankHintEl || !mileEl || !gridEl) return;
+    // 静态文案里的全站成就总数（入口按钮 title/角标、面板总数占位、页脚文案）统一由
+    // ACH_TOTAL 派生注入：ACH_DEFS 增删成就后只改定义表，消除 HTML 侧数字副本的手工同步
+    btn.title = '全站成就殿堂（' + ACH_TOTAL + ' 项，快捷键 V）';
+    btn.querySelector('.awt-key').textContent = ACH_TOTAL;
+    totalEl.textContent = '-- / ' + ACH_TOTAL;
+    document.getElementById('thFootTotal').textContent = ACH_TOTAL;
     const RING_LEN = 2 * Math.PI * 56; // 进度环周长（r=56 与 SVG 圆一致）
     /** 奖杯 SVG 图标（material emoji_events 24×24 路径，currentColor 继承行状态色：完成金亮/未完成暗灰） */
     const CUP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.73 1.75 2.29 3.05 4.11 3.4V19H9v2h6v-2h-2.5v-2.66c1.82-.35 3.38-1.65 4.11-3.4C18.08 12.63 20 10.55 20 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>';
@@ -2241,8 +2247,12 @@ document.addEventListener('keydown', e => {
             coinDrop();
             insertCoin();
         } else if (e.key === 'Enter') {
-            // 焦点在音效/全屏/音量控件上时放行：回车激活控件本身而非投币
-            if (e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #thReset')) return;
+            // 焦点在音效/全屏/音量控件或成就殿堂入口按钮上时放行：回车激活控件本身而非投币
+            if (e.target instanceof Element && e.target.closest('.sound-toggle, .fs-toggle, #sfxPanel, #trophyToggle, #thReset')) return;
+            // 成就殿堂打开（含 400ms 内刚关闭）时回车不投币：殿堂内回车应服务于聚焦控件，
+            // 与 pre-coin 分支的殿堂豁免同口径
+            const hall = document.getElementById('trophyHall');
+            if (hall && (!hall.hidden || performance.now() - trophyClosedAt < 400)) return;
             e.preventDefault(); // 回车让给投币：阻止聚焦卡片的默认启动（大厅启动用空格/鼠标）
             coinDrop(); // 点亮后回车重复投币（纯装饰演出）
         }

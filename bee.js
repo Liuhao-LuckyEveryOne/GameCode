@@ -2786,6 +2786,7 @@ const pausePipe = Pause.create({
 // 左键按下（监听 document）：游戏进行中在页面任意处按下均可持续射击，移出画布不中断；
 // 点在按钮/链接上时不触发射击，避免误开 UI 功能
 document.addEventListener('mousedown', e => {
+    if (e.button === 0) mouseBtnDown = true; // 物理按下即登记：不受下方游戏态守卫影响，抬手/失焦统一回收
     if (e.button !== 0 || gameState !== 'playing') return;
     // 排除按钮与链接（含"返回大厅"）：点击 UI 只操作 UI，不开火
     if (e.target.closest('button, a')) return;
@@ -2801,7 +2802,12 @@ document.addEventListener('mousedown', e => {
 Pause.bindOverlayResume(pausePipe, { target: 'document', exclude: 'button, a' });
 // 左键抬起（监听 document）：无论光标在哪松开都能正确停止射击，无"卡键"风险
 document.addEventListener('mouseup', e => {
-    if (e.button === 0) mouseFire = false;
+    if (e.button === 0) {
+        mouseBtnDown = false; // 抬手释放鼠标按下标记
+        // 仅当触屏无活跃触点时才停火：双通道并行时鼠标抬手只交还鼠标份额，
+        // 触屏按下的射击留给触屏全部抬起时的 pointerup 释放（与触屏侧 !mouseBtnDown 份额判定对称）
+        if (!touchFireIds.size) mouseFire = false;
+    }
 });
 // 触屏转向通道（监听画布）：移动端没有 mousemove 的 movementX，无法经鼠标通道转向，
 // 改由画布 pointer 事件驱动——按下记录触点、拖动按帧间位移折算方向，复用鼠标通道
@@ -2812,6 +2818,9 @@ document.addEventListener('mouseup', e => {
 // 浏览器合成的 mousedown/up 兼容事件（部分环境会抑制合成事件导致触屏无法开火）；
 // Set 追踪全部触点，"一指按住开火 + 另一指转向"仅全部抬起才停火
 const touchFireIds = new Set();
+/** 鼠标左键物理按下标记（mousedown/mouseup 维护，失焦兜底清空）：触屏与鼠标双通道共用
+ *  mouseFire 开火门，触屏全部抬起的停火判定须先确认鼠标通道无按下份额 */
+let mouseBtnDown = false;
 canvas.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch') return; // 鼠标维持原通道，避免双输入叠加
     touchLastX.set(e.pointerId, e.clientX); // 新指只登记自己的基准：双指交替按下不污染既有触点的转向基准
@@ -2838,17 +2847,19 @@ canvas.addEventListener('pointermove', e => {
     }
 });
 // 抬手/系统接管结束转向手势：清触点与未满阈值的位移残量，方向交给保持窗自然衰减；
-// 同时从开火追踪集合移除该触点——全部触点抬起才停火，且仅停由触屏开启的射击
-// （鼠标通道按下的射击不受触屏抬手影响）
+// 同时从开火追踪集合移除该触点——双通道份额对称：触屏全部抬起且鼠标无按下份额才停火，
+// 鼠标抬手（mouseup）同样只在无触屏触点时停火，两通道互不误伤对方的射击份额
 canvas.addEventListener('pointerup', e => {
     touchLastX.delete(e.pointerId); // 只移除抬起的手指：另一指的转向基准保留继续生效
     mouseDx = 0;
-    if (touchFireIds.delete(e.pointerId) && !touchFireIds.size) mouseFire = false;
+    // 全部触点抬起才停火，且鼠标按住（mouseBtnDown）时不停：双通道共用 mouseFire，
+    // 触屏抬手只交还触屏份额，鼠标按下的份额留给 mouseup 释放
+    if (touchFireIds.delete(e.pointerId) && !touchFireIds.size && !mouseBtnDown) mouseFire = false;
 });
 canvas.addEventListener('pointercancel', e => {
     touchLastX.delete(e.pointerId); // 同 pointerup：系统接管只逐指移除，不误伤并存触点
     mouseDx = 0;
-    if (touchFireIds.delete(e.pointerId) && !touchFireIds.size) mouseFire = false;
+    if (touchFireIds.delete(e.pointerId) && !touchFireIds.size && !mouseBtnDown) mouseFire = false;
 });
 // 窗口失焦：清空键鼠状态，防止切窗期间按键"卡住"、回来后自动漂移/自动开火；
 // 游戏进行中同时进入失焦暂停（静默不发声，与历史行为一致），由主循环挂起逻辑并绘制暂停遮罩。
@@ -2857,6 +2868,7 @@ canvas.addEventListener('pointercancel', e => {
 function handleFocusLoss() {
     for (const k in keys) delete keys[k];
     mouseFire = false;
+    mouseBtnDown = false; // 失焦期间按下的鼠标键松开常收不到 mouseup：按下标记一并兜底清空
     touchFireIds.clear(); // 触屏开火追踪一并清空，防止失焦前按住的触点回来后自动续射
     mouseDir = 0;
     mouseDirTimer = 0;
@@ -3090,9 +3102,11 @@ window.__ARCADE_TESTS__ = [
         }
     } },
     // 触屏开火追踪生命周期（③修复回归）：touch 按下入队 / 抬起逐个移出 / 全部抬起仅停
-    // 触屏开启的火（预置鼠标火不受误伤）/ pointercancel 系统接管兜底清出 / 鼠标 pointer 不入队
+    // 触屏开启的火（鼠标真按下经 mouseBtnDown 登记份额，触屏全抬不误停鼠标火，mouseup 才释放）/
+    // 鼠标抬手对称不误停触屏火（mouseup 仅在无触屏触点时停火）/ pointercancel 系统接管兜底
+    // 清出 / 鼠标 pointer 不入队
     { name: '触屏开火追踪生命周期', fn: () => {
-        const saved = { gameState, paused, blurPaused, mouseFire, touchLastX: new Map(touchLastX), mouseDx };
+        const saved = { gameState, paused, blurPaused, mouseFire, mouseBtnDown, touchLastX: new Map(touchLastX), mouseDx };
         const oldIds = Array.from(touchFireIds);
         touchFireIds.clear();
         try {
@@ -3105,13 +3119,25 @@ window.__ARCADE_TESTS__ = [
             if (!touchFireIds.has(11)) throw new Error('触点按下未入队');
             ev('pointerdown', 12, 'touch');
             if (touchFireIds.size !== 2) throw new Error('双指并存集合大小非 2');
-            mouseFire = true; // 预置鼠标通道开火：验证抬起只停触屏火、不误伤鼠标火
+            // 鼠标通道真按下（登记 mouseBtnDown 份额）：验证触屏全部抬起不误停鼠标火
+            canvas.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }));
+            if (mouseBtnDown !== true) throw new Error('鼠标按下未登记按下标记');
             ev('pointerup', 11, 'touch');
             if (touchFireIds.has(11) || touchFireIds.size !== 1) throw new Error('抬起触点未移出集合');
             if (mouseFire !== true) throw new Error('尚有触点在集合却被误停火');
             ev('pointerup', 12, 'touch');
             if (touchFireIds.size !== 0) throw new Error('全部抬起未清空集合');
-            if (mouseFire !== false) throw new Error('全部抬起未停火');
+            if (mouseFire !== true) throw new Error('鼠标仍按住时全抬被误停火');
+            // 双通道份额对称：触屏仍有触点时鼠标抬手只交还鼠标份额，不停触屏火；触屏全抬才停
+            ev('pointerdown', 15, 'touch');
+            if (!touchFireIds.has(15)) throw new Error('触点 15 按下未入队');
+            canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
+            if (mouseBtnDown !== false) throw new Error('鼠标抬手未清按下标记');
+            if (mouseFire !== true) throw new Error('鼠标抬手误停触屏仍在按住的火');
+            ev('pointerup', 15, 'touch');
+            if (touchFireIds.size !== 0 || mouseFire !== false) throw new Error('触屏全抬未停火');
+            canvas.dispatchEvent(new MouseEvent('mouseup', { button: 0, bubbles: true }));
+            if (mouseFire !== false || mouseBtnDown !== false) throw new Error('鼠标抬起未释放份额/清按下标记');
             ev('pointerdown', 13, 'touch');
             ev('pointercancel', 13, 'touch');
             if (touchFireIds.size !== 0) throw new Error('系统接管未兜底清出');
@@ -3119,7 +3145,8 @@ window.__ARCADE_TESTS__ = [
             if (touchFireIds.size !== 0) throw new Error('鼠标 pointer 被误入队');
         } finally {
             gameState = saved.gameState; paused = saved.paused; blurPaused = saved.blurPaused;
-            mouseFire = saved.mouseFire; touchLastX.clear(); for (const [id, x] of saved.touchLastX) touchLastX.set(id, x); mouseDx = saved.mouseDx;
+            mouseFire = saved.mouseFire; mouseBtnDown = saved.mouseBtnDown;
+            touchLastX.clear(); for (const [id, x] of saved.touchLastX) touchLastX.set(id, x); mouseDx = saved.mouseDx;
             touchFireIds.clear();
             for (const id of oldIds) touchFireIds.add(id);
         }

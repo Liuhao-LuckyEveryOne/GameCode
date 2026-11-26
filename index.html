@@ -1889,7 +1889,7 @@
          颈间系红蝴蝶结（双环左右环抱 + 结心 + 两条燕尾短垂带），鎏金题注+总数徽标），
          固定左上角（72×72 正方形：上缘与音效键持平 / 底边与全屏键下缘持平）；点击开合全站成就殿堂鎏金覆盖层。
          index.js 的投币豁免、点外关闭均以 #trophyToggle 判定，改造样式时须保留该 id -->
-    <button id="trophyToggle" class="achWallTrigger awt-hall" type="button" style="--awt-h: #ffd23e" title="全站成就殿堂（61 项，快捷键 V）">
+    <button id="trophyToggle" class="achWallTrigger awt-hall" type="button" style="--awt-h: #ffd23e" title="全站成就殿堂，快捷键 V">
         <svg class="aw-cup" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
             <defs>
                 <linearGradient id="awcGold" x1="0" y1="0" x2="0" y2="1">
@@ -1943,7 +1943,7 @@
             <path d="M19 12c0 8 2.5 12.5 7 15" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="2.6" stroke-linecap="round"/>
             <path d="M46.5 13.5l1.1 2.4 2.4 1.1-2.4 1.1-1.1 2.4-1.1-2.4-2.4-1.1 2.4-1.1z" fill="#fff8d9" opacity="0.9"/>
         </svg>
-        <span class="awt-caption"><span class="awt-label">成就殿堂</span><span class="awt-key">61</span></span>
+        <span class="awt-caption"><span class="awt-label">成就殿堂</span><span class="awt-key"></span></span>
     </button>
     <!-- 大厅主布局容器：包住标题区/卡片区/页脚，供 fullscreen.js 全屏时整体缩放居中 -->
     <div class="layout">
@@ -1962,7 +1962,7 @@
          拼接生成，index.js refreshTimeBadges/refreshBest 据此动态 getElementById 查找，改 id 须两侧同步 -->
     <div class="cards">
         <!-- 贪吃蛇卡片：预览 id=snakePreview，霓虹绿色 -->
-        <a class="card" href="snake.html?v=20261125-2" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
+        <a class="card" href="snake.html?v=20261126-1" style="--glow: 57, 255, 106; animation-delay: 0.05s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-snake" hidden></span>
             <canvas id="snakePreview" width="160" height="160"></canvas>
@@ -1972,7 +1972,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 俄罗斯方块卡片：预览 id=tetrisPreview，霓虹青色 -->
-        <a class="card" href="tetris.html?v=20261125-2" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
+        <a class="card" href="tetris.html?v=20261126-1" style="--glow: 53, 224, 255; animation-delay: 0.1s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-tetris" hidden></span>
             <canvas id="tetrisPreview" width="160" height="160"></canvas>
@@ -1982,7 +1982,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 吃豆人卡片：预览 id=pacPreview，霓虹黄色 -->
-        <a class="card" href="pac.html?v=20261125-2" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
+        <a class="card" href="pac.html?v=20261126-1" style="--glow: 255, 210, 62; animation-delay: 0.15s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-pac" hidden></span>
             <canvas id="pacPreview" width="160" height="160"></canvas>
@@ -1992,7 +1992,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 小蜜蜂卡片：预览 id=beePreview，霓虹粉色 -->
-        <a class="card" href="bee.html?v=20261125-1" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
+        <a class="card" href="bee.html?v=20261126-2" style="--glow: 255, 62, 165; animation-delay: 0.2s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-bee" hidden></span>
             <canvas id="beePreview" width="160" height="160"></canvas>
@@ -2012,7 +2012,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 华容道卡片：预览 id=klotskiPreview，霓虹赤红色（与游戏墙体色同源） -->
-        <a class="card" href="klotski.html?v=20261125-2" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
+        <a class="card" href="klotski.html?v=20261126-1" style="--glow: 255, 85, 64; animation-delay: 0.3s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-klotski" hidden></span>
             <canvas id="klotskiPreview" width="160" height="160"></canvas>
@@ -2022,7 +2022,7 @@
             <span class="play">PLAY ▶</span>
         </a>
         <!-- 1024卡片：预览 id=n1024Preview，霓虹橙色（数字方块合并玩法，三档难度） -->
-        <a class="card" href="1024.html?v=20261125-3" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
+        <a class="card" href="1024.html?v=20261126-1" style="--glow: 255, 154, 62; animation-delay: 0.35s;">
             <span class="last-badge">上次游玩</span>
             <span class="time-badge" id="pt-1024" hidden></span>
             <canvas id="n1024Preview" width="160" height="160"></canvas>
@@ -2055,7 +2055,7 @@
             <div class="th-head">
                 <svg class="cup-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.73 1.75 2.29 3.05 4.11 3.4V19H9v2h6v-2h-2.5v-2.66c1.82-.35 3.38-1.65 4.11-3.4C18.08 12.63 20 10.55 20 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>
                 <span class="th-title">成就殿堂</span>
-                <span class="th-total" id="thTotal">-- / 61</span>
+                <span class="th-total" id="thTotal">--</span>
                 <button id="thClose" class="th-close" type="button" aria-label="关闭成就殿堂">✕</button>
             </div>
             <div class="th-hero">
@@ -2083,7 +2083,7 @@
                 </div>
             </div>
             <div class="th-scroll"><div class="th-grid" id="thGrid"></div></div>
-            <div class="th-foot">集齐 61 项成就点亮满环 · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂<button id="thReset" type="button" title="清除全部进度数据（成就/最高分/评级/每日挑战/进行中快照/游玩时长/上次游玩），声音、演出、难度等设置保留；点击后需再次点击确认">重置进度</button></div>
+            <div class="th-foot">集齐 <span id="thFootTotal"></span> 项成就点亮满环 · 点击暗幕 / <b>Esc</b> / ✕ 关闭殿堂<button id="thReset" type="button" title="清除全部进度数据（成就/最高分/评级/每日挑战/进行中快照/游玩时长/上次游玩），声音、演出、难度等设置保留；点击后需再次点击确认">重置进度</button></div>
         </div>
     </div>
     <!-- 脚本加载顺序：arcade-common.js 提供 Arcade（跨帧消息统一来源守卫，其余公共库均依赖它）；
@@ -2092,7 +2092,7 @@
          其后补载五款游戏音效分册（卡片点击音效引用 tLevelUp/pacReady/pinLaunch/klSelect/n1024Merge，
          分册均为纯 Object.assign 扩展 SFX，无加载副作用；依赖 audio.js，须在其后、index.js 之前）；
          index.js 依赖 SFX，须放在最后 -->
-    <script src="arcade-common.js?v=20261120-2"></script>
+    <script src="arcade-common.js?v=20261126-1"></script>
     <script src="audio.js?v=20261125-1"></script>
     <script src="fx.js?v=20261120-2"></script>
     <script src="fullscreen.js?v=20261120-3"></script>
@@ -2104,6 +2104,6 @@
     <script src="audio-pinball.js?v=20261119-2"></script>
     <script src="audio-klotski.js?v=20261119-1"></script>
     <script src="audio-1024.js?v=20261118-1"></script>
-    <script src="index.js?v=20261125-1"></script>
+    <script src="index.js?v=20261126-1"></script>
 </body>
 </html>

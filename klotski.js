@@ -603,6 +603,21 @@ function trySlide(p, dx, dy, steps = 1) {
     startSlideAnim(p);
     p.x += dx * n;
     p.y += dy * n;
+    settleSlide(p, dx, dy, n);
+    return true;
+}
+
+/**
+ * 滑动结算（键盘推动与拖拽松手两条走子路径共用的收尾段）：两条路径的补间起点
+ * 与位移赋值各自处理，此处承接位移完成后的全部对局状态推进——累计步数与成就
+ * 统计上报、压入撤销栈、作废提示缓存、按棋子类型播滑音、连击推进、
+ * 逼近纪录检查、HUD 刷新与通关检查
+ * @param {object} p 已完成逻辑位移的棋子
+ * @param {number} dx 本次滑动方向水平分量
+ * @param {number} dy 本次滑动方向垂直分量
+ * @param {number} n 实际滑行格数
+ */
+function settleSlide(p, dx, dy, n) {
     moves += n;
     if (!demoActive) Ach.trackRunStat('moves', moves); // 本局步数实时上报成就统计（演示复现不计入玩家成绩）
     pushUndo({ piece: p, dx, dy, steps: n });
@@ -613,7 +628,6 @@ function trySlide(p, dx, dy, steps = 1) {
     checkTense(); // 逼近纪录检查：临门两步内的心跳提示
     updateHud();
     checkWin();
-    return true;
 }
 
 /**
@@ -1046,7 +1060,9 @@ function loadLayout(index) {
         optimalMoves = path ? path.length : 0;
     });
     hintPath = null;
+    const fromWon = state === 'won'; // 通关结算态换局需重新起播 BGM（进入 won 时已被 stop）
     if (state !== 'ready') state = 'playing';
+    if (fromWon) SFX.bgm.start('klotski'); // 新局沿用进行中 BGM，不因换局入口停留在静音态
     winScreen.style.display = 'none'; // 通关面板中切换布局时同步收起结算遮罩
     updateHud();
 }
@@ -1283,6 +1299,7 @@ function startGame() {
  * 重开当前布局（结算面板"再来一局"与侧栏"重开"共用）：隐藏全部遮罩重新装载
  */
 function restartLayout() {
+    if (state === 'ready') return; // ready 态（开始遮罩未关）布局已是初始态，重开无意义；若照常执行会隐藏开始遮罩，而 loadLayout 对 ready 态不转 playing，方向键/指针全被拒，形成无遮罩无提示的输入死局
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     startScreen.style.display = 'none';
     winScreen.style.display = 'none';
@@ -3040,16 +3057,7 @@ canvas.addEventListener('pointerup', e => {
         startSlideAnim(p, p.x + d.off * d.dir[0], p.y + d.off * d.dir[1]);
         p.x += d.dir[0] * n;
         p.y += d.dir[1] * n;
-        moves += n;
-        if (!demoActive) Ach.trackRunStat('moves', moves); // 本局步数实时上报成就统计（与键盘走子路径同口径；演示复现不计入玩家成绩）
-        pushUndo({ piece: p, dx: d.dir[0], dy: d.dir[1], steps: n });
-        invalidateHint(); // 棋面已变：提示展示与解路径缓存作废
-        if (p.t === 'cao') SFX.klMoveCao(n); // 曹操专属：低音区厚重滑音
-        else SFX.klMove(n); // 音高随滑动格数递增，连滑越远越高昂
-        registerCombo(); // 连击推进：窗口内连续滑动，命中里程碑触发飘字音效
-        checkTense(); // 逼近纪录检查：临门两步内的心跳提示
-        updateHud();
-        checkWin();
+        settleSlide(p, d.dir[0], d.dir[1], n); // 结算与键盘走子路径共用同一收尾段（口径一致）
     } else if (d.off > 0.12) {
         // 拖了但未过半格：转入回弹补间平滑归位 + 弹性回弹音
         p.bounce = { t: 0, bx: d.off * d.dir[0], by: d.off * d.dir[1] };

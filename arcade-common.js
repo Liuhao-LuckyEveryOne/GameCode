@@ -322,6 +322,6 @@ const Arcade = (() => {
     // 系统级「减少动态效果」偏好全站唯一探测点：各库/大厅读取本值，禁止各自重复探测
     const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-    return { onTrustedMessage, MSG, MSG_TARGET, EMBED, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION, createGridLayer, createAchHud };
+    return { onTrustedMessage, MSG, MSG_TARGET, EMBED, saveJSON, loadJSON, loadJSONState, saveRaw, loadRaw, removeRaw, removeByPrefix, capturePointer, bindDifficultyButtons, prefersReducedMotion: REDUCED_MOTION, createGridLayer, createAchHud };
 })();
 window.Arcade = Arcade;
